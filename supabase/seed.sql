@@ -1,0 +1,12 @@
+-- seed.sql — intentionally a no-op.
+--
+-- All Aquarius tables are protected by owner-only Row Level Security keyed on
+-- auth.uid() = owner_id (see 0002_rls.sql). Seeding here would run as the
+-- migration/superuser role with no authenticated user, so any inserted rows
+-- would have no valid owner_id (auth.users is empty) and would be invisible
+-- under RLS anyway.
+--
+-- Therefore seed data is created IN-APP, after a user signs in, where
+-- auth.uid() is populated and the owner-only policies are satisfied. The local
+-- store also bootstraps a default Subject/Notebook on first run, which then
+-- syncs up to the cloud.

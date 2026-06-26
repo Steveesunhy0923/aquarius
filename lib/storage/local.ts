@@ -765,8 +765,17 @@ function remapBlockAssetIds(
       block.type === "image" &&
       typeof block.attrs.assetId === "string"
     ) {
-      const mapped = idMap.get(block.attrs.assetId);
+      const mapped = idMap.get(block.attrs.assetId); // legacy single-image shape
       if (mapped) next.attrs.assetId = mapped;
+    }
+    // Current image shape: a row of items, each with its own assetId.
+    if (block.type === "image" && Array.isArray(block.attrs.images)) {
+      next.attrs.images = (block.attrs.images as Array<Record<string, unknown>>).map((it) => {
+        const aid = it?.assetId;
+        return typeof aid === "string" && idMap.has(aid)
+          ? { ...it, assetId: idMap.get(aid) }
+          : it;
+      });
     }
     // Inline math runs can nest image blocks inside text blocks.
     if (Array.isArray(block.attrs.runs)) {

@@ -54,3 +54,55 @@ body {
 .katex {
   font-size: 1.05em;
 }
+
+/* ── Print / Save-as-PDF ──────────────────────────────────────────────────
+   Show only the document pages at true A4 size, on white regardless of theme. */
+@media print {
+  :root {
+    --background: #ffffff;
+    --foreground: #111114;
+    --surface: #ffffff;
+    --border: #d0d0d8;
+    --muted: #555555;
+  }
+  html,
+  body {
+    overflow: visible !important;
+    background: #fff !important;
+  }
+  /* Keep highlights / callout box fills in the printed PDF. */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  @page {
+    size: A4;
+    margin: 0;
+  }
+  .print-hide {
+    display: none !important;
+  }
+  .print-surface {
+    overflow: visible !important;
+    padding: 0 !important;
+    background: #fff !important;
+  }
+  .print-stack {
+    display: block !important;
+    gap: 0 !important;
+  }
+  .print-page {
+    width: 210mm !important;
+    min-height: 297mm !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+    outline: none !important;
+    break-after: page;
+    page-break-after: always;
+    background: #fff !important;
+  }
+  .print-page.last-print-page {
+    break-after: auto;
+    page-break-after: auto;
+  }
+}

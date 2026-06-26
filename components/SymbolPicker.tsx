@@ -86,7 +86,7 @@ export function SymbolPicker({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-6"
+      className="print-hide fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-6"
       onClick={onClose}
     >
       <div

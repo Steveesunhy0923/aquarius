@@ -205,6 +205,7 @@ export default function EditorPage() {
   const metaPresentRef = useRef(false);
   const initialTitleRef = useRef<string | null>(null);
   const deletedRef = useRef(false); // note is being discarded; suppress saves
+  const printedRef = useRef(false); // guards the one-shot ?print=1 auto-print
 
   useEffect(() => {
     if (typeof window !== "undefined")
@@ -264,6 +265,17 @@ export default function EditorPage() {
       setTitle(loadedTitle);
     })().catch(console.error);
   }, [id]);
+  // Arrived via a "Download PDF" action (?print=1): open the print dialog once
+  // the document has loaded and rendered.
+  useEffect(() => {
+    if (!pkg || printedRef.current) return;
+    if (typeof window === "undefined") return;
+    if (new URLSearchParams(window.location.search).get("print") !== "1") return;
+    printedRef.current = true;
+    const t = setTimeout(() => { void printPdf(); }, 600);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pkg]);
   useEffect(() => {
     if (!editingId) return;
     lastEditedId.current = editingId; // remember for the topbar style dropdown
@@ -725,6 +737,23 @@ export default function EditorPage() {
     if (editingId) { e.preventDefault(); sticky.current = true; }
   };
 
+  // Print → "Save as PDF": show the WYSIWYG pages at 100% (so each A4 sheet maps
+  // to one printed page) and open the browser print dialog. Print CSS hides the
+  // editor chrome and forces true A4 sizing / page breaks.
+  async function printPdf() {
+    setShowSource(false);
+    setEditingId(null);
+    setSelected(null);
+    setPicker(null);
+    setTablePicker(false);
+    const prev = zoom;
+    if (prev !== 1) setZoom(1);
+    // Let the re-layout/pagination settle at 100% before invoking print.
+    await new Promise<void>((r) => setTimeout(r, prev !== 1 ? 450 : 150));
+    window.print();
+    if (prev !== 1) setZoom(prev);
+  }
+
   // A4 page geometry (size adjustable via `zoom`) + document style + pagination.
   const pageW = Math.round(A4_W * zoom);
   const pageH = Math.round(A4_H * zoom);
@@ -745,6 +774,9 @@ export default function EditorPage() {
   // vertical and horizontal layouts, so this works for both.
   const pages =
     packed[packed.length - 1].length === 0 ? packed : [...packed, []];
+  // The last page with content — used so print suppresses the break after it
+  // (`:last-child` would match the hidden, appended blank page instead).
+  const lastContentPage = pages.reduce((acc, ids, i) => (ids.length ? i : acc), -1);
   const contentStyle = {
     padding: margin,
     fontSize: `${fontSize}px`,
@@ -757,16 +789,16 @@ export default function EditorPage() {
     <main className="flex min-h-screen flex-col">
       <input ref={fileRef} type="file" accept="image/*" onChange={onPickImage} className="hidden" />
 
-      <header className="flex items-center gap-4 border-b border-border px-6 py-3">
+      <header className="print-hide flex items-center gap-4 border-b border-border px-6 py-3">
         <Link href="/" className="text-sm text-muted hover:text-accent">← Library</Link>
         <input value={title} onChange={(e) => { setTitle(e.target.value); setSaved(false); }} className="flex-1 bg-transparent text-lg font-semibold outline-none" />
         <button onClick={() => setShowSource((s) => !s)} className="rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent">{showSource ? "Editor" : "LaTeX"}</button>
-        <ExportMenu noteId={id} title={title} beforeExport={save} label="Export ▾" className="rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent" />
+        <ExportMenu noteId={id} title={title} beforeExport={save} onPdf={printPdf} label="Export ▾" className="rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent" />
         <button onClick={save} title="Saves automatically; click to save now" className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white">{saving ? "Saving…" : saved ? "Saved" : "Save"}</button>
       </header>
 
       {/* Block tools */}
-      <div className="flex flex-wrap items-center justify-center gap-2 border-b border-border px-6 py-2">
+      <div className="print-hide flex flex-wrap items-center justify-center gap-2 border-b border-border px-6 py-2">
         {/* Title — the only control that keeps a word label */}
         <select value={typeof currentStyle === "number" ? String(currentStyle) : ""} onChange={(e) => { if (e.target.value) applyStyle(Number(e.target.value) as HeadingLevel); }} title="Make the current block a heading" className="h-9 rounded-md border border-border bg-background px-2 text-sm">
           <option value="" disabled>Heading…</option>
@@ -798,7 +830,7 @@ export default function EditorPage() {
       </div>
 
       {/* Functions & symbols */}
-      <div className="flex flex-wrap items-center justify-center gap-1.5 border-b border-border px-6 py-2">
+      <div className="print-hide flex flex-wrap items-center justify-center gap-1.5 border-b border-border px-6 py-2">
         {/* Structures — fixed defaults (not user-editable) */}
         {toolbar1.map((latex, i) => (
           <button key={i} onMouseDown={keepFocus} onClick={() => onInsert(latex)} title={`Insert ${latex}`} className={ICON_BTN}>
@@ -819,7 +851,7 @@ export default function EditorPage() {
 
       {/* Document settings */}
       {!showSource && (
-        <div className="flex flex-wrap items-center justify-center gap-3 border-b border-border px-6 py-2 text-xs text-muted">
+        <div className="print-hide flex flex-wrap items-center justify-center gap-3 border-b border-border px-6 py-2 text-xs text-muted">
           <label className="flex items-center gap-1">Font
             <select value={fontKey} onChange={(e) => setDocStyle({ fontFamily: e.target.value })} className="rounded border border-border bg-background px-1 py-0.5" style={{ fontFamily }}>
               {Object.keys(FONTS).map((f) => <option key={f} value={f}>{f}</option>)}
@@ -861,10 +893,10 @@ export default function EditorPage() {
           <textarea readOnly value={documentToLatex(pkg.tree)} className="h-[70vh] w-full rounded-lg border border-border bg-surface p-4 font-mono text-sm" />
         </div>
       ) : (
-        <div className="flex-1 overflow-auto p-8" style={{ background: "var(--background)" }}>
-          <div className={layout === "horizontal" ? "flex items-start gap-8" : "flex flex-col items-center gap-8"}>
+        <div className="print-surface flex-1 overflow-auto p-8" style={{ background: "var(--background)" }}>
+          <div className={`print-stack ${layout === "horizontal" ? "flex items-start gap-8" : "flex flex-col items-center gap-8"}`}>
             {pages.map((ids, p) => (
-              <div key={p} className="relative shrink-0 bg-surface text-foreground shadow-xl ring-1 ring-border" style={{ width: pageW, minHeight: pageH }}>
+              <div key={p} className={`print-page relative shrink-0 bg-surface text-foreground shadow-xl ring-1 ring-border ${ids.length === 0 ? "print-hide" : ""} ${p === lastContentPage ? "last-print-page" : ""}`} style={{ width: pageW, minHeight: pageH }}>
                 <div style={contentStyle}>
                   {blocks.length === 0 ? (
                     <button onClick={() => addBlock(paragraphFromSource(""))} className="w-full rounded-lg border border-dashed border-border p-8 text-center text-muted hover:border-accent">Empty note — click to start a paragraph, or use the toolbar.</button>
@@ -880,7 +912,7 @@ export default function EditorPage() {
                     </div>
                   )}
                   {p === pages.length - 1 && blocks.length > 0 && !editingId && !selected && (
-                    <button onClick={() => addBlock(paragraphFromSource(""))} className="mt-1 block w-full rounded-md px-3 py-2 text-left text-sm text-muted hover:bg-foreground/[0.04]">Click to add text…</button>
+                    <button onClick={() => addBlock(paragraphFromSource(""))} className="print-hide mt-1 block w-full rounded-md px-3 py-2 text-left text-sm text-muted hover:bg-foreground/[0.04]">Click to add text…</button>
                   )}
                 </div>
                 <span className="pointer-events-none absolute bottom-1.5 right-3 text-[10px] text-muted">{p < pages.length - 1 || ids.length > 0 ? p + 1 : null}</span>
@@ -915,7 +947,7 @@ export default function EditorPage() {
     const isTable = b.type === "table";
     return (
       <div className="group relative flex items-start gap-1 rounded-lg px-1 py-0.5 hover:bg-foreground/[0.03]" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); moveBlock(dragFrom.current, i); dragFrom.current = null; }}>
-        <div className="flex flex-col items-center pt-1 text-muted opacity-0 transition group-hover:opacity-100">
+        <div className="print-hide flex flex-col items-center pt-1 text-muted opacity-0 transition group-hover:opacity-100">
           <button onClick={() => moveBlock(i, i - 1)} disabled={i === 0} title="Move up" className="leading-none hover:text-accent disabled:opacity-30">▲</button>
           <span draggable onDragStart={() => (dragFrom.current = i)} title="Drag to reorder block" className="cursor-grab select-none leading-none active:cursor-grabbing">⠿</span>
           <button onClick={() => moveBlock(i, i + 1)} disabled={i === blocks.length - 1} title="Move down" className="leading-none hover:text-accent disabled:opacity-30">▼</button>

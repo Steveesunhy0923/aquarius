@@ -23,6 +23,22 @@ const safeName = (s: string) =>
     .replace(/[^\p{L}\p{N}._-]+/gu, "_")
     .replace(/^[._]+|[._]+$/g, "") || "note";
 
+/** Export a note to a downloadable file in the given format. */
+export async function downloadNote(
+  noteId: string,
+  title: string,
+  fmt: "tex" | "aqnote",
+): Promise<void> {
+  const store = getStore();
+  if (fmt === "tex") {
+    const pkg = await store.openNote(noteId);
+    download(`${safeName(title)}.tex`, documentToLatex(pkg.tree), "application/x-tex");
+  } else {
+    const bundle = await store.exportNote(noteId);
+    download(`${safeName(title)}.aqnote`, JSON.stringify(bundle, null, 2), "application/json");
+  }
+}
+
 /**
  * Export/download a note in a chosen format. `.tex` is the LaTeX serialization;
  * `.aqnote` is the portable, re-importable bundle (content + inlined assets).
@@ -32,6 +48,7 @@ export function ExportMenu({
   noteId,
   title,
   beforeExport,
+  onPdf,
   className = "",
   menuClassName = "",
   label = "Export",
@@ -39,6 +56,8 @@ export function ExportMenu({
   noteId: string;
   title: string;
   beforeExport?: () => Promise<void>;
+  /** Optional PDF action (browser print → Save as PDF), shown as a menu item. */
+  onPdf?: () => void;
   className?: string;
   menuClassName?: string;
   label?: string;
@@ -49,14 +68,7 @@ export function ExportMenu({
     setOpen(false);
     try {
       if (beforeExport) await beforeExport();
-      const store = getStore();
-      if (fmt === "tex") {
-        const pkg = await store.openNote(noteId);
-        download(`${safeName(title)}.tex`, documentToLatex(pkg.tree), "application/x-tex");
-      } else {
-        const bundle = await store.exportNote(noteId);
-        download(`${safeName(title)}.aqnote`, JSON.stringify(bundle, null, 2), "application/json");
-      }
+      await downloadNote(noteId, title, fmt);
     } catch (e) {
       console.error("export failed", e);
     }
@@ -80,6 +92,11 @@ export function ExportMenu({
             onClick={(e) => { e.preventDefault(); setOpen(false); }}
           />
           <div className={`absolute right-0 top-full z-50 mt-1 w-48 rounded-md border border-border bg-surface p-1 text-sm shadow-lg ${menuClassName}`}>
+            {onPdf && (
+              <button onClick={(e) => { e.preventDefault(); setOpen(false); onPdf(); }} className="block w-full rounded px-2 py-1.5 text-left hover:bg-foreground/[0.06]">
+                PDF <span className="text-muted">(print)</span>
+              </button>
+            )}
             <button onClick={(e) => { e.preventDefault(); run("tex"); }} className="block w-full rounded px-2 py-1.5 text-left hover:bg-foreground/[0.06]">
               LaTeX <span className="text-muted">(.tex)</span>
             </button>

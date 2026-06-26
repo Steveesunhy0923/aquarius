@@ -1,6 +1,6 @@
 "use client";
 
-import { ExportMenu } from "@/components/ExportMenu";
+import { downloadNote } from "@/components/ExportMenu";
 import { NoteCover } from "@/components/NoteCover";
 import { getStore, seedDemoLibrary } from "@/lib/storage";
 import type { LibraryStore, NoteMeta, Notebook, Subject } from "@/lib/storage/types";
@@ -9,6 +9,14 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 const TRASH_DAYS = 30;
+
+/** A title not already in `existing`, appending " (2)", " (3)", … if needed. */
+function uniqueTitle(base: string, existing: Set<string>): string {
+  if (!existing.has(base)) return base;
+  let n = 2;
+  while (existing.has(`${base} (${n})`)) n++;
+  return `${base} (${n})`;
+}
 
 /** Hard-delete soft-deleted notes whose retention window has elapsed. */
 async function purgeExpired(store: LibraryStore): Promise<void> {
@@ -157,6 +165,29 @@ export default function LibraryPage() {
     await refresh();
   }, [deleted, refresh]);
 
+  const pdfNote = useCallback(
+    (note: NoteMeta) => router.push(`/editor/${note.id}?print=1`),
+    [router],
+  );
+
+  const copyNote = useCallback(
+    async (note: NoteMeta) => {
+      try {
+        const store = getStore();
+        const siblings = await store.listNotes(note.notebookId);
+        const existing = new Set(siblings.map((n) => n.title));
+        const bundle = await store.exportNote(note.id);
+        bundle.meta.title = uniqueTitle(`Copy of ${note.title}`, existing);
+        await store.importNote(bundle, note.notebookId);
+        await refresh();
+      } catch (e) {
+        console.error("copy failed", e);
+        alert("Couldn't copy this note.");
+      }
+    },
+    [refresh],
+  );
+
   const addTag = useCallback(
     async (note: NoteMeta) => {
       const raw = prompt("Add a tag")?.trim();
@@ -185,7 +216,7 @@ export default function LibraryPage() {
     [notes, tagFilter],
   );
 
-  const cardProps = { onDelete: softDelete, onAddTag: addTag, onRemoveTag: removeTag };
+  const cardProps = { onDelete: softDelete, onCopy: copyNote, onPdf: pdfNote, onAddTag: addTag, onRemoveTag: removeTag };
 
   if (!ready) {
     return (
@@ -354,6 +385,8 @@ export default function LibraryPage() {
 
 type CardHandlers = {
   onDelete: (id: string) => void;
+  onCopy: (n: NoteMeta) => void;
+  onPdf: (n: NoteMeta) => void;
   onAddTag: (n: NoteMeta) => void;
   onRemoveTag: (n: NoteMeta, tag: string) => void;
 };
@@ -379,23 +412,86 @@ function NoteGrid({ notes, ...h }: { notes: NoteMeta[] } & CardHandlers) {
   );
 }
 
-function NoteCard({ note, onDelete, onAddTag, onRemoveTag }: { note: NoteMeta } & CardHandlers) {
+function exportOrAlert(noteId: string, title: string, fmt: "tex" | "aqnote") {
+  downloadNote(noteId, title, fmt).catch((e) => {
+    console.error("export failed", e);
+    alert("Couldn't export this note.");
+  });
+}
+
+function MenuItem({
+  onClick,
+  danger,
+  children,
+}: {
+  onClick: () => void;
+  danger?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={(e) => { e.preventDefault(); e.stopPropagation(); onClick(); }}
+      className={`block w-full rounded px-2 py-1.5 text-left hover:bg-foreground/[0.06] ${danger ? "text-red-500" : ""}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function NoteCardMenu({
+  note,
+  onCopy,
+  onDelete,
+  onPdf,
+}: {
+  note: NoteMeta;
+  onCopy: (n: NoteMeta) => void;
+  onDelete: (id: string) => void;
+  onPdf: (n: NoteMeta) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="relative inline-flex">
+      <button
+        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen((o) => !o); }}
+        title="More"
+        className="grid h-6 w-6 place-items-center rounded-full bg-surface text-base leading-none shadow ring-1 ring-border hover:ring-accent"
+      >
+        ⋯
+      </button>
+      {open && (
+        <>
+          <button
+            className="fixed inset-0 z-40 cursor-default"
+            aria-hidden
+            tabIndex={-1}
+            onClick={(e) => { e.preventDefault(); setOpen(false); }}
+          />
+          <div className="absolute right-0 top-full z-50 mt-1 w-44 rounded-md border border-border bg-surface p-1 text-sm shadow-lg">
+            <MenuItem onClick={() => { setOpen(false); onCopy(note); }}>Make a copy</MenuItem>
+            <MenuItem onClick={() => { setOpen(false); onPdf(note); }}>
+              Download <span className="text-muted">(PDF)</span>
+            </MenuItem>
+            <MenuItem onClick={() => { setOpen(false); exportOrAlert(note.id, note.title, "tex"); }}>
+              Download <span className="text-muted">(.tex)</span>
+            </MenuItem>
+            <MenuItem onClick={() => { setOpen(false); exportOrAlert(note.id, note.title, "aqnote"); }}>
+              Download <span className="text-muted">(.aqnote)</span>
+            </MenuItem>
+            <div className="my-1 h-px bg-border" />
+            <MenuItem danger onClick={() => { setOpen(false); onDelete(note.id); }}>Delete</MenuItem>
+          </div>
+        </>
+      )}
+    </span>
+  );
+}
+
+function NoteCard({ note, onDelete, onCopy, onPdf, onAddTag, onRemoveTag }: { note: NoteMeta } & CardHandlers) {
   return (
     <div className="group relative flex flex-col rounded-xl border border-border bg-surface p-3 transition hover:border-accent">
-      <div className="absolute right-2 top-2 z-10 flex items-center gap-1 opacity-60 transition group-hover:opacity-100">
-        <ExportMenu
-          noteId={note.id}
-          title={note.title}
-          label="⬇"
-          className="grid h-6 w-6 place-items-center rounded-full bg-surface text-xs shadow ring-1 ring-border hover:ring-accent"
-        />
-        <button
-          onClick={() => onDelete(note.id)}
-          title="Move to Recently Deleted"
-          className="grid h-6 w-6 place-items-center rounded-full bg-surface text-xs shadow ring-1 ring-border hover:ring-red-500"
-        >
-          🗑
-        </button>
+      <div className="absolute right-2 top-2 z-10 opacity-60 transition group-hover:opacity-100">
+        <NoteCardMenu note={note} onCopy={onCopy} onDelete={onDelete} onPdf={onPdf} />
       </div>
       <Link href={`/editor/${note.id}`} className="flex flex-col">
         <div className="aspect-[3/4] overflow-hidden rounded-md border border-border">

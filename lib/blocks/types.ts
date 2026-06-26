@@ -46,6 +46,21 @@ export type BlockType =
   | "graph"; // attrs.graph = interactive 2D figure model (points/shapes/axes) → tikzpicture
 
 /**
+ * Free 2D placement of a figure object (image / table / graph) inside its
+ * block's box. Both fields are fractions of the box width, which equals the
+ * text width (`\linewidth`):
+ *  - `x` — the object's LEFT edge.
+ *  - `r` — the vertical "raise": how far the object's BOTTOM sits above the box
+ *    bottom (the row baseline). 0 = bottom-aligned; H−h = top-aligned, where H
+ *    is the box height and h the object height (both as line-width fractions).
+ * Serializes to `\hspace*`/`\hspace` (horizontal) + `\raisebox` (vertical).
+ */
+export interface Placement {
+  x: number;
+  r: number;
+}
+
+/**
  * A named argument slot holds an ordered list of child blocks.
  * Slot names are conventional per block type (documented on `BlockType` above).
  */
@@ -83,9 +98,12 @@ export interface BlockAttrs {
   assetId?: string;
   alt?: string;
   width?: number;
-  // free horizontal position of an image/table/graph block along its line:
-  // the content's LEFT edge as a fraction [0,1) of the text width (\linewidth).
+  // legacy free horizontal position of an image/table/graph block along its
+  // line: the content's LEFT edge as a fraction [0,1) of the text width. Still
+  // read as an x-only fallback; superseded by per-object `pos` (see Placement).
   offset?: number;
+  // graph block: free 2D placement of its single figure within the box.
+  pos?: Placement;
   // text: inline math runs interleaved with prose
   runs?: InlineRun[];
   // tikz canvas model (V1 constrained drawing mode)

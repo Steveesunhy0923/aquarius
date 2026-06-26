@@ -6,7 +6,8 @@
 
 import { escapeLatex } from "./captions";
 import type { ImageAlign } from "./images";
-import type { Block } from "@/lib/blocks/types";
+import { hasPlacement, placedRowToLatex } from "./placement";
+import type { Block, Placement } from "@/lib/blocks/types";
 
 export type TableStyle =
   | "grid"
@@ -21,6 +22,8 @@ export interface TableData {
   style: TableStyle;
   rows: string[][];
   caption?: string;
+  /** Free 2D position within the block's box (see Placement). */
+  pos?: Placement;
 }
 
 export interface TableStyleInfo {
@@ -162,7 +165,13 @@ export function tableRowToLatex(tables: TableData[], align: ImageAlign, offset?:
     align === "left" ? "\\raggedright" : align === "right" ? "\\raggedleft" : "\\centering";
   const anyCaption = tables.some((t) => (t.caption ?? "").trim());
 
-  // Free horizontal position for a single uncaptioned table (in-flow shift).
+  // Free 2D placement (uncaptioned). Tables have no width metric, so inter-table
+  // gaps fall back to 0 (abut in order); the leading \hspace* + \raisebox apply.
+  if (!anyCaption && hasPlacement(tables)) {
+    return placedRowToLatex(tables.map((t) => ({ pos: t.pos, width: 0, body: tabularOf(t) })));
+  }
+
+  // Legacy free horizontal position for a single uncaptioned table (in-flow shift).
   if (typeof offset === "number" && offset > 0.001 && tables.length === 1 && !anyCaption) {
     return `\\noindent\\hspace*{${parseFloat(Math.min(0.99, offset).toFixed(4))}\\linewidth}${tabularOf(tables[0])}`;
   }

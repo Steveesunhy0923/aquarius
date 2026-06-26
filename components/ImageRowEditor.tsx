@@ -1,17 +1,24 @@
 "use client";
 
 import type { ImageAlign, ImageItem } from "@/lib/blocks/images";
-import { SortableRow } from "./SortableRow";
+import type { Placement } from "@/lib/blocks/types";
+import { FigureBox } from "./FigureBox";
 import { useAssetUrl } from "./useAssetUrl";
 
-/** Editable image row: select an image, drag it to reorder/move, caption inline. */
+/**
+ * Editable image row: each picture is freely positioned within the block's box
+ * (drag in 2D, magnets to center/siblings), selected by a click, captioned
+ * inline, and can be dragged into another image block.
+ */
 export function ImageRowEditor({
   blockId,
   items,
   align,
   selectedIndex,
   onSelect,
-  onMove,
+  onCommit,
+  onReset,
+  onMoveAcross,
   onCaption,
 }: {
   blockId: string;
@@ -19,7 +26,9 @@ export function ImageRowEditor({
   align: ImageAlign;
   selectedIndex: number | null;
   onSelect: (index: number) => void;
-  onMove: (fromRowId: string, fromIndex: number, toRowId: string, toIndex: number) => void;
+  onCommit: (positions: Placement[], widthFracs: number[]) => void;
+  onReset: () => void;
+  onMoveAcross: (fromIndex: number, toBlockId: string) => void;
   onCaption: (index: number, text: string) => void;
 }) {
   if (items.length === 0) {
@@ -30,28 +39,32 @@ export function ImageRowEditor({
     );
   }
   return (
-    <SortableRow
-      count={items.length}
-      align={align}
-      selectedIndex={selectedIndex}
+    <FigureBox
+      blockId={blockId}
       group="image"
-      rowId={blockId}
+      align={align}
       onSelect={onSelect}
-      onMove={onMove}
-      itemWidth={(i) => (items[i].width ? `${items[i].width}%` : undefined)}
-      renderItem={(i) => (
-        <figure
-          className={`m-0 flex flex-col items-center ${items[i].width ? "w-full" : ""}`}
-        >
-          <Img item={items[i]} />
-          <input
-            value={items[i].caption ?? ""}
-            placeholder="caption…"
-            onChange={(e) => onCaption(i, e.target.value)}
-            className="mt-1 w-full rounded border border-border bg-background px-2 py-0.5 text-center text-xs italic outline-none focus:border-accent"
-          />
-        </figure>
-      )}
+      onCommit={onCommit}
+      onReset={onReset}
+      onMoveAcross={onMoveAcross}
+      items={items.map((it, i) => ({
+        key: `${i}-${it.assetId}`,
+        pos: it.pos,
+        width: it.width ? `${it.width}%` : undefined,
+        selected: selectedIndex === i,
+        content: (
+          <figure className={`m-0 flex flex-col items-center ${it.width ? "w-full" : ""}`}>
+            <Img item={it} />
+            <input
+              value={it.caption ?? ""}
+              placeholder="caption…"
+              onChange={(e) => onCaption(i, e.target.value)}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="mt-1 w-full rounded border border-border bg-background px-2 py-0.5 text-center text-xs italic outline-none focus:border-accent"
+            />
+          </figure>
+        ),
+      }))}
     />
   );
 }

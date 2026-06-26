@@ -2,17 +2,24 @@
 
 import type { ImageAlign } from "@/lib/blocks/images";
 import type { TableData } from "@/lib/blocks/tables";
-import { SortableRow } from "./SortableRow";
+import type { Placement } from "@/lib/blocks/types";
+import { FigureBox } from "./FigureBox";
 import { TableView } from "./TableView";
 
-/** Editable table row: select a table, drag it to reorder/move, caption inline. */
+/**
+ * Editable table row: each table is freely positioned within the block's box,
+ * selected by a click, edited cell-by-cell when selected, captioned inline, and
+ * can be dragged into another table block.
+ */
 export function TableRowEditor({
   blockId,
   tables,
   align,
   selectedIndex,
   onSelect,
-  onMove,
+  onCommit,
+  onReset,
+  onMoveAcross,
   onCell,
   onCaption,
 }: {
@@ -21,37 +28,45 @@ export function TableRowEditor({
   align: ImageAlign;
   selectedIndex: number | null;
   onSelect: (index: number) => void;
-  onMove: (fromRowId: string, fromIndex: number, toRowId: string, toIndex: number) => void;
+  onCommit: (positions: Placement[], widthFracs: number[]) => void;
+  onReset: () => void;
+  onMoveAcross: (fromIndex: number, toBlockId: string) => void;
   onCell: (index: number, row: number, col: number, value: string) => void;
   onCaption: (index: number, text: string) => void;
 }) {
   if (tables.length === 0) return null;
   return (
-    <SortableRow
-      count={tables.length}
-      align={align}
-      selectedIndex={selectedIndex}
+    <FigureBox
+      blockId={blockId}
       group="table"
-      rowId={blockId}
+      align={align}
       onSelect={onSelect}
-      onMove={onMove}
-      renderItem={(i) => (
-        <figure className="m-0 flex flex-col items-center">
-          <div className="overflow-x-auto">
-            <TableView
-              data={tables[i]}
-              editable={selectedIndex === i}
-              onCell={(r, c, v) => onCell(i, r, c, v)}
+      onCommit={onCommit}
+      onReset={onReset}
+      onMoveAcross={onMoveAcross}
+      items={tables.map((t, i) => ({
+        key: `${i}-${t.style}`,
+        pos: t.pos,
+        selected: selectedIndex === i,
+        content: (
+          <figure className="m-0 flex flex-col items-center">
+            <div className="overflow-x-auto">
+              <TableView
+                data={t}
+                editable={selectedIndex === i}
+                onCell={(r, c, v) => onCell(i, r, c, v)}
+              />
+            </div>
+            <input
+              value={t.caption ?? ""}
+              placeholder="caption…"
+              onChange={(e) => onCaption(i, e.target.value)}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="mt-1 w-full rounded border border-border bg-background px-2 py-0.5 text-center text-xs italic outline-none focus:border-accent"
             />
-          </div>
-          <input
-            value={tables[i].caption ?? ""}
-            placeholder="caption…"
-            onChange={(e) => onCaption(i, e.target.value)}
-            className="mt-1 w-full rounded border border-border bg-background px-2 py-0.5 text-center text-xs italic outline-none focus:border-accent"
-          />
-        </figure>
-      )}
+          </figure>
+        ),
+      }))}
     />
   );
 }

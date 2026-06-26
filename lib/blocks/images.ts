@@ -6,7 +6,7 @@
  * Legacy single-image blocks (`attrs.assetId`) are migrated on read.
  */
 
-import type { Block } from "@/lib/blocks/types";
+import type { Block, Placement } from "@/lib/blocks/types";
 
 export type ImageAlign = "left" | "center" | "right";
 
@@ -17,6 +17,8 @@ export interface ImageItem {
   width?: number;
   /** Per-image caption, shown under this picture (exported via \caption). */
   caption?: string;
+  /** Free 2D position within the block's box (see Placement). */
+  pos?: Placement;
 }
 
 const uid = (): string => crypto.randomUUID();

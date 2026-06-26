@@ -23,6 +23,7 @@ import { graphModel, graphToTikz } from "./graph";
 import { headingToLatex } from "./headings";
 import { imageAlign, imageItems } from "./images";
 import { listItems, listMarker, listOrdered } from "./lists";
+import { hasPlacement, placedRowToLatex } from "./placement";
 import { tableAlign, tableItems, tableRowToLatex } from "./tables";
 
 /** A serializer turns one block subtree into a LaTeX fragment. */
@@ -308,18 +309,32 @@ function hoffLen(off: number): string {
   return `${parseFloat(off.toFixed(4))}\\linewidth`;
 }
 
+function imgBody(it: { assetId: string; width?: number }): string {
+  const w = typeof it.width === "number" ? `[width=${(it.width / 100).toFixed(2)}\\linewidth]` : "";
+  return `\\includegraphics${w}{${it.assetId}}`;
+}
+
 function serializeImage(b: Block): string {
   const items = imageItems(b);
   if (items.length === 0) return "";
   const align = imageAlign(b);
+  const anyCaption = items.some((it) => (it.caption ?? "").trim());
+
+  // Free 2D placement (uncaptioned only — captioned uses a float below).
+  if (!anyCaption && hasPlacement(items)) {
+    return placedRowToLatex(
+      items.map((it) => ({
+        pos: it.pos,
+        width: typeof it.width === "number" ? it.width / 100 : 0,
+        body: imgBody(it),
+      })),
+    );
+  }
+
+  // Legacy single-offset fallback (pre-placement notes).
   const off = offsetOf(b);
-  // Free horizontal position (uncaptioned only — captioned uses a float below).
-  if (off !== null && !items.some((it) => (it.caption ?? "").trim())) {
-    const parts = items.map((it) => {
-      const w = typeof it.width === "number" ? `[width=${(it.width / 100).toFixed(2)}\\linewidth]` : "";
-      return `\\includegraphics${w}{${it.assetId}}`;
-    });
-    return `\\noindent\\hspace*{${hoffLen(off)}}${parts.join("\\quad ")}`;
+  if (off !== null && !anyCaption) {
+    return `\\noindent\\hspace*{${hoffLen(off)}}${items.map(imgBody).join("\\quad ")}`;
   }
   const cmd =
     align === "left"
@@ -369,9 +384,17 @@ function serializeTikz(b: Block): string {
 function serializeGraph(b: Block): string {
   const model = graphModel(b);
   const tex = graphToTikz(model);
+  const captioned = !!(model.caption ?? "").trim();
+
+  // Free 2D placement of the single graph (uncaptioned only).
+  const pos = attrs(b).pos;
+  if (pos && !captioned) {
+    return placedRowToLatex([{ pos, width: 0, body: tex }]);
+  }
+
+  // Legacy single-offset fallback.
   const off = offsetOf(b);
-  // Shift uncaptioned graphs horizontally (captioned ones are floats — keep centered).
-  if (off !== null && !(model.caption ?? "").trim()) {
+  if (off !== null && !captioned) {
     return tex.replace("\\begin{tikzpicture}", `\\noindent\\hspace*{${hoffLen(off)}}\\begin{tikzpicture}`);
   }
   return tex;

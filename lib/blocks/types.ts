@@ -42,7 +42,8 @@ export type BlockType =
   | "tikz" // value: tikz source; attrs.shapes: canvas shape model (optional)
   | "code" // value: source; attrs.lang = "python" | "matlab" | "julia"
   | "image" // a row of one or more images (attrs.images, attrs.align)
-  | "table"; // attrs.table = { style, rows } — a document table
+  | "table" // attrs.table = { style, rows } — a document table
+  | "graph"; // attrs.graph = interactive 2D figure model (points/shapes/axes) → tikzpicture
 
 /**
  * A named argument slot holds an ordered list of child blocks.
@@ -86,6 +87,8 @@ export interface BlockAttrs {
   runs?: InlineRun[];
   // tikz canvas model (V1 constrained drawing mode)
   shapes?: unknown[];
+  // graph: interactive 2D figure model (see lib/blocks/graph.ts GraphData)
+  graph?: unknown;
   // free-form escape hatch — avoid relying on this
   [key: string]: unknown;
 }

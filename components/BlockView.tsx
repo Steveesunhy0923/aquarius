@@ -1,5 +1,6 @@
 "use client";
 
+import { GraphView } from "@/components/GraphView";
 import { TableView } from "@/components/TableView";
 import { useAssetUrl } from "@/components/useAssetUrl";
 import { blockToKatex } from "@/lib/blocks";
@@ -117,6 +118,9 @@ export function BlockView({ block }: { block: Block }) {
           <code>{block.value ?? "% tikz diagram"}</code>
         </pre>
       );
+
+    case "graph":
+      return <GraphView block={block} />;
 
     default:
       return (

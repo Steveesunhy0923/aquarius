@@ -19,6 +19,7 @@ import type {
 } from "./types";
 import { escapeLatex } from "./captions";
 import { formatToLatex } from "./format";
+import { graphModel, graphToTikz } from "./graph";
 import { headingToLatex } from "./headings";
 import { imageAlign, imageItems } from "./images";
 import { listItems, listMarker, listOrdered } from "./lists";
@@ -346,6 +347,11 @@ function serializeTikz(b: Block): string {
   return b.value ?? "";
 }
 
+/** graph → render the structured figure model as a tikzpicture. */
+function serializeGraph(b: Block): string {
+  return graphToTikz(graphModel(b));
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // The table-driven registry — one entry per BlockType (exhaustive).
 // ──────────────────────────────────────────────────────────────────────────
@@ -370,6 +376,7 @@ const LATEX_REGISTRY: Record<BlockType, Serializer> = {
   code: serializeCode,
   image: serializeImage,
   table: serializeTable,
+  graph: serializeGraph,
 };
 
 /** Block types that represent standalone (non-math) document content. */
@@ -381,6 +388,7 @@ const NON_MATH_TYPES: ReadonlySet<BlockType> = new Set<BlockType>([
   "image",
   "tikz",
   "table",
+  "graph",
 ]);
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -426,6 +434,9 @@ function katexFallback(block: Block): string {
       break;
     case "tikz":
       label = "tikz";
+      break;
+    case "graph":
+      label = "graph";
       break;
     default:
       label = "";

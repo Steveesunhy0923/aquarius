@@ -2,6 +2,7 @@
 
 import { BlockView } from "@/components/BlockView";
 import { ExportMenu } from "@/components/ExportMenu";
+import { GraphEditor } from "@/components/GraphEditor";
 import { ImageRowEditor } from "@/components/ImageRowEditor";
 import { Katex } from "@/components/Katex";
 import { SymbolPicker } from "@/components/SymbolPicker";
@@ -39,6 +40,7 @@ import {
   paragraphFromSource,
   previewLatex,
 } from "@/lib/blocks/source";
+import { graphModel, makeGraphBlock, withGraph, type GraphData } from "@/lib/blocks/graph";
 import { DEFAULT_HIGHLIGHT } from "@/lib/blocks/format";
 import { A4_W, A4_H, FONTS, FONT_SIZES, LINE_SPACINGS, INDENTS, fontFamilyOf } from "@/lib/blocks/docstyle";
 import {
@@ -126,6 +128,7 @@ function isEmptyBlock(b: Block): boolean {
     case "table":
     case "code":
     case "tikz":
+    case "graph":
       return false;
     default:
       return !hasContent(b); // text or formula
@@ -174,6 +177,8 @@ export default function EditorPage() {
   const [editSyms, setEditSyms] = useState(false);
   const [picker, setPicker] = useState<Picker>(null);
   const [tablePicker, setTablePicker] = useState(false);
+  // null = closed; { id: null } = drawing a new graph; { id } = editing an existing one.
+  const [graphEdit, setGraphEdit] = useState<{ id: string | null } | null>(null);
   const [listMenu, setListMenu] = useState<null | "bullet" | "number">(null);
   const [hlMenu, setHlMenu] = useState(false);
   const [zoom, setZoom] = useState(1); // page size ratio
@@ -516,6 +521,14 @@ export default function EditorPage() {
     addBlock(displayFromSource(""));
   }
 
+  // ── graphs ────────────────────────────────────────────────────────────────
+  function commitGraph(graph: GraphData) {
+    const target = graphEdit?.id ?? null;
+    if (target) updateById(target, (b) => withGraph(b, graph));
+    else addBlock(makeGraphBlock(graph), false);
+    setGraphEdit(null);
+  }
+
   // ── images ────────────────────────────────────────────────────────────────
   async function onPickImage(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -811,6 +824,7 @@ export default function EditorPage() {
         {/* Text · Equation */}
         <ToolButton onClick={() => addBlock(paragraphFromSource(""))} title="New paragraph (normal text)">T</ToolButton>
         <ToolButton onClick={insertEquation} title="Insert centered equation ($$…$$)">Σ</ToolButton>
+        <ToolButton onClick={() => setGraphEdit({ id: null })} title="Insert interactive graph"><GraphIcon /></ToolButton>
         <span className="mx-1 h-7 w-px bg-border" />
         {/* Bold · Italic · Underline · Strike · Highlight */}
         <button onMouseDown={keepFocus} onClick={() => wrapSelection("**")} title="Bold (**…**)" className={`${ICON_BTN} font-bold`}>B</button>
@@ -936,6 +950,13 @@ export default function EditorPage() {
         <SymbolPicker title="Choose a symbol for this slot" onPick={onPickSymbol} onClose={() => setPicker(null)} />
       ) : null}
       {tablePicker && <TablePicker onPick={insertTable} onClose={() => setTablePicker(false)} />}
+      {graphEdit && (
+        <GraphEditor
+          initial={graphEdit.id ? graphModel(blocks.find((b) => b.id === graphEdit.id) ?? { id: "", type: "graph" }) : undefined}
+          onPick={commitGraph}
+          onClose={() => setGraphEdit(null)}
+        />
+      )}
     </main>
   );
 
@@ -945,6 +966,7 @@ export default function EditorPage() {
     const isList = b.type === "list";
     const isImage = b.type === "image";
     const isTable = b.type === "table";
+    const isGraph = b.type === "graph";
     return (
       <div className="group relative flex items-start gap-1 rounded-lg px-1 py-0.5 hover:bg-foreground/[0.03]" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); moveBlock(dragFrom.current, i); dragFrom.current = null; }}>
         <div className="print-hide flex flex-col items-center pt-1 text-muted opacity-0 transition group-hover:opacity-100">
@@ -1003,6 +1025,10 @@ export default function EditorPage() {
               <TableRowEditor blockId={b.id} tables={tableItems(b)} align={tableAlign(b)} selectedIndex={selected?.id === b.id ? selected.index : null} onSelect={(idx) => selectItem(b.id, idx, "table")} onMove={moveTableItem} onCell={(idx, r, c, v) => tblCell(b.id, idx, r, c, v)} onCaption={(idx, text) => tblCaption(b.id, idx, text)} />
               {selected?.id === b.id && renderControls(b)}
             </>
+          ) : isGraph ? (
+            <button onClick={() => { setSelected(null); setEditingId(null); setGraphEdit({ id: b.id }); }} title="Click to edit this graph" className="block w-full rounded-md px-2 py-1 text-left hover:bg-foreground/[0.03]">
+              <BlockView block={b} />
+            </button>
           ) : b.id === editingId ? (
             <EditBox taRef={taRef} para={editingPara} draft={draft} color={color} previewBlock={editingPara ? withCalloutColor(paragraphFromSource(draft, b.id), color) : displayFromSource(draft, b.id)} onChange={onDraftChange} onColor={pickColor} onExit={() => endEdit(b.id)} sticky={sticky} />
           ) : (
@@ -1187,6 +1213,16 @@ function EditBox({
 
 function ToolButton({ onClick, title, children }: { onClick: () => void; title: string; children: ReactNode }) {
   return <button onClick={onClick} title={title} className={ICON_BTN}>{children}</button>;
+}
+
+/** Small axes-with-a-curve glyph for the "insert graph" toolbar button. */
+function GraphIcon() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M2.5 1.5 V13.5 H14.5" />
+      <path d="M3 11 C6 11 6.5 4 9 4 C11 4 12 8 14 8" stroke="var(--accent)" />
+    </svg>
+  );
 }
 
 // ─── List buttons (icon + style-dropdown) ────────────────────────────────────

@@ -3,12 +3,19 @@
 import { downloadNote } from "@/components/ExportMenu";
 import { NoteCover } from "@/components/NoteCover";
 import { getStore, seedDemoLibrary } from "@/lib/storage";
-import type { LibraryStore, NoteMeta, Notebook, Subject } from "@/lib/storage/types";
+import type { LibraryStore, NoteBundleFile, NoteMeta, Notebook, Subject } from "@/lib/storage/types";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const TRASH_DAYS = 30;
+
+/** Structural check that a parsed JSON value is an Aquarius bundle file. */
+function isAqnoteBundle(x: unknown): x is NoteBundleFile {
+  if (!x || typeof x !== "object") return false;
+  const b = x as Record<string, unknown>;
+  return b.format === "aqnote" && typeof b.meta === "object" && typeof b.pkg === "object";
+}
 
 /** A title not already in `existing`, appending " (2)", " (3)", … if needed. */
 function uniqueTitle(base: string, existing: Set<string>): string {
@@ -188,6 +195,52 @@ export default function LibraryPage() {
     [refresh],
   );
 
+  // ── Import an .aqnote bundle (from a picked file or a link) into this notebook.
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const importBundle = useCallback(
+    async (bundle: NoteBundleFile) => {
+      if (!notebookId) return;
+      const store = getStore();
+      const siblings = await store.listNotes(notebookId);
+      const existing = new Set(siblings.map((n) => n.title));
+      // Keep the source title, disambiguating only if it already exists here.
+      bundle.meta.title = uniqueTitle(bundle.meta.title, existing);
+      await store.importNote(bundle, notebookId);
+      await refresh();
+    },
+    [notebookId, refresh],
+  );
+
+  const importFromFile = useCallback(
+    async (file: File) => {
+      try {
+        const bundle: unknown = JSON.parse(await file.text());
+        if (!isAqnoteBundle(bundle)) throw new Error("not an .aqnote bundle");
+        await importBundle(bundle);
+      } catch (e) {
+        console.error("import failed", e);
+        alert("Couldn't import that file. It must be a valid .aqnote bundle.");
+      }
+    },
+    [importBundle],
+  );
+
+  const importFromLink = useCallback(async () => {
+    const url = prompt("Paste a link to an .aqnote file")?.trim();
+    if (!url) return;
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const bundle: unknown = await res.json();
+      if (!isAqnoteBundle(bundle)) throw new Error("not an .aqnote bundle");
+      await importBundle(bundle);
+    } catch (e) {
+      console.error("import from link failed", e);
+      alert("Couldn't import from that link. It must point to a public .aqnote file.");
+    }
+  }, [importBundle]);
+
   const addTag = useCallback(
     async (note: NoteMeta) => {
       const raw = prompt("Add a tag")?.trim();
@@ -319,15 +372,24 @@ export default function LibraryPage() {
                   {searching ? "Search results" : "Notes"}
                 </h2>
                 {!searching && (
-                  <button
-                    onClick={addNote}
+                  <ImportMenu
                     disabled={!notebookId}
-                    className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40"
-                  >
-                    + New note
-                  </button>
+                    onFile={() => fileInputRef.current?.click()}
+                    onLink={importFromLink}
+                  />
                 )}
               </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".aqnote,application/json"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = ""; // allow re-picking the same file
+                  if (f) importFromFile(f);
+                }}
+              />
 
               {searching ? (
                 !results ? (
@@ -364,14 +426,10 @@ export default function LibraryPage() {
                       ))}
                     </div>
                   )}
-                  {visibleNotes.length === 0 ? (
-                    <Empty>
-                      {tagFilter
-                        ? `No notes tagged “${tagFilter}”.`
-                        : "No notes in this notebook yet — create one."}
-                    </Empty>
+                  {tagFilter && visibleNotes.length === 0 ? (
+                    <Empty>No notes tagged “{tagFilter}”.</Empty>
                   ) : (
-                    <NoteGrid notes={visibleNotes} {...cardProps} />
+                    <NoteGrid notes={visibleNotes} onNew={addNote} {...cardProps} />
                   )}
                 </>
               )}
@@ -402,13 +460,71 @@ function ResultGroup({ label, notes, ...h }: { label: string; notes: NoteMeta[] 
   );
 }
 
-function NoteGrid({ notes, ...h }: { notes: NoteMeta[] } & CardHandlers) {
+function NoteGrid({ notes, onNew, ...h }: { notes: NoteMeta[]; onNew?: () => void } & CardHandlers) {
   return (
     <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] items-start gap-4">
+      {onNew && <NewNoteTile onClick={onNew} />}
       {notes.map((n) => (
         <NoteCard key={n.id} note={n} {...h} />
       ))}
     </div>
+  );
+}
+
+/** A big, card-sized tile that creates a new blank note — always the first cell. */
+function NewNoteTile({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="group flex flex-col rounded-xl border-2 border-dashed border-border bg-surface/40 p-3 text-left transition hover:border-accent hover:bg-accent/[0.03]"
+    >
+      <div className="grid aspect-[3/4] place-items-center rounded-md border border-dashed border-border text-muted transition group-hover:border-accent group-hover:text-accent">
+        <span className="text-5xl font-light leading-none">+</span>
+      </div>
+      <div className="mt-2 text-sm font-medium text-muted transition group-hover:text-accent">New note</div>
+      <div className="text-xs text-muted">Blank document</div>
+    </button>
+  );
+}
+
+/** Dropdown to import a note from an .aqnote file or a link to one. */
+function ImportMenu({
+  disabled,
+  onFile,
+  onLink,
+}: {
+  disabled: boolean;
+  onFile: () => void;
+  onLink: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="relative inline-flex">
+      <button
+        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen((o) => !o); }}
+        disabled={disabled}
+        title="Import a note"
+        className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-muted hover:border-accent hover:text-accent disabled:opacity-40 disabled:hover:border-border disabled:hover:text-muted"
+      >
+        ↧ Import
+      </button>
+      {open && (
+        <>
+          <button
+            className="fixed inset-0 z-40 cursor-default"
+            aria-hidden
+            tabIndex={-1}
+            onClick={(e) => { e.preventDefault(); setOpen(false); }}
+          />
+          <div className="absolute right-0 top-full z-50 mt-1 w-44 rounded-md border border-border bg-surface p-1 text-sm shadow-lg">
+            <MenuItem onClick={() => { setOpen(false); onFile(); }}>
+              From file <span className="text-muted">(.aqnote)</span>
+            </MenuItem>
+            <MenuItem onClick={() => { setOpen(false); onLink(); }}>From link…</MenuItem>
+          </div>
+        </>
+      )}
+    </span>
   );
 }
 

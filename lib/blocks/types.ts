@@ -22,6 +22,8 @@ export type BlockId = string;
 export type BlockType =
   // ── document-level ──────────────────────────────────────────────
   | "text" // paragraph of prose; may contain inline math runs (see attrs.runs)
+  | "heading" // a title/subtitle/subsubtitle: value=text, attrs.level 1|2|3, attrs.numbered
+  | "list" // numbered/unnumbered list: attrs.ordered, attrs.items (string[])
   // ── math leaves (atoms) ─────────────────────────────────────────
   | "symbol" // a named symbol atom, e.g. \alpha, \nabla, \rightarrow
   | "operator" // a binary/relational operator token, e.g. + - = \leq
@@ -39,7 +41,8 @@ export type BlockType =
   // ── rich / non-math blocks ──────────────────────────────────────
   | "tikz" // value: tikz source; attrs.shapes: canvas shape model (optional)
   | "code" // value: source; attrs.lang = "python" | "matlab" | "julia"
-  | "image"; // attrs.assetId references an Asset blob in storage
+  | "image" // a row of one or more images (attrs.images, attrs.align)
+  | "table"; // attrs.table = { style, rows } — a document table
 
 /**
  * A named argument slot holds an ordered list of child blocks.
@@ -100,11 +103,21 @@ export type InlineRun =
  * In "flow" mode blocks stack linearly; in "spatial" mode each block carries
  * an optional position (attrs.x / attrs.y).
  */
+/** Document-wide presentation settings (font, spacing, page layout). */
+export interface DocumentStyle {
+  fontSize?: number; // px, default 14
+  fontFamily?: string; // a key into the editor's font map, default "Computer Modern"
+  lineSpacing?: number; // line-height multiplier, default 1.5
+  indent?: number; // first-line paragraph indent in em, default 0
+  pageLayout?: "vertical" | "horizontal"; // how the A4 pages are arranged
+}
+
 export interface DocumentTree {
   /** Schema version of the tree; bump on breaking shape changes. */
   schema: 1;
   mode: CanvasMode;
   blocks: Block[];
+  style?: DocumentStyle;
 }
 
 export type CanvasMode = "flow" | "spatial";

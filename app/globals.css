@@ -1,4 +1,6 @@
 @import "tailwindcss";
+/* Computer Modern (LaTeX's default font) web fonts — for the document body. */
+@import url("https://cdn.jsdelivr.net/gh/aaaakshat/cm-web-fonts@latest/fonts.css");
 
 :root {
   --background: #fbfbfd;

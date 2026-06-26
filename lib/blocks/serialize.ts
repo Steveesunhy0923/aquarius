@@ -17,6 +17,12 @@ import type {
   DocumentTree,
   InlineRun,
 } from "./types";
+import { escapeLatex } from "./captions";
+import { formatToLatex } from "./format";
+import { headingToLatex } from "./headings";
+import { imageAlign, imageItems } from "./images";
+import { listItems, listOrdered } from "./lists";
+import { tableAlign, tableItems, tableRowToLatex } from "./tables";
 
 /** A serializer turns one block subtree into a LaTeX fragment. */
 type Serializer = (b: Block) => string;
@@ -126,20 +132,42 @@ const BIGOP_OPS: Record<NonNullable<BlockAttrs["op"]>, string> = {
 function serializeText(b: Block): string {
   // A text block is prose, optionally interleaved with inline math runs.
   const runs = attrs(b).runs;
+  let body: string;
   if (Array.isArray(runs) && runs.length > 0) {
-    let out = "";
+    body = "";
     for (const run of runs as InlineRun[]) {
       if (!run) continue;
       if (run.kind === "text") {
-        out += escapeLatexText(run.text ?? "");
+        body += formatToLatex(run.text ?? "");
       } else if (run.kind === "math") {
         const inner = run.block ? renderMath(run.block) : "";
-        out += `\\(${inner}\\)`;
+        body += `\\(${inner}\\)`;
       }
     }
-    return out;
+  } else {
+    body = formatToLatex(b.value ?? "");
   }
-  return escapeLatexText(b.value ?? "");
+
+  // A colored "callout" paragraph exports as an offset quote.
+  // (Colored tcolorbox/mdframed export is a planned refinement.)
+  const callout = attrs(b).calloutColor;
+  if (typeof callout === "string" && callout) {
+    return `\\begin{quote}\n${body}\n\\end{quote}`;
+  }
+  return body;
+}
+
+/** heading → \section / \subsection / \subsubsection (starred if unnumbered). */
+function serializeHeading(b: Block): string {
+  return headingToLatex(b);
+}
+
+/** list → enumerate / itemize. */
+function serializeList(b: Block): string {
+  const env = listOrdered(b) ? "enumerate" : "itemize";
+  const items = listItems(b).filter((it) => it.trim());
+  const lines = items.map((it) => `  \\item ${formatToLatex(it)}`);
+  return `\\begin{${env}}\n${lines.join("\n")}\n\\end{${env}}`;
 }
 
 function serializeFraction(b: Block): string {
@@ -254,11 +282,46 @@ function serializeCode(b: Block): string {
 }
 
 function serializeImage(b: Block): string {
-  const a = attrs(b);
-  const assetId = a.assetId ?? "";
-  const alt = a.alt ?? "";
-  const comment = alt ? `% alt: ${alt.replace(/\r?\n/g, " ")}\n` : "";
-  return `${comment}\\includegraphics{${assetId}}`;
+  const items = imageItems(b);
+  if (items.length === 0) return "";
+  const align = imageAlign(b);
+  const cmd =
+    align === "left"
+      ? "\\raggedright"
+      : align === "right"
+        ? "\\raggedleft"
+        : "\\centering";
+
+  // Any per-image caption → a figure of subfigures, each with its own \caption.
+  if (items.some((it) => (it.caption ?? "").trim())) {
+    const subs = items.map((it) => {
+      const frac = (
+        (it.width ?? Math.max(10, Math.floor(90 / items.length))) / 100
+      ).toFixed(2);
+      const cap = (it.caption ?? "").trim();
+      const capLine = cap ? `\n\\caption{${escapeLatex(cap)}}` : "";
+      return `\\begin{subfigure}{${frac}\\linewidth}\n\\centering\n\\includegraphics[width=\\linewidth]{${it.assetId}}${capLine}\n\\end{subfigure}`;
+    });
+    return `% requires \\usepackage{subcaption}\n\\begin{figure}[h]\n${cmd}\n${subs.join("\\hfill\n")}\n\\end{figure}`;
+  }
+
+  // No captions → a plain aligned row of images.
+  const parts = items.map((it) => {
+    const w =
+      typeof it.width === "number"
+        ? `[width=${(it.width / 100).toFixed(2)}\\linewidth]`
+        : "";
+    const alt = it.alt ? `% ${it.alt.replace(/\r?\n/g, " ")}\n` : "";
+    return `${alt}\\includegraphics${w}{${it.assetId}}`;
+  });
+  const env =
+    align === "left" ? "flushleft" : align === "right" ? "flushright" : "center";
+  return `\\begin{${env}}\n${parts.join("\\hfill\n")}\n\\end{${env}}`;
+}
+
+/** table → a row of centered LaTeX tabulars / subtables in the block's style. */
+function serializeTable(b: Block): string {
+  return tableRowToLatex(tableItems(b), tableAlign(b));
 }
 
 /** tikz → value is already a tikzpicture; emit verbatim. */
@@ -272,6 +335,8 @@ function serializeTikz(b: Block): string {
 
 const LATEX_REGISTRY: Record<BlockType, Serializer> = {
   text: serializeText,
+  heading: serializeHeading,
+  list: serializeList,
   symbol: serializeSymbol,
   operator: serializeOperator,
   number: serializeNumber,
@@ -287,14 +352,18 @@ const LATEX_REGISTRY: Record<BlockType, Serializer> = {
   tikz: serializeTikz,
   code: serializeCode,
   image: serializeImage,
+  table: serializeTable,
 };
 
 /** Block types that represent standalone (non-math) document content. */
 const NON_MATH_TYPES: ReadonlySet<BlockType> = new Set<BlockType>([
   "text",
+  "heading",
+  "list",
   "code",
   "image",
   "tikz",
+  "table",
 ]);
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -414,7 +483,7 @@ function renderTopLevel(block: Block): string {
     // Prose / code / image / tikz render to their natural body LaTeX.
     return blockToLatex(block);
   }
-  // Any math-typed block standing alone becomes display math.
+  // Any math-typed block standing alone becomes a centered display equation.
   const math = renderMath(block);
-  return `\\[ ${math} \\]`;
+  return `$$ ${math} $$`;
 }

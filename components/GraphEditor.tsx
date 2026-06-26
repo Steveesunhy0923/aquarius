@@ -8,6 +8,7 @@ import {
   makeProj,
   newGraphId,
   parabolaPolyline,
+  resolveGeometry,
   resolvePoint,
   SHAPE_PALETTE,
   type CoordSystem,
@@ -81,14 +82,17 @@ export function GraphEditor({
   const dragSnapshot = useRef<GraphData | null>(null); // pre-drag snapshot (undo + rotate base)
   const dragMoved = useRef(false);
   const preConstruct = useRef<GraphData | null>(null); // pre-construction snapshot (multi-click)
+  const captionSnapshot = useRef<GraphData | null>(null); // pre-edit snapshot for the caption field
   const history = useRef<GraphData[]>([]);
   const baseline = useRef<GraphData>(initial ?? defaultGraph()); // for dirty-on-close check
   const svgRef = useRef<SVGSVGElement>(null);
 
-  const W = data.width;
-  const H = data.height;
-  const proj = useMemo(() => makeProj(data.view, W, H), [data.view, W, H]);
-  const scene = useMemo(() => buildScene(data, proj), [data, proj]);
+  // In No-coordinate mode the view/canvas are derived from the grid counts.
+  const geo = useMemo(() => resolveGeometry(data), [data]);
+  const W = geo.width;
+  const H = geo.height;
+  const proj = useMemo(() => makeProj(geo.view, W, H), [geo.view, W, H]);
+  const scene = useMemo(() => buildScene(geo, proj), [geo, proj]);
   const tolMath = SNAP_PX / Math.min(proj.sx, proj.sy);
 
   const pushHistory = (snapshot: GraphData) => {
@@ -288,7 +292,7 @@ export function GraphEditor({
 
     if (tool === "rectangle") {
       // Drag-create: press at one corner, release at the opposite corner.
-      const snap = findSnap(data, pos.mx, pos.my, tolMath, { midpoints: false });
+      const snap = findSnap(geo, pos.mx, pos.my, tolMath, { midpoints: false });
       drag.current = { mode: "rect", start: [snap ? snap.x : pos.mx, snap ? snap.y : pos.my] };
       dragMoved.current = false;
       setCursor({ ...pos, snap });
@@ -296,7 +300,7 @@ export function GraphEditor({
       return;
     }
 
-    const snap = findSnap(data, pos.mx, pos.my, tolMath, { midpoints: tool !== "function" });
+    const snap = findSnap(geo, pos.mx, pos.my, tolMath, { midpoints: tool !== "function" });
     place(pos.mx, pos.my, snap);
   }
 
@@ -306,7 +310,7 @@ export function GraphEditor({
     const dr = drag.current;
 
     if (dr?.mode === "point") {
-      const snap = findSnap(data, pos.mx, pos.my, tolMath, { midpoints: false, exclude: new Set([dr.id]) });
+      const snap = findSnap(geo, pos.mx, pos.my, tolMath, { midpoints: false, exclude: new Set([dr.id]) });
       const x = snap ? snap.x : pos.mx;
       const y = snap ? snap.y : pos.my;
       dragMoved.current = true;
@@ -323,13 +327,13 @@ export function GraphEditor({
       return;
     }
     if (dr?.mode === "rect") {
-      const snap = findSnap(data, pos.mx, pos.my, tolMath, { midpoints: false });
+      const snap = findSnap(geo, pos.mx, pos.my, tolMath, { midpoints: false });
       dragMoved.current = true;
       setCursor({ ...pos, snap });
       return;
     }
 
-    const snap = tool === "select" ? null : findSnap(data, pos.mx, pos.my, tolMath, { midpoints: tool !== "function" });
+    const snap = tool === "select" ? null : findSnap(geo, pos.mx, pos.my, tolMath, { midpoints: tool !== "function" });
     setCursor({ ...pos, snap });
   }
 
@@ -346,7 +350,7 @@ export function GraphEditor({
       if (dragMoved.current && dragSnapshot.current) pushHistory(dragSnapshot.current);
     } else if (dr.mode === "rect") {
       const pos = evtPos(e);
-      const snap = pos ? findSnap(data, pos.mx, pos.my, tolMath, { midpoints: false }) : null;
+      const snap = pos ? findSnap(geo, pos.mx, pos.my, tolMath, { midpoints: false }) : null;
       const ex = snap ? snap.x : pos ? pos.mx : dr.start[0];
       const ey = snap ? snap.y : pos ? pos.my : dr.start[1];
       const [sx, sy] = dr.start;
@@ -559,23 +563,38 @@ export function GraphEditor({
                   </button>
                 ))}
               </div>
-              <div className="grid grid-cols-2 gap-1.5">
-                <NumField label="x min" value={data.view.xmin} onCommit={(v) => setView({ xmin: v })} />
-                <NumField label="x max" value={data.view.xmax} onCommit={(v) => setView({ xmax: v })} />
-                <NumField label="y min" value={data.view.ymin} onCommit={(v) => setView({ ymin: v })} />
-                <NumField label="y max" value={data.view.ymax} onCommit={(v) => setView({ ymax: v })} />
-                <NumField label="grid" value={data.gridStep} onCommit={(v) => v > 0 && apply({ ...data, gridStep: v })} />
-              </div>
-              <div className="mt-2 grid grid-cols-2 gap-1 text-xs">
-                <label className="flex items-center gap-1"><input type="checkbox" checked={data.showGrid} onChange={(e) => apply({ ...data, showGrid: e.target.checked })} /> grid</label>
-                {data.coords !== "none" && (
-                  <>
+              {data.coords === "none" ? (
+                <>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <NumField label="horiz" value={data.gridCols} onCommit={(v) => v >= 1 && apply({ ...data, gridCols: Math.round(v) })} />
+                    <NumField label="vert" value={data.gridRows} onCommit={(v) => v >= 1 && apply({ ...data, gridRows: Math.round(v) })} />
+                  </div>
+                  <div className="mt-2 inline-flex overflow-hidden rounded border border-border text-xs">
+                    {([["complete", "Complete grid"], ["open", "Open edges"]] as Array<[GraphData["gridFill"], string]>).map(([f, lbl]) => (
+                      <button key={f} onClick={() => apply({ ...data, gridFill: f })} className={`px-2 py-1 ${data.gridFill === f ? "bg-accent text-white" : "hover:bg-foreground/5"}`}>
+                        {lbl}
+                      </button>
+                    ))}
+                  </div>
+                  <label className="mt-2 flex items-center gap-1 text-xs"><input type="checkbox" checked={data.showGrid} onChange={(e) => apply({ ...data, showGrid: e.target.checked })} /> show grid</label>
+                  <p className="mt-1.5 text-[11px] leading-snug text-muted">A blank cols × rows grid (no axes). “Open edges” adds partial outer cells that aren’t counted; turn the grid off for a fully blank canvas.</p>
+                </>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <NumField label="x min" value={data.view.xmin} onCommit={(v) => setView({ xmin: v })} />
+                    <NumField label="x max" value={data.view.xmax} onCommit={(v) => setView({ xmax: v })} />
+                    <NumField label="y min" value={data.view.ymin} onCommit={(v) => setView({ ymin: v })} />
+                    <NumField label="y max" value={data.view.ymax} onCommit={(v) => setView({ ymax: v })} />
+                    <NumField label="grid" value={data.gridStep} onCommit={(v) => v > 0 && apply({ ...data, gridStep: v })} />
+                  </div>
+                  <div className="mt-2 grid grid-cols-2 gap-1 text-xs">
+                    <label className="flex items-center gap-1"><input type="checkbox" checked={data.showGrid} onChange={(e) => apply({ ...data, showGrid: e.target.checked })} /> grid</label>
                     <label className="flex items-center gap-1"><input type="checkbox" checked={data.showNumbers} onChange={(e) => apply({ ...data, showNumbers: e.target.checked })} /> numbers</label>
                     <label className="flex items-center gap-1"><input type="checkbox" checked={data.axisArrows} onChange={(e) => apply({ ...data, axisArrows: e.target.checked })} /> arrows</label>
-                  </>
-                )}
-              </div>
-              <p className="mt-1.5 text-[11px] leading-snug text-muted">Pick “No coordinate” (and turn off the grid) for a blank canvas to draw pure geometry.</p>
+                  </div>
+                </>
+              )}
             </section>
 
             {/* function entry */}
@@ -653,9 +672,22 @@ export function GraphEditor({
         </div>
 
         {/* footer */}
-        <div className="flex items-center justify-between border-t border-border px-4 py-2.5">
-          <span className="text-xs text-muted">{data.points.length} point(s) · {data.shapes.length} shape(s)</span>
-          <div className="flex gap-2">
+        <div className="flex items-center gap-3 border-t border-border px-4 py-2.5">
+          <input
+            value={data.caption ?? ""}
+            onFocus={() => { captionSnapshot.current = data; }}
+            onChange={(e) => setData((d) => ({ ...d, caption: e.target.value || undefined }))}
+            onBlur={() => {
+              const snap = captionSnapshot.current;
+              captionSnapshot.current = null;
+              // Record exactly one undoable step per caption edit session.
+              if (snap && snap.caption !== data.caption) pushHistory(snap);
+            }}
+            placeholder="Caption (optional)…"
+            className="w-56 rounded border border-border bg-background px-2 py-1 text-sm outline-none focus:border-accent"
+          />
+          <span className="hidden text-xs text-muted sm:inline">{data.points.length} pt · {data.shapes.length} shape</span>
+          <div className="ml-auto flex gap-2">
             <button onClick={requestClose} className="rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent">Cancel</button>
             <button onClick={() => onPick(data)} className="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white">{initial ? "Save" : "Insert"}</button>
           </div>

@@ -366,6 +366,15 @@ export class LocalLibraryStore implements LibraryStore {
       .sort((a, b) => (b.deletedAt ?? "").localeCompare(a.deletedAt ?? ""));
   }
 
+  async listRecentNotes(limit = 50): Promise<NoteMeta[]> {
+    const db = await this.db();
+    const notes = await db.getAll("notes");
+    return notes
+      .filter((n) => !n.deletedAt)
+      .sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""))
+      .slice(0, Math.max(0, limit));
+  }
+
   async getNoteMeta(id: EntityId): Promise<NoteMeta | undefined> {
     const db = await this.db();
     return db.get("notes", id);

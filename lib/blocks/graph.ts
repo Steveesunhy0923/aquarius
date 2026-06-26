@@ -75,6 +75,17 @@ export interface GraphData {
   axisArrows: boolean;
   /** Math-unit spacing between grid lines / snap nodes (rect) and rings (polar). */
   gridStep: number;
+  /** No-coordinate mode only: grid dimensions in cells (horizontal × vertical). */
+  gridCols: number;
+  gridRows: number;
+  /**
+   * No-coordinate grid style: "complete" = a fully-bounded cols×rows grid;
+   * "open" = the same complete cells plus a fringe of partial outer cells that
+   * bleed off the canvas (and are not counted).
+   */
+  gridFill: "complete" | "open";
+  /** Optional figure caption (rendered below the figure; \caption{} in LaTeX). */
+  caption?: string;
   points: GPoint[];
   shapes: GShape[];
 }
@@ -91,8 +102,36 @@ export function defaultGraph(): GraphData {
     showNumbers: true,
     axisArrows: true,
     gridStep: 1,
+    gridCols: 10,
+    gridRows: 10,
+    gridFill: "complete",
     points: [],
     shapes: [],
+  };
+}
+
+/** Target on-screen size (px) of the longer side of a No-coordinate grid. */
+const NONE_GRID_PX = 440;
+
+/**
+ * In No-coordinate mode, the view/canvas are DERIVED from the grid counts (so the
+ * panel only asks for horizontal × vertical cells). "complete" fits the canvas to
+ * exactly cols×rows whole cells; "open" pads a half-cell so the outer cells are
+ * cut off by the edge (partial, uncounted). Other modes pass through unchanged.
+ */
+export function resolveGeometry(data: GraphData): GraphData {
+  if (data.coords !== "none") return data;
+  const cols = Math.min(60, Math.max(1, Math.round(data.gridCols))) || 1;
+  const rows = Math.min(60, Math.max(1, Math.round(data.gridRows))) || 1;
+  const cell = Math.max(10, Math.round(NONE_GRID_PX / Math.max(cols, rows)));
+  const open = data.gridFill === "open";
+  const pad = open ? 0.5 : 0;
+  return {
+    ...data,
+    gridStep: 1,
+    view: { xmin: -pad, xmax: cols + pad, ymin: -pad, ymax: rows + pad },
+    width: Math.round(cell * (cols + 2 * pad)),
+    height: Math.round(cell * (rows + 2 * pad)),
   };
 }
 
@@ -169,6 +208,10 @@ export function graphModel(block: Block): GraphData {
     showNumbers: g.showNumbers !== false,
     axisArrows: g.axisArrows !== false,
     gridStep: g.gridStep && g.gridStep > 0 ? g.gridStep : d.gridStep,
+    gridCols: g.gridCols && g.gridCols > 0 ? Math.round(g.gridCols) : d.gridCols,
+    gridRows: g.gridRows && g.gridRows > 0 ? Math.round(g.gridRows) : d.gridRows,
+    gridFill: g.gridFill === "open" ? "open" : "complete",
+    caption: typeof g.caption === "string" ? g.caption : undefined,
     points: Array.isArray(g.points) ? g.points.filter(isPoint) : [],
     shapes: Array.isArray(g.shapes) ? g.shapes.filter(isShape) : [],
   };
@@ -777,6 +820,7 @@ function shapeOpts(nameOf: (hex?: string) => string, lineHex?: string, fillHex?:
  * ratio matches the on-screen SVG).
  */
 export function graphToTikz(data: GraphData): string {
+  data = resolveGeometry(data); // derive view/canvas from grid counts in "none" mode
   const { view } = data;
   // Fit the longer axis to ~8cm; keep the on-screen aspect ratio.
   const ratio = data.height / data.width;
@@ -788,7 +832,6 @@ export function graphToTikz(data: GraphData): string {
 
   const { defs, nameOf } = colorDefs(data);
   const lines: string[] = [];
-  lines.push("% requires \\usepackage{tikz}");
   lines.push(...defs);
   lines.push(`\\begin{tikzpicture}[x=${xunit}cm,y=${yunit}cm]`);
   lines.push(`\\clip ${coord([view.xmin, view.ymin])} rectangle ${coord([view.xmax, view.ymax])};`);
@@ -804,6 +847,14 @@ export function graphToTikz(data: GraphData): string {
       }
       for (let a = 0; a < 360; a += 30) {
         lines.push(`\\draw[help lines] (0,0) -- (${a}:${fmt(maxR)});`);
+      }
+    } else if (data.coords === "none") {
+      // Explicit lines (integer-anchored) so partial outer cells match the SVG.
+      for (const x of multiplesIn(view.xmin, view.xmax, data.gridStep)) {
+        lines.push(`\\draw[help lines] (${fmt(x)},${fmt(view.ymin)}) -- (${fmt(x)},${fmt(view.ymax)});`);
+      }
+      for (const y of multiplesIn(view.ymin, view.ymax, data.gridStep)) {
+        lines.push(`\\draw[help lines] (${fmt(view.xmin)},${fmt(y)}) -- (${fmt(view.xmax)},${fmt(y)});`);
       }
     } else {
       lines.push(
@@ -913,5 +964,12 @@ export function graphToTikz(data: GraphData): string {
   }
 
   lines.push("\\end{tikzpicture}");
-  return lines.join("\n");
+
+  const caption = (data.caption ?? "").trim();
+  const body = lines.join("\n");
+  if (caption) {
+    // A captioned figure (\caption needs a float environment).
+    return `% requires \\usepackage{tikz}\n\\begin{figure}[h]\n\\centering\n${body}\n\\caption{${escapeLatex(caption)}}\n\\end{figure}`;
+  }
+  return `% requires \\usepackage{tikz}\n${body}`;
 }

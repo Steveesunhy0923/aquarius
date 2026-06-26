@@ -201,6 +201,8 @@ export interface LibraryStore {
   searchNotes(query: string): Promise<{ title: NoteMeta[]; content: NoteMeta[] }>;
   /** All soft-deleted notes ("Recently Deleted"), most-recently-deleted first. */
   listDeletedNotes(): Promise<NoteMeta[]>;
+  /** Most-recently-updated notes across the whole library (excludes deleted). */
+  listRecentNotes(limit?: number): Promise<NoteMeta[]>;
 
   // ── Note packages (heavy content) ──
   openNote(id: EntityId): Promise<NotePackage>;

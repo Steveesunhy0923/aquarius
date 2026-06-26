@@ -4,6 +4,7 @@ import {
   buildScene,
   graphModel,
   makeProj,
+  resolveGeometry,
   type GraphData,
   type SceneItem,
   type SceneLabel,
@@ -19,15 +20,17 @@ import type { Block } from "@/lib/blocks/types";
  * with pointer handlers layered on top.
  */
 export function GraphView({ block, data }: { block?: Block; data?: GraphData }) {
-  const model = data ?? (block ? graphModel(block) : null);
-  if (!model) return null;
+  const raw = data ?? (block ? graphModel(block) : null);
+  if (!raw) return null;
+  const model = resolveGeometry(raw); // No-coordinate mode derives view/canvas from grid counts
   const W = model.width;
   const H = model.height;
   const proj = makeProj(model.view, W, H);
   const scene = buildScene(model, proj);
 
+  const caption = (model.caption ?? "").trim();
   return (
-    <div className="flex justify-center text-foreground">
+    <figure className="m-0 flex flex-col items-center text-foreground">
       <svg
         width={W}
         height={H}
@@ -43,7 +46,8 @@ export function GraphView({ block, data }: { block?: Block; data?: GraphData }) 
         <g>{scene.shapes.map((s, i) => renderItem(s, `s${i}`))}</g>
         <g>{scene.points.map((p) => renderPoint(p))}</g>
       </svg>
-    </div>
+      {caption && <figcaption className="mt-1 text-center text-sm italic text-muted">{caption}</figcaption>}
+    </figure>
   );
 }
 

@@ -82,6 +82,13 @@ body {
   .print-hide {
     display: none !important;
   }
+  /* Flatten the split-view layout shells so the active pane's pages flow. */
+  .print-flow {
+    display: block !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+  }
   .print-surface {
     overflow: visible !important;
     padding: 0 !important;

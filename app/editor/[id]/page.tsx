@@ -63,12 +63,15 @@ import {
 } from "@/lib/blocks/tables";
 import type { Block, DocumentStyle } from "@/lib/blocks/types";
 import { getStore } from "@/lib/storage";
-import type { NotePackage } from "@/lib/storage/types";
+import type { NotePackage, NoteMeta } from "@/lib/storage/types";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
+  useCallback,
   useEffect,
+  useImperativeHandle,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -80,6 +83,34 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
+
+/** Imperative API a DocumentEditor exposes to the page (for the section outline). */
+export interface DocHandle {
+  scrollToBlock: (id: string) => void;
+  toggleSection: (id: string) => void;
+  reorderSections: (fromHeadingId: string, toHeadingId: string | null) => void;
+}
+
+/** One entry in the section outline (a heading). */
+export interface OutlineItem {
+  id: string;
+  text: string;
+  level: number;
+  collapsed: boolean;
+}
+
+interface DocProps {
+  id: string;
+  /** The route's document; only the primary participates in ?new/?print behavior. */
+  primary: boolean;
+  split: boolean;
+  onActivate: () => void;
+  onClose?: () => void;
+  onHeadings: (items: OutlineItem[]) => void;
+  /** Fired after a successful save so the page can refresh the recent-files list. */
+  onSaved?: () => void;
+  handleRef: MutableRefObject<DocHandle | null>;
+}
 
 const SYM_KEY = "aquarius.symbols";
 const DEFAULT_TB1 = ["\\frac{}{}", "\\sqrt{}", "^{}", "\\sum_{}^{}", "\\int_{}^{}", "\\sin", "\\cos", "\\neq", "\\pi", "\\alpha"];
@@ -140,6 +171,75 @@ function isEmptyDoc(blocks: Block[]): boolean {
   return blocks.length === 0 || blocks.every(isEmptyBlock);
 }
 
+// ─── Section outline helpers ──────────────────────────────────────────────────
+
+const isHeadingCollapsed = (b: Block): boolean => !!b.attrs?.collapsed;
+
+/** The flat outline (one entry per heading), in document order. */
+function computeOutline(blocks: Block[]): OutlineItem[] {
+  const out: OutlineItem[] = [];
+  for (const b of blocks) {
+    if (b.type === "heading") {
+      out.push({ id: b.id, text: b.value?.trim() || "Untitled heading", level: headingLevel(b), collapsed: isHeadingCollapsed(b) });
+    }
+  }
+  return out;
+}
+
+/**
+ * Block ids hidden because they live inside a collapsed section. A collapsed
+ * heading hides every following block (incl. deeper headings) until the next
+ * heading whose level is the same or higher. The collapsed heading itself shows.
+ */
+function hiddenBlockIds(blocks: Block[]): Set<string> {
+  const hidden = new Set<string>();
+  let hiding = false;
+  let threshold = 0;
+  for (const b of blocks) {
+    if (b.type === "heading") {
+      const lvl = headingLevel(b);
+      if (hiding) {
+        if (lvl <= threshold) hiding = false; // this heading starts a visible region
+        else { hidden.add(b.id); continue; } // deeper heading — stay hidden
+      }
+      if (isHeadingCollapsed(b)) { hiding = true; threshold = lvl; }
+      continue;
+    }
+    if (hiding) hidden.add(b.id);
+  }
+  return hidden;
+}
+
+/** [start, end) index range of a heading's section subtree (heading + its body). */
+function sectionRange(blocks: Block[], headingId: string): [number, number] | null {
+  const start = blocks.findIndex((b) => b.id === headingId);
+  if (start < 0 || blocks[start].type !== "heading") return null;
+  const level = headingLevel(blocks[start]);
+  let end = start + 1;
+  while (end < blocks.length) {
+    const b = blocks[end];
+    if (b.type === "heading" && headingLevel(b) <= level) break;
+    end++;
+  }
+  return [start, end];
+}
+
+/** Move the `from` heading's whole section relative to the `to` section (or end). */
+function reorderSectionBlocks(blocks: Block[], fromId: string, toId: string | null): Block[] {
+  const from = sectionRange(blocks, fromId);
+  if (!from) return blocks;
+  const moving = blocks.slice(from[0], from[1]);
+  const rest = [...blocks.slice(0, from[0]), ...blocks.slice(from[1])];
+  if (toId === null) return [...rest, ...moving]; // drop at end
+  const origTo = sectionRange(blocks, toId);
+  const movingDown = !!origTo && origTo[0] > from[0];
+  const to = sectionRange(rest, toId);
+  if (!to) return blocks; // target was inside the moved subtree (e.g. its own child)
+  // Dragging down → drop AFTER the target section; dragging up → drop BEFORE it.
+  const at = movingDown ? to[1] : to[0];
+  return [...rest.slice(0, at), ...moving, ...rest.slice(at)];
+}
+
 function readLS(key: string, fallback: string[]): string[] {
   if (typeof window === "undefined") return fallback;
   try {
@@ -154,9 +254,7 @@ function readLS(key: string, fallback: string[]): string[] {
 type Picker = { kind: "symbol"; index: number } | { kind: "insert" } | null;
 type Selected = { id: string; index: number; kind: "image" | "table" } | null;
 
-export default function EditorPage() {
-  const { id } = useParams<{ id: string }>();
-
+function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, onSaved, handleRef }: DocProps) {
   const [pkg, setPkg] = useState<NotePackage | null>(null);
   const [title, setTitle] = useState("");
   const [showSource, setShowSource] = useState(false);
@@ -213,13 +311,16 @@ export default function EditorPage() {
   const printedRef = useRef(false); // guards the one-shot ?print=1 auto-print
 
   useEffect(() => {
-    if (typeof window !== "undefined")
+    if (primary && typeof window !== "undefined")
       createdNew.current = new URLSearchParams(window.location.search).get("new") === "1";
-  }, []);
+  }, [primary]);
   useEffect(() => {
     pkgRef.current = pkg;
   }, [pkg]);
   useEffect(() => {
+    // The editable symbol slots are a global preference shared via localStorage.
+    // In split view both panes persist to the same key (last write wins; the
+    // other pane converges on its next mount) — acceptable for a rare action.
     if (typeof window !== "undefined") try { localStorage.setItem(SYM_KEY, JSON.stringify(symbols)); } catch { /* noop */ }
   }, [symbols]);
   // Autosave: debounce a write ~800ms after the last change to the note/title.
@@ -273,7 +374,7 @@ export default function EditorPage() {
   // Arrived via a "Download PDF" action (?print=1): open the print dialog once
   // the document has loaded and rendered.
   useEffect(() => {
-    if (!pkg || printedRef.current) return;
+    if (!primary || !pkg || printedRef.current) return;
     if (typeof window === "undefined") return;
     if (new URLSearchParams(window.location.search).get("print") !== "1") return;
     printedRef.current = true;
@@ -319,6 +420,28 @@ export default function EditorPage() {
   function updateTableItem(blockId: string, i: number, fn: (t: TableData) => TableData) {
     updateById(blockId, (b) => withTables(b, tableItems(b).map((t, k) => (k === i ? fn(t) : t))));
   }
+
+  // ── section outline (driven from the page's left sidebar) ──────────────────
+  function scrollToBlock(blockId: string) {
+    blockEls.current.get(blockId)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+  function toggleSection(blockId: string) {
+    updateById(blockId, (b) => ({ ...b, attrs: { ...b.attrs, collapsed: !b.attrs?.collapsed } }));
+  }
+  function reorderSections(fromId: string, toId: string | null) {
+    setBlocks((bs) => reorderSectionBlocks(bs, fromId, toId));
+  }
+  useImperativeHandle(handleRef, () => ({ scrollToBlock, toggleSection, reorderSections }), [handleRef]);
+  // Report the outline to the page whenever it actually changes (not every keystroke).
+  const lastOutline = useRef("");
+  useEffect(() => {
+    const items = computeOutline(pkgRef.current?.tree.blocks ?? []);
+    const key = JSON.stringify(items);
+    if (key !== lastOutline.current) {
+      lastOutline.current = key;
+      onHeadings(items);
+    }
+  }, [pkg, onHeadings]);
 
   function commit(text: string, c: string | null) {
     if (!editingId) return;
@@ -714,6 +837,7 @@ export default function EditorPage() {
         // `deletedAt: null` implicitly restores a trashed note the moment it is
         // edited — so edited work can never be silently purged from the bin.
         await store.updateNoteMeta(id, { title: t, deletedAt: null });
+        onSaved?.(); // let the page refresh its recent-files list (title/recency)
         // Only clear the dirty flag if nothing changed while we were writing;
         // otherwise leave it dirty so the debounce schedules another save.
         if (pkgRef.current === p && titleRef.current === t) setSaved(true);
@@ -738,10 +862,14 @@ export default function EditorPage() {
   saveFnRef.current = save;
 
   if (!pkg) {
-    return <main className="grid min-h-screen place-items-center text-muted">Opening note…</main>;
+    return <div className="grid h-full place-items-center text-muted">Opening note…</div>;
   }
 
   const blocks = pkg.tree.blocks;
+  // Collapsed sections hide their body blocks in the editor view (content stays
+  // in the tree and still exports); the heading itself remains visible.
+  const hidden = hiddenBlockIds(blocks);
+  const visibleBlocks = hidden.size ? blocks.filter((b) => !hidden.has(b.id)) : blocks;
   const headingNumbers = computeHeadingNumbers(blocks);
   const editingBlock = editingId ? blocks.find((b) => b.id === editingId) : null;
   const currentStyle: "text" | HeadingLevel =
@@ -780,7 +908,7 @@ export default function EditorPage() {
   const indent = docStyle.indent ?? 0;
   const layout = docStyle.pageLayout ?? "vertical";
   const indexById = new Map(blocks.map((b, i) => [b.id, i] as const));
-  const packed = paginate(blocks, heights, pageContent);
+  const packed = paginate(visibleBlocks, heights, pageContent);
   // Always keep one completely blank page at the end so the canvas never feels
   // "full". paginate() only ends on an empty page for an empty document; once
   // there's content, append a fresh blank sheet. Same page list drives both the
@@ -799,15 +927,16 @@ export default function EditorPage() {
   } as CSSProperties;
 
   return (
-    <main className="flex min-h-screen flex-col">
+    <main className="flex h-full min-h-0 flex-col" onMouseDown={onActivate}>
       <input ref={fileRef} type="file" accept="image/*" onChange={onPickImage} className="hidden" />
 
-      <header className="print-hide flex items-center gap-4 border-b border-border px-6 py-3">
-        <Link href="/" className="text-sm text-muted hover:text-accent">← Library</Link>
+      <header className="print-hide flex items-center gap-3 border-b border-border px-4 py-3">
+        {split && <span className="rounded bg-foreground/5 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted">{primary ? "A" : "B"}</span>}
         <input value={title} onChange={(e) => { setTitle(e.target.value); setSaved(false); }} className="flex-1 bg-transparent text-lg font-semibold outline-none" />
         <button onClick={() => setShowSource((s) => !s)} className="rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent">{showSource ? "Editor" : "LaTeX"}</button>
         <ExportMenu noteId={id} title={title} beforeExport={save} onPdf={printPdf} label="Export ▾" className="rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent" />
         <button onClick={save} title="Saves automatically; click to save now" className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white">{saving ? "Saving…" : saved ? "Saved" : "Save"}</button>
+        {onClose && <button onClick={onClose} title="Close this pane" className="rounded-md border border-border px-2 py-1.5 text-sm text-muted hover:border-red-500 hover:text-red-500">✕</button>}
       </header>
 
       {/* Block tools */}
@@ -967,12 +1096,24 @@ export default function EditorPage() {
     const isImage = b.type === "image";
     const isTable = b.type === "table";
     const isGraph = b.type === "graph";
+    // Move targets are computed in VISIBLE-list space (then mapped back to the
+    // full-array index) so arrows never swap a block with a hidden, collapsed-
+    // section body block. Collapsed headings can't be nudged inline (use the
+    // outline drag, which moves the whole section).
+    const vIdx = hidden.has(b.id) ? -1 : visibleBlocks.findIndex((x) => x.id === b.id);
+    const collapsedHeading = b.type === "heading" && isHeadingCollapsed(b);
+    const canUp = vIdx > 0 && !collapsedHeading;
+    const canDown = vIdx >= 0 && vIdx < visibleBlocks.length - 1 && !collapsedHeading;
+    const moveVisible = (dir: -1 | 1) => {
+      const target = visibleBlocks[vIdx + dir];
+      if (target) moveBlock(i, indexById.get(target.id) ?? i);
+    };
     return (
       <div className="group relative flex items-start gap-1 rounded-lg px-1 py-0.5 hover:bg-foreground/[0.03]" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); moveBlock(dragFrom.current, i); dragFrom.current = null; }}>
         <div className="print-hide flex flex-col items-center pt-1 text-muted opacity-0 transition group-hover:opacity-100">
-          <button onClick={() => moveBlock(i, i - 1)} disabled={i === 0} title="Move up" className="leading-none hover:text-accent disabled:opacity-30">▲</button>
+          <button onClick={() => moveVisible(-1)} disabled={!canUp} title="Move up" className="leading-none hover:text-accent disabled:opacity-30">▲</button>
           <span draggable onDragStart={() => (dragFrom.current = i)} title="Drag to reorder block" className="cursor-grab select-none leading-none active:cursor-grabbing">⠿</span>
-          <button onClick={() => moveBlock(i, i + 1)} disabled={i === blocks.length - 1} title="Move down" className="leading-none hover:text-accent disabled:opacity-30">▼</button>
+          <button onClick={() => moveVisible(1)} disabled={!canDown} title="Move down" className="leading-none hover:text-accent disabled:opacity-30">▼</button>
         </div>
 
         <div className="min-w-0 flex-1">
@@ -997,9 +1138,13 @@ export default function EditorPage() {
                 <input value={b.value ?? ""} autoFocus onChange={(e) => setHeadingText(b.id, e.target.value)} placeholder="Heading text…" style={{ textAlign: headingAlign(b) }} className="w-full bg-transparent text-xl font-semibold outline-none" />
               </div>
             ) : (
-              <button onClick={() => startEditHeading(b)} className="block w-full text-left">
-                <HeadingDisplay block={b} number={headingNumbers.get(b.id)} />
-              </button>
+              <div className="flex items-center gap-1">
+                <button onMouseDown={(e) => e.preventDefault()} onClick={() => toggleSection(b.id)} title={isHeadingCollapsed(b) ? "Expand section" : "Collapse section"} className="print-hide shrink-0 text-muted hover:text-accent">{isHeadingCollapsed(b) ? "▸" : "▾"}</button>
+                <button onClick={() => startEditHeading(b)} className="block flex-1 text-left">
+                  <HeadingDisplay block={b} number={headingNumbers.get(b.id)} />
+                </button>
+                {isHeadingCollapsed(b) && <span className="print-hide whitespace-nowrap text-xs italic text-muted">section hidden</span>}
+              </div>
             )
           ) : isList ? (
             b.id === editingId ? (
@@ -1101,6 +1246,188 @@ export default function EditorPage() {
       </div>
     );
   }
+}
+
+// ─── The editor route: shared strip + left sidebar + up to two split panes ────
+
+export default function EditorPage() {
+  const { id } = useParams<{ id: string }>();
+  const [secondId, setSecondId] = useState<string | null>(null);
+  const [activeSlot, setActiveSlot] = useState<"a" | "b">("a");
+  const [outlineA, setOutlineA] = useState<OutlineItem[]>([]);
+  const [outlineB, setOutlineB] = useState<OutlineItem[]>([]);
+  const [notesRev, setNotesRev] = useState(0); // bumped on save → refresh recent files
+  const handleA = useRef<DocHandle | null>(null);
+  const handleB = useRef<DocHandle | null>(null);
+  const bumpNotes = useCallback(() => setNotesRev((v) => v + 1), []);
+
+  // Opening the primary doc resets the split; opening a file puts it in pane B.
+  useEffect(() => { setSecondId(null); setActiveSlot("a"); }, [id]);
+
+  const openSecond = useCallback((noteId: string) => {
+    if (noteId === id) { setActiveSlot("a"); return; }
+    setSecondId(noteId); // limit of 2: a new pick replaces the existing pane B
+    setActiveSlot("b");
+  }, [id]);
+  const closeSecond = useCallback(() => { setSecondId(null); setActiveSlot("a"); }, []);
+
+  const onHeadingsA = useCallback((o: OutlineItem[]) => setOutlineA(o), []);
+  const onHeadingsB = useCallback((o: OutlineItem[]) => setOutlineB(o), []);
+
+  const split = secondId !== null;
+  const active: "a" | "b" = split ? activeSlot : "a";
+  const activeHandle = active === "a" ? handleA : handleB;
+  const activeOutline = active === "a" ? outlineA : outlineB;
+
+  return (
+    <div className="print-flow flex h-screen flex-col">
+      <div className="print-hide flex items-center gap-3 border-b border-border px-4 py-2">
+        <Link href="/" className="text-sm text-muted hover:text-accent">← Library</Link>
+        <span className="text-sm font-semibold tracking-tight">Aquarius</span>
+        {split && <span className="text-xs text-muted">Split view — click a pane to focus its tools &amp; outline</span>}
+        <span className="ml-auto text-xs text-muted">{split ? "2 / 2 open" : "1 open"}</span>
+      </div>
+
+      <div className="print-flow flex min-h-0 flex-1">
+        <EditorSidebar currentId={id} secondId={secondId} onOpen={openSecond} outline={activeOutline} handle={activeHandle} notesRev={notesRev} />
+        <div className="print-flow flex min-w-0 flex-1">
+          {/* Exactly one of print-flow / print-hide per wrapper, so only the active pane prints. */}
+          <div className={`min-w-0 flex-1 overflow-hidden ${!split || active === "a" ? "print-flow" : "print-hide"} ${split ? "border-r border-border" : ""} ${split && active === "a" ? "ring-1 ring-inset ring-accent/50" : ""}`}>
+            <DocumentEditor key={id} id={id} primary split={split} onActivate={() => setActiveSlot("a")} onHeadings={onHeadingsA} onSaved={bumpNotes} handleRef={handleA} />
+          </div>
+          {split && secondId && (
+            <div className={`min-w-0 flex-1 overflow-hidden ${active === "b" ? "print-flow" : "print-hide"} ${active === "b" ? "ring-1 ring-inset ring-accent/50" : ""}`}>
+              <DocumentEditor key={secondId} id={secondId} primary={false} split onActivate={() => setActiveSlot("b")} onClose={closeSecond} onHeadings={onHeadingsB} onSaved={bumpNotes} handleRef={handleB} />
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Left rail: a searchable recent-files list (top) and the section outline (bottom). */
+function EditorSidebar({
+  currentId,
+  secondId,
+  onOpen,
+  outline,
+  handle,
+  notesRev,
+}: {
+  currentId: string;
+  secondId: string | null;
+  onOpen: (id: string) => void;
+  outline: OutlineItem[];
+  handle: MutableRefObject<DocHandle | null>;
+  notesRev: number;
+}) {
+  return (
+    <aside className="print-hide flex w-60 shrink-0 flex-col border-r border-border">
+      <RecentFilesPanel currentId={currentId} secondId={secondId} onOpen={onOpen} notesRev={notesRev} />
+      <SectionOutline outline={outline} handle={handle} />
+    </aside>
+  );
+}
+
+function RecentFilesPanel({ currentId, secondId, onOpen, notesRev }: { currentId: string; secondId: string | null; onOpen: (id: string) => void; notesRev: number }) {
+  const [query, setQuery] = useState("");
+  const [recent, setRecent] = useState<NoteMeta[]>([]);
+  const [results, setResults] = useState<NoteMeta[] | null>(null);
+
+  // Refresh when the open documents change or any pane saves (titles/recency shift).
+  useEffect(() => {
+    getStore().listRecentNotes(60).then(setRecent).catch(() => {});
+  }, [currentId, secondId, notesRev]);
+
+  useEffect(() => {
+    const q = query.trim();
+    if (!q) { setResults(null); return; }
+    let alive = true;
+    const t = setTimeout(() => {
+      getStore().searchNotes(q).then((r) => { if (alive) setResults([...r.title, ...r.content]); }).catch(() => {});
+    }, 200);
+    return () => { alive = false; clearTimeout(t); };
+  }, [query]);
+
+  const list = results ?? recent;
+  return (
+    <div className="flex min-h-0 flex-1 flex-col border-b border-border">
+      <div className="px-3 pb-2 pt-3">
+        <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted">Files</h2>
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search files…" className="w-full rounded-md border border-border bg-surface px-2 py-1.5 text-sm outline-none focus:border-accent" />
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+        {list.length === 0 ? (
+          <p className="px-2 py-2 text-xs text-muted">{query.trim() ? "No matches." : "No files yet."}</p>
+        ) : (
+          list.map((n) => {
+            const open = n.id === currentId || n.id === secondId;
+            return (
+              <button
+                key={n.id}
+                onClick={() => onOpen(n.id)}
+                disabled={open}
+                title={open ? "Already open" : "Open on the right (split view)"}
+                className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm ${open ? "bg-accent/10 text-accent" : "hover:bg-foreground/5"}`}
+              >
+                <span className="truncate">{n.title || "Untitled"}</span>
+                {open && <span className="ml-auto shrink-0 text-[10px] uppercase">{n.id === currentId ? "A" : "B"}</span>}
+              </button>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Overleaf-style outline: click to jump, drag to reorder, eye to hide a section. */
+function SectionOutline({ outline, handle }: { outline: OutlineItem[]; handle: MutableRefObject<DocHandle | null> }) {
+  const dragId = useRef<string | null>(null);
+  return (
+    <div className="flex min-h-0 flex-[1.3] flex-col">
+      <h2 className="px-3 pb-2 pt-3 text-xs font-medium uppercase tracking-wide text-muted">Sections</h2>
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+        {outline.length === 0 ? (
+          <p className="px-2 py-2 text-xs text-muted">No headings yet. Add a Title/Subtitle to outline this document.</p>
+        ) : (
+          <>
+            {outline.map((item) => (
+              <div
+                key={item.id}
+                draggable
+                onDragStart={() => { dragId.current = item.id; }}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (dragId.current && dragId.current !== item.id) handle.current?.reorderSections(dragId.current, item.id);
+                  dragId.current = null;
+                }}
+                className="group flex items-center gap-1 rounded-md hover:bg-foreground/5"
+                style={{ paddingLeft: `${(item.level - 1) * 12}px` }}
+              >
+                <span className="cursor-grab select-none px-0.5 text-muted opacity-0 group-hover:opacity-100" title="Drag to reorder">⠿</span>
+                <button onClick={() => handle.current?.scrollToBlock(item.id)} className={`min-w-0 flex-1 truncate py-1 text-left text-sm ${item.collapsed ? "text-muted line-through" : ""}`} title={item.text}>
+                  {item.text}
+                </button>
+                <button onClick={() => handle.current?.toggleSection(item.id)} title={item.collapsed ? "Show section" : "Hide section"} className="shrink-0 px-1 text-xs text-muted opacity-0 hover:text-accent group-hover:opacity-100">
+                  {item.collapsed ? "🙈" : "👁"}
+                </button>
+              </div>
+            ))}
+            <div
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => { e.preventDefault(); if (dragId.current) handle.current?.reorderSections(dragId.current, null); dragId.current = null; }}
+              className="mt-1 rounded border border-dashed border-transparent py-1 text-center text-[10px] text-muted hover:border-border"
+            >
+              drop here to move to end
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function HeadingDisplay({ block, number }: { block: Block; number?: string }) {

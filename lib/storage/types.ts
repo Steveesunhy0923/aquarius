@@ -93,6 +93,8 @@ export interface NoteMeta {
   updatedAt: ISOTimestamp;
   /** Whether the heavy package has unsynced local changes. */
   dirty?: boolean;
+  /** When set, the note is in "Recently Deleted" (soft-deleted), not listed normally. */
+  deletedAt?: ISOTimestamp | null;
   rev?: string | null;
 }
 
@@ -192,6 +194,13 @@ export interface LibraryStore {
   updateNoteMeta(id: EntityId, patch: Partial<NoteMeta>): Promise<NoteMeta>;
   deleteNote(id: EntityId): Promise<void>;
   moveNote(id: EntityId, toNotebookId: EntityId): Promise<void>;
+  /**
+   * Search the whole library. `title` holds notes whose title or tags match;
+   * `content` holds the remaining notes whose body (latexCache) matches.
+   */
+  searchNotes(query: string): Promise<{ title: NoteMeta[]; content: NoteMeta[] }>;
+  /** All soft-deleted notes ("Recently Deleted"), most-recently-deleted first. */
+  listDeletedNotes(): Promise<NoteMeta[]>;
 
   // ── Note packages (heavy content) ──
   openNote(id: EntityId): Promise<NotePackage>;

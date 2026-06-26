@@ -1,6 +1,7 @@
 "use client";
 
 import { BlockView } from "@/components/BlockView";
+import { ExportMenu } from "@/components/ExportMenu";
 import { ImageRowEditor } from "@/components/ImageRowEditor";
 import { Katex } from "@/components/Katex";
 import { SymbolPicker } from "@/components/SymbolPicker";
@@ -39,7 +40,16 @@ import {
   previewLatex,
 } from "@/lib/blocks/source";
 import { DEFAULT_HIGHLIGHT } from "@/lib/blocks/format";
-import { listItems, listOrdered, makeList, withList } from "@/lib/blocks/lists";
+import { A4_W, A4_H, FONTS, FONT_SIZES, LINE_SPACINGS, INDENTS, fontFamilyOf } from "@/lib/blocks/docstyle";
+import {
+  BULLET_MARKERS,
+  NUMBER_MARKERS,
+  listItems,
+  listOrdered,
+  makeList,
+  withList,
+  type ListMarker,
+} from "@/lib/blocks/lists";
 import {
   TABLE_STYLES,
   demoRows,
@@ -69,24 +79,18 @@ import {
   type RefObject,
 } from "react";
 
-const TB1_KEY = "aquarius.toolbar1";
-const TB2_KEY = "aquarius.toolbar2";
+const SYM_KEY = "aquarius.symbols";
 const DEFAULT_TB1 = ["\\frac{}{}", "\\sqrt{}", "^{}", "\\sum_{}^{}", "\\int_{}^{}", "\\sin", "\\cos", "\\neq", "\\pi", "\\alpha"];
-const DEFAULT_TB2 = ["\\infty", "\\rightarrow", "\\in", "\\leq"];
-const TB2_MAX = 8;
-const A4_W = 794; // A4 width  in px @ 96dpi (210mm)
-const A4_H = 1123; // A4 height in px @ 96dpi (297mm)
+// Eight editable symbol slots; the "Edit" button lets users change any of them.
+const DEFAULT_SYMBOLS = ["\\infty", "\\rightarrow", "\\in", "\\leq", "\\geq", "\\neq", "\\pm", "\\times"];
+const SYMBOL_COUNT = DEFAULT_SYMBOLS.length;
 
-const FONTS: Record<string, string> = {
-  "Computer Modern":
-    '"Computer Modern Serif", "Latin Modern Roman", "CMU Serif", Georgia, serif',
-  Serif: 'Georgia, "Times New Roman", serif',
-  "Sans-serif": 'ui-sans-serif, system-ui, -apple-system, sans-serif',
-  Monospace: 'ui-monospace, "SF Mono", Menlo, monospace',
-};
-const FONT_SIZES = [10, 11, 12, 14, 16, 18, 20, 24];
-const LINE_SPACINGS = [1, 1.15, 1.5, 2];
-const INDENTS = [0, 1, 1.5, 2];
+/** Shared sizing so every toolbar icon button is about the same size. */
+const ICON_BTN =
+  "grid h-9 min-w-9 place-items-center rounded-md border border-border px-2 text-sm hover:border-accent";
+
+/** Preset highlight colors offered in the H-button dropdown. */
+const HIGHLIGHT_COLORS = ["#fde047", "#bbf7d0", "#bfdbfe", "#fbcfe8", "#fed7aa", "#e9d5ff", "#fecaca", "#a7f3d0"];
 
 /** Greedily pack blocks into A4-height pages by their measured heights. */
 function paginate(
@@ -128,6 +132,11 @@ function isEmptyBlock(b: Block): boolean {
   }
 }
 
+/** A document with no meaningful content (used to discard abandoned new notes). */
+function isEmptyDoc(blocks: Block[]): boolean {
+  return blocks.length === 0 || blocks.every(isEmptyBlock);
+}
+
 function readLS(key: string, fallback: string[]): string[] {
   if (typeof window === "undefined") return fallback;
   try {
@@ -139,7 +148,7 @@ function readLS(key: string, fallback: string[]): string[] {
   }
 }
 
-type Picker = { kind: "slot"; index: number } | { kind: "palette" } | null;
+type Picker = { kind: "symbol"; index: number } | { kind: "insert" } | null;
 type Selected = { id: string; index: number; kind: "image" | "table" } | null;
 
 export default function EditorPage() {
@@ -149,6 +158,7 @@ export default function EditorPage() {
   const [title, setTitle] = useState("");
   const [showSource, setShowSource] = useState(false);
   const [saved, setSaved] = useState(true);
+  const [saving, setSaving] = useState(false);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingPara, setEditingPara] = useState(false);
@@ -156,11 +166,16 @@ export default function EditorPage() {
   const [color, setColor] = useState<string | null>(null);
   const [selected, setSelected] = useState<Selected>(null);
 
-  const [toolbar1, setToolbar1] = useState<string[]>(() => readLS(TB1_KEY, DEFAULT_TB1));
-  const [toolbar2, setToolbar2] = useState<string[]>(() => readLS(TB2_KEY, DEFAULT_TB2));
-  const [editSlots, setEditSlots] = useState(false);
+  const toolbar1 = DEFAULT_TB1; // fixed default structures (no longer user-editable)
+  // Eight editable symbol slots (always exactly SYMBOL_COUNT), changed via "Edit".
+  const [symbols, setSymbols] = useState<string[]>(() =>
+    [...readLS(SYM_KEY, DEFAULT_SYMBOLS), ...DEFAULT_SYMBOLS].slice(0, SYMBOL_COUNT),
+  );
+  const [editSyms, setEditSyms] = useState(false);
   const [picker, setPicker] = useState<Picker>(null);
   const [tablePicker, setTablePicker] = useState(false);
+  const [listMenu, setListMenu] = useState<null | "bullet" | "number">(null);
+  const [hlMenu, setHlMenu] = useState(false);
   const [zoom, setZoom] = useState(1); // page size ratio
   const [hlColor, setHlColor] = useState(DEFAULT_HIGHLIGHT);
   const [heights, setHeights] = useState<Record<string, number>>({});
@@ -174,22 +189,79 @@ export default function EditorPage() {
   const dragFrom = useRef<number | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const addTarget = useRef<string | null>(null);
+  // Mirrors of state read by the debounced autosave (avoid stale closures).
+  const titleRef = useRef(title);
+  titleRef.current = title;
+  const savedRef = useRef(saved);
+  savedRef.current = saved;
+  const saveFnRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  const savingRef = useRef(false); // a write is in progress
+  const dirtyDuringSave = useRef(false); // a save was requested mid-write
+  const inFlightRef = useRef<Promise<void> | null>(null); // the active write, so callers can await it
+  // Empty-note auto-discard is allowed ONLY for a note created in this session
+  // (?new=1) whose meta loaded and whose title is still the created default —
+  // so a note merely opened from the library is never deleted.
+  const createdNew = useRef(false);
+  const metaPresentRef = useRef(false);
+  const initialTitleRef = useRef<string | null>(null);
+  const deletedRef = useRef(false); // note is being discarded; suppress saves
 
+  useEffect(() => {
+    if (typeof window !== "undefined")
+      createdNew.current = new URLSearchParams(window.location.search).get("new") === "1";
+  }, []);
   useEffect(() => {
     pkgRef.current = pkg;
   }, [pkg]);
   useEffect(() => {
-    if (typeof window !== "undefined") try { localStorage.setItem(TB1_KEY, JSON.stringify(toolbar1)); } catch { /* noop */ }
-  }, [toolbar1]);
+    if (typeof window !== "undefined") try { localStorage.setItem(SYM_KEY, JSON.stringify(symbols)); } catch { /* noop */ }
+  }, [symbols]);
+  // Autosave: debounce a write ~800ms after the last change to the note/title.
+  // `saved` starts true (a freshly-loaded note is clean), so this never fires on
+  // load — only after a real edit flips it dirty.
   useEffect(() => {
-    if (typeof window !== "undefined") try { localStorage.setItem(TB2_KEY, JSON.stringify(toolbar2)); } catch { /* noop */ }
-  }, [toolbar2]);
+    if (saved) return;
+    const t = setTimeout(() => { void saveFnRef.current(); }, 800);
+    return () => clearTimeout(t);
+  }, [pkg, title, saved]);
+  // Flush any pending save when the tab is hidden/closed or the editor unmounts
+  // (e.g. navigating back to the library), so the debounced write isn't lost.
+  useEffect(() => {
+    const flush = () => { if (!savedRef.current) void saveFnRef.current(); };
+    const onVisibility = () => { if (document.visibilityState === "hidden") flush(); };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      // Discard ONLY a note created this session, still untouched (empty body +
+      // unchanged title), whose meta actually loaded.
+      const p = pkgRef.current;
+      const titleUnchanged =
+        initialTitleRef.current != null && titleRef.current === initialTitleRef.current;
+      const discard =
+        createdNew.current &&
+        metaPresentRef.current &&
+        p != null &&
+        titleUnchanged &&
+        isEmptyDoc(p.tree.blocks);
+      if (discard) {
+        deletedRef.current = true; // suppress any pending/late autosave
+        savedRef.current = true;
+        if (!savingRef.current) void getStore().deleteNote(id);
+        // else: the in-flight save's finally performs the delete once it settles
+      } else {
+        flush();
+      }
+    };
+  }, [id]);
   useEffect(() => {
     (async () => {
       const store = getStore();
       const [p, meta] = await Promise.all([store.openNote(id), store.getNoteMeta(id)]);
       setPkg(p);
-      setTitle(meta?.title ?? "Untitled");
+      metaPresentRef.current = !!meta;
+      const loadedTitle = meta?.title ?? "Untitled";
+      initialTitleRef.current = loadedTitle;
+      setTitle(loadedTitle);
     })().catch(console.error);
   }, [id]);
   useEffect(() => {
@@ -237,6 +309,7 @@ export default function EditorPage() {
     setBlocks((bs) => bs.map((b) => (b.id === editingId ? next : b)));
   }
   function startEdit(block: Block) {
+    sticky.current = false; // never let a leftover one-shot absorb this session's first blur
     setSelected(null);
     setEditingId(block.id);
     setEditingPara(isParagraph(block));
@@ -244,6 +317,7 @@ export default function EditorPage() {
     setColor(calloutColorOf(block));
   }
   function startEditHeading(block: Block) {
+    sticky.current = false;
     setSelected(null);
     setEditingId(block.id);
   }
@@ -368,11 +442,11 @@ export default function EditorPage() {
     });
   }
   function onPickSymbol(latex: string) {
-    setPicker((p) => {
-      if (p?.kind === "slot") setToolbar1((a) => a.map((x, i) => (i === p.index ? latex : x)));
-      else if (p?.kind === "palette") setToolbar2((a) => (a.length >= TB2_MAX ? a : [...a, latex]));
-      return null;
-    });
+    if (picker?.kind === "symbol") {
+      const idx = picker.index;
+      setSymbols((a) => a.map((x, i) => (i === idx ? latex : x)));
+    }
+    setPicker(null);
   }
 
   // ── headings ────────────────────────────────────────────────────────────────
@@ -414,10 +488,11 @@ export default function EditorPage() {
   }
 
   // ── lists / equation ──────────────────────────────────────────────────────
-  function insertList(ordered: boolean) {
-    const l = makeList(ordered);
+  function insertList(ordered: boolean, marker?: ListMarker) {
+    const l = makeList(ordered, marker);
     addBlock(l, false);
     setEditingId(l.id);
+    setListMenu(null);
   }
   function setListText(blockId: string, text: string) {
     updateById(blockId, (b) => withList(b, text.split("\n")));
@@ -593,13 +668,49 @@ export default function EditorPage() {
   }
 
   async function save() {
+    if (deletedRef.current) return; // note is being discarded — don't resurrect it
     const p = pkgRef.current;
     if (!p) return;
-    const store = getStore();
-    await store.saveNote({ ...p, latexCache: documentToLatex(p.tree) });
-    await store.updateNoteMeta(id, { title });
-    setSaved(true);
+    // Coalesce overlapping saves, but await the in-flight write so callers that
+    // `await save()` (e.g. export) always observe a completed persist.
+    if (savingRef.current) {
+      dirtyDuringSave.current = true;
+      await inFlightRef.current?.catch(() => {});
+      return;
+    }
+    savingRef.current = true;
+    dirtyDuringSave.current = false;
+    const t = titleRef.current;
+    setSaving(true);
+    const run = (async () => {
+      try {
+        const store = getStore();
+        await store.saveNote({ ...p, latexCache: documentToLatex(p.tree) });
+        // `deletedAt: null` implicitly restores a trashed note the moment it is
+        // edited — so edited work can never be silently purged from the bin.
+        await store.updateNoteMeta(id, { title: t, deletedAt: null });
+        // Only clear the dirty flag if nothing changed while we were writing;
+        // otherwise leave it dirty so the debounce schedules another save.
+        if (pkgRef.current === p && titleRef.current === t) setSaved(true);
+      } catch (e) {
+        console.error("save failed", e);
+      } finally {
+        savingRef.current = false;
+        setSaving(false);
+        if (deletedRef.current) {
+          // The note was abandoned during this write — remove it now (no zombie).
+          void getStore().deleteNote(id);
+        } else if (dirtyDuringSave.current) {
+          // A save() was requested while this one ran — persist the latest once more.
+          dirtyDuringSave.current = false;
+          void saveFnRef.current();
+        }
+      }
+    })();
+    inFlightRef.current = run;
+    await run;
   }
+  saveFnRef.current = save;
 
   if (!pkg) {
     return <main className="grid min-h-screen place-items-center text-muted">Opening note…</main>;
@@ -622,7 +733,7 @@ export default function EditorPage() {
   const docStyle = pkg.tree.style ?? {};
   const fontSize = docStyle.fontSize ?? 14;
   const fontKey = docStyle.fontFamily ?? "Computer Modern";
-  const fontFamily = FONTS[fontKey] ?? FONTS["Computer Modern"];
+  const fontFamily = fontFamilyOf(docStyle.fontFamily);
   const lineSpacing = docStyle.lineSpacing ?? 1.5;
   const indent = docStyle.indent ?? 0;
   const layout = docStyle.pageLayout ?? "vertical";
@@ -650,65 +761,65 @@ export default function EditorPage() {
         <Link href="/" className="text-sm text-muted hover:text-accent">← Library</Link>
         <input value={title} onChange={(e) => { setTitle(e.target.value); setSaved(false); }} className="flex-1 bg-transparent text-lg font-semibold outline-none" />
         <button onClick={() => setShowSource((s) => !s)} className="rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent">{showSource ? "Editor" : "LaTeX"}</button>
-        <button onClick={save} className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white">{saved ? "Saved" : "Save"}</button>
+        <ExportMenu noteId={id} title={title} beforeExport={save} label="Export ▾" className="rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent" />
+        <button onClick={save} title="Saves automatically; click to save now" className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white">{saving ? "Saving…" : saved ? "Saved" : "Save"}</button>
       </header>
 
       {/* Block tools */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-border px-6 py-2">
-        <ToolButton onClick={() => addBlock(paragraphFromSource(""))} title="New paragraph (normal text)">¶ Text</ToolButton>
-        <select value={typeof currentStyle === "number" ? String(currentStyle) : ""} onChange={(e) => { if (e.target.value) applyStyle(Number(e.target.value) as HeadingLevel); }} title="Make the current block a heading" className="rounded-md border border-border bg-background px-2 py-1 text-sm">
+      <div className="flex flex-wrap items-center justify-center gap-2 border-b border-border px-6 py-2">
+        {/* Title — the only control that keeps a word label */}
+        <select value={typeof currentStyle === "number" ? String(currentStyle) : ""} onChange={(e) => { if (e.target.value) applyStyle(Number(e.target.value) as HeadingLevel); }} title="Make the current block a heading" className="h-9 rounded-md border border-border bg-background px-2 text-sm">
           <option value="" disabled>Heading…</option>
           <option value={1}>Title</option>
           <option value={2}>Subtitle</option>
           <option value={3}>Subsubtitle</option>
           <option value={4}>Subsubsubtitle</option>
         </select>
-        <ToolButton onClick={() => insertList(false)} title="Bulleted list">• List</ToolButton>
-        <ToolButton onClick={() => insertList(true)} title="Numbered list">1. List</ToolButton>
-        <ToolButton onClick={insertEquation} title="Insert centered equation ($$…$$)">Σ Eqn</ToolButton>
-        <ToolButton onClick={newImageRow} title="Insert image">🖼 Image</ToolButton>
-        <ToolButton onClick={() => setTablePicker(true)} title="Insert table">▤ Table</ToolButton>
-        <span className="mx-1 h-5 w-px bg-border" />
-        <button onMouseDown={keepFocus} onClick={() => wrapSelection("**")} title="Bold (**…**)" className="rounded-md border border-border px-2.5 py-1 text-sm font-bold hover:border-accent">B</button>
-        <button onMouseDown={keepFocus} onClick={() => wrapSelection("*")} title="Italic (*…*)" className="rounded-md border border-border px-2.5 py-1 text-sm italic hover:border-accent">I</button>
-        <button onMouseDown={keepFocus} onClick={() => wrapSelection("__")} title="Underline (__…__)" className="rounded-md border border-border px-2.5 py-1 text-sm underline hover:border-accent">U</button>
-        <button onMouseDown={keepFocus} onClick={() => wrapSelection(`==#${hlColor.replace("#", "")}:`, "==")} title="Highlight" className="rounded-md border border-border px-2.5 py-1 text-sm hover:border-accent" style={{ background: hlColor, color: "#1f2937" }}>H</button>
-        <input type="color" value={hlColor} onChange={(e) => setHlColor(e.target.value)} onMouseDown={() => { if (editingId) sticky.current = true; }} title="Highlight color" className="h-7 w-7 cursor-pointer rounded border border-border bg-transparent p-0.5" />
-        <button onMouseDown={keepFocus} onClick={insertLink} title="Insert link" className="rounded-md border border-border px-2.5 py-1 text-sm hover:border-accent">🔗</button>
-        <span className="ml-auto text-xs text-muted">{editingId ? (editingPara ? "B/I/U/H/link format the selection" : "editing a formula") : "pick a style or insert"}</span>
+        <span className="mx-1 h-7 w-px bg-border" />
+        {/* Text · Equation */}
+        <ToolButton onClick={() => addBlock(paragraphFromSource(""))} title="New paragraph (normal text)">T</ToolButton>
+        <ToolButton onClick={insertEquation} title="Insert centered equation ($$…$$)">Σ</ToolButton>
+        <span className="mx-1 h-7 w-px bg-border" />
+        {/* Bold · Italic · Underline · Strike · Highlight */}
+        <button onMouseDown={keepFocus} onClick={() => wrapSelection("**")} title="Bold (**…**)" className={`${ICON_BTN} font-bold`}>B</button>
+        <button onMouseDown={keepFocus} onClick={() => wrapSelection("*")} title="Italic (*…*)" className={`${ICON_BTN} italic`}>I</button>
+        <button onMouseDown={keepFocus} onClick={() => wrapSelection("__")} title="Underline (__…__)" className={`${ICON_BTN} underline`}>U</button>
+        <button onMouseDown={keepFocus} onClick={() => wrapSelection("~~")} title="Strikethrough (~~…~~)" className={`${ICON_BTN} line-through`}>S</button>
+        <HighlightButton color={hlColor} open={hlMenu} onToggle={() => setHlMenu((o) => !o)} onApply={() => wrapSelection(`==#${hlColor.replace("#", "")}:`, "==")} onColor={setHlColor} keepFocus={keepFocus} onColorMouseDown={() => { if (editingId) sticky.current = true; }} />
+        <span className="mx-1 h-7 w-px bg-border" />
+        {/* Picture · Table · Link */}
+        <ToolButton onClick={newImageRow} title="Insert image">🖼</ToolButton>
+        <ToolButton onClick={() => setTablePicker(true)} title="Insert table">▤</ToolButton>
+        <button onMouseDown={keepFocus} onClick={insertLink} title="Insert link" className={ICON_BTN}>🔗</button>
+        <span className="mx-1 h-7 w-px bg-border" />
+        {/* Unnumbered · Numbered list */}
+        <ListToolButton ordered={false} open={listMenu === "bullet"} onToggle={() => setListMenu((m) => (m === "bullet" ? null : "bullet"))} onInsert={(marker) => insertList(false, marker)} />
+        <ListToolButton ordered={true} open={listMenu === "number"} onToggle={() => setListMenu((m) => (m === "number" ? null : "number"))} onInsert={(marker) => insertList(true, marker)} />
       </div>
 
-      {/* Toolbar 1 — Structures */}
-      <div className="flex flex-wrap items-center gap-1.5 border-b border-border px-6 py-2">
-        <span className="w-16 text-xs text-muted">Structures</span>
+      {/* Functions & symbols */}
+      <div className="flex flex-wrap items-center justify-center gap-1.5 border-b border-border px-6 py-2">
+        {/* Structures — fixed defaults (not user-editable) */}
         {toolbar1.map((latex, i) => (
-          <button key={i} onMouseDown={(e) => { if (!editSlots) keepFocus(e); }} onClick={() => (editSlots ? setPicker({ kind: "slot", index: i }) : onInsert(latex))} title={editSlots ? "Click to change this slot" : `Insert ${latex}`} className={`grid h-9 min-w-9 place-items-center rounded-md border px-2 text-sm hover:border-accent ${editSlots ? "border-dashed border-accent/60" : "border-border"}`}>
+          <button key={i} onMouseDown={keepFocus} onClick={() => onInsert(latex)} title={`Insert ${latex}`} className={ICON_BTN}>
             <Katex latex={previewLatex(latex)} />
           </button>
         ))}
-        <button onClick={() => setEditSlots((s) => !s)} title="Customize the structure slots" className={`ml-1 rounded-md border px-2 py-1 text-xs ${editSlots ? "border-accent text-accent" : "border-border text-muted"}`}>{editSlots ? "Done" : "⚙ Edit"}</button>
-      </div>
-
-      {/* Toolbar 2 — Symbols */}
-      <div className="flex flex-wrap items-center gap-1.5 border-b border-border px-6 py-2">
-        <span className="w-16 text-xs text-muted">Symbols</span>
-        {toolbar2.map((latex, i) => (
-          <span key={i} className="group/sym relative">
-            <button onMouseDown={keepFocus} onClick={() => onInsert(latex)} title={`Insert ${latex}`} className="grid h-9 min-w-9 place-items-center rounded-md border border-border px-2 text-sm hover:border-accent">
-              <Katex latex={previewLatex(latex)} />
-            </button>
-            <button onClick={() => setToolbar2((a) => a.filter((_, j) => j !== i))} title="Remove from palette" className="absolute -right-1 -top-1 hidden h-4 w-4 place-items-center rounded-full bg-red-500 text-[10px] text-white group-hover/sym:grid">✕</button>
-          </span>
+        <span className="mx-2 h-7 w-px bg-border" />
+        {/* Symbols — eight editable slots; "Edit" lets the user change any of them */}
+        {symbols.map((latex, i) => (
+          <button key={i} onMouseDown={(e) => { if (!editSyms) keepFocus(e); else if (editingId) sticky.current = true; }} onClick={() => (editSyms ? setPicker({ kind: "symbol", index: i }) : onInsert(latex))} title={editSyms ? "Click to change this symbol" : `Insert ${latex}`} className={`${ICON_BTN} ${editSyms ? "border-dashed border-accent/60" : ""}`}>
+            <Katex latex={previewLatex(latex)} />
+          </button>
         ))}
-        {toolbar2.length < TB2_MAX && (
-          <button onClick={() => setPicker({ kind: "palette" })} title="Add a symbol from the library" className="grid h-9 w-9 place-items-center rounded-md border border-dashed border-border text-muted hover:border-accent">＋</button>
-        )}
-        <span className="ml-2 text-xs text-muted">{toolbar2.length}/{TB2_MAX}</span>
+        <button onMouseDown={keepFocus} onClick={() => setEditSyms((s) => !s)} title="Change the symbols" className={`rounded-md border px-2 py-1 text-xs ${editSyms ? "border-accent text-accent" : "border-border text-muted"}`}>{editSyms ? "Done" : "Edit"}</button>
+        <span className="mx-2 h-7 w-px bg-border" />
+        <button onMouseDown={keepFocus} onClick={() => setPicker({ kind: "insert" })} title="Browse all functions & symbols" className="flex h-9 items-center rounded-md border border-border px-3 text-sm hover:border-accent">Functions and Symbols</button>
       </div>
 
       {/* Document settings */}
       {!showSource && (
-        <div className="flex flex-wrap items-center gap-3 border-b border-border px-6 py-2 text-xs text-muted">
+        <div className="flex flex-wrap items-center justify-center gap-3 border-b border-border px-6 py-2 text-xs text-muted">
           <label className="flex items-center gap-1">Font
             <select value={fontKey} onChange={(e) => setDocStyle({ fontFamily: e.target.value })} className="rounded border border-border bg-background px-1 py-0.5" style={{ fontFamily }}>
               {Object.keys(FONTS).map((f) => <option key={f} value={f}>{f}</option>)}
@@ -772,16 +883,26 @@ export default function EditorPage() {
                     <button onClick={() => addBlock(paragraphFromSource(""))} className="mt-1 block w-full rounded-md px-3 py-2 text-left text-sm text-muted hover:bg-foreground/[0.04]">Click to add text…</button>
                   )}
                 </div>
-                <span className="pointer-events-none absolute bottom-1.5 right-3 text-[10px] text-muted">{p + 1}</span>
+                <span className="pointer-events-none absolute bottom-1.5 right-3 text-[10px] text-muted">{p < pages.length - 1 || ids.length > 0 ? p + 1 : null}</span>
               </div>
             ))}
           </div>
         </div>
       )}
 
-      {picker && (
-        <SymbolPicker title={picker.kind === "slot" ? "Choose a structure for this slot" : "Add a symbol to your palette"} onPick={onPickSymbol} onClose={() => setPicker(null)} />
-      )}
+      {picker?.kind === "insert" ? (
+        <SymbolPicker
+          title="Functions & symbols"
+          onPick={onInsert}
+          onClose={() => setPicker(null)}
+          closeOnPick={false}
+          keepFocus={keepFocus}
+          onNavMouseDown={() => { if (editingId) sticky.current = true; }}
+          autoFocusSearch={!editingId}
+        />
+      ) : picker ? (
+        <SymbolPicker title="Choose a symbol for this slot" onPick={onPickSymbol} onClose={() => setPicker(null)} />
+      ) : null}
       {tablePicker && <TablePicker onPick={insertTable} onClose={() => setTablePicker(false)} />}
     </main>
   );
@@ -955,26 +1076,59 @@ function EditBox({
     onExit();
   }
 
-  // Tab indents within the text instead of moving focus out (which exits the box).
+  // Keep Tab inside the box (its default focus-move would blur → exit). Escape
+  // commits/leaves. Tab/Shift+Tab indent/outdent prose; in formula mode it only
+  // holds focus (a literal tab is meaningless whitespace in LaTeX). Reads the
+  // live textarea value, mirroring spliceAtCaret.
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Escape") { e.preventDefault(); onExit(); return; }
     if (e.key !== "Tab") return;
     e.preventDefault();
+    if (!para) return; // formula: keep focus, don't inject whitespace into LaTeX
     const ta = e.currentTarget;
+    const value = ta.value;
     const start = ta.selectionStart ?? 0;
     const end = ta.selectionEnd ?? start;
+    const restore = (s: number, en: number) =>
+      requestAnimationFrame(() => { try { ta.setSelectionRange(s, en); } catch { /* noop */ } });
+    const outdent = (line: string): number =>
+      line.startsWith("\t") ? 1 : line.startsWith("  ") ? 2 : line.startsWith(" ") ? 1 : 0;
+
+    // Multi-line selection → indent/outdent every line it touches (never replace).
+    if (value.slice(start, end).includes("\n")) {
+      const from = value.lastIndexOf("\n", start - 1) + 1;
+      const lines = value.slice(from, end).split("\n");
+      let firstDelta = 0;
+      let totalDelta = 0;
+      const out = lines.map((line, i) => {
+        // A selection ending on a line boundary yields a trailing "" = the next
+        // line; leave it untouched.
+        if (i === lines.length - 1 && line === "") return line;
+        const delta = e.shiftKey ? -outdent(line) : 1;
+        if (i === 0) firstDelta = delta;
+        totalDelta += delta;
+        return e.shiftKey ? line.slice(-delta) : "\t" + line;
+      });
+      if (totalDelta === 0) return; // nothing to outdent
+      const next = value.slice(0, from) + out.join("\n") + value.slice(end);
+      onChange(next, end + totalDelta);
+      restore(Math.max(from, start + firstDelta), end + totalDelta);
+      return;
+    }
+
+    // Single line: outdent the line, or insert a tab at the caret.
     if (e.shiftKey) {
-      // Shift+Tab outdents: drop a tab (or up to two spaces) before the caret.
-      const before = draft.slice(0, start);
-      const drop = before.endsWith("\t") ? 1 : before.endsWith("  ") ? 2 : before.endsWith(" ") ? 1 : 0;
+      const from = value.lastIndexOf("\n", start - 1) + 1;
+      const drop = outdent(value.slice(from));
       if (!drop) return;
-      const pos = start - drop;
-      onChange(draft.slice(0, pos) + draft.slice(start), pos);
-      requestAnimationFrame(() => { try { ta.setSelectionRange(pos, pos); } catch { /* noop */ } });
+      const pos = Math.max(from, start - drop);
+      onChange(value.slice(0, from) + value.slice(from + drop), pos);
+      restore(pos, pos);
       return;
     }
     const pos = start + 1;
-    onChange(draft.slice(0, start) + "\t" + draft.slice(end), pos);
-    requestAnimationFrame(() => { try { ta.setSelectionRange(pos, pos); } catch { /* noop */ } });
+    onChange(value.slice(0, start) + "\t" + value.slice(end), pos);
+    restore(pos, pos);
   }
 
   return (
@@ -1000,5 +1154,106 @@ function EditBox({
 }
 
 function ToolButton({ onClick, title, children }: { onClick: () => void; title: string; children: ReactNode }) {
-  return <button onClick={onClick} title={title} className="rounded-md border border-border px-3 py-1 text-sm hover:border-accent">{children}</button>;
+  return <button onClick={onClick} title={title} className={ICON_BTN}>{children}</button>;
+}
+
+// ─── List buttons (icon + style-dropdown) ────────────────────────────────────
+const MARKER_GLYPH: Record<ListMarker, string> = {
+  disc: "•", circle: "◦", square: "▪",
+  decimal: "1.", "lower-alpha": "a.", "lower-roman": "i.",
+};
+const MARKER_NAME: Record<ListMarker, string> = {
+  disc: "Disc", circle: "Circle", square: "Square",
+  decimal: "Decimal", "lower-alpha": "Lower alpha", "lower-roman": "Lower roman",
+};
+
+function BulletedListIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" aria-hidden>
+      <circle cx="2.4" cy="4" r="1.1" fill="currentColor" stroke="none" />
+      <circle cx="2.4" cy="8" r="1.1" fill="currentColor" stroke="none" />
+      <circle cx="2.4" cy="12" r="1.1" fill="currentColor" stroke="none" />
+      <line x1="6" y1="4" x2="14.5" y2="4" />
+      <line x1="6" y1="8" x2="14.5" y2="8" />
+      <line x1="6" y1="12" x2="14.5" y2="12" />
+    </svg>
+  );
+}
+
+function NumberedListIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" aria-hidden>
+      <line x1="6" y1="4" x2="14.5" y2="4" />
+      <line x1="6" y1="8" x2="14.5" y2="8" />
+      <line x1="6" y1="12" x2="14.5" y2="12" />
+      <text x="0" y="5.7" fontSize="5.6" fill="currentColor" stroke="none">1</text>
+      <text x="0" y="9.9" fontSize="5.6" fill="currentColor" stroke="none">2</text>
+      <text x="0" y="14.1" fontSize="5.6" fill="currentColor" stroke="none">3</text>
+    </svg>
+  );
+}
+
+function ListToolButton({ ordered, open, onToggle, onInsert }: {
+  ordered: boolean;
+  open: boolean;
+  onToggle: () => void;
+  onInsert: (marker?: ListMarker) => void;
+}) {
+  const markers = ordered ? NUMBER_MARKERS : BULLET_MARKERS;
+  return (
+    <span className="relative inline-flex">
+      <button onClick={() => onInsert()} title={ordered ? "Numbered list" : "Bulleted list"} className="relative z-30 grid h-9 w-9 place-items-center rounded-l-md border border-border hover:border-accent">
+        {ordered ? <NumberedListIcon /> : <BulletedListIcon />}
+      </button>
+      <button onClick={onToggle} title="List style" aria-label="List style" className={`relative z-30 grid h-9 w-5 place-items-center rounded-r-md border border-l-0 text-[9px] hover:border-accent ${open ? "border-accent text-accent" : "border-border text-muted"}`}>▾</button>
+      {open && (
+        <>
+          <button className="fixed inset-0 z-20 cursor-default" aria-hidden tabIndex={-1} onClick={onToggle} />
+          <div className="absolute left-0 top-full z-30 mt-1 w-44 rounded-md border border-border bg-surface p-1 shadow-lg">
+            {markers.map((m) => (
+              <button key={m} onClick={() => onInsert(m)} className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-sm hover:bg-foreground/[0.06]">
+                <span className="inline-grid w-6 place-items-center font-mono text-xs text-muted">{MARKER_GLYPH[m]}</span>
+                {MARKER_NAME[m]}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </span>
+  );
+}
+
+// ─── Highlight button (H + color dropdown) ───────────────────────────────────
+function HighlightButton({ color, open, onToggle, onApply, onColor, keepFocus, onColorMouseDown }: {
+  color: string;
+  open: boolean;
+  onToggle: () => void;
+  onApply: () => void;
+  onColor: (c: string) => void;
+  keepFocus: (e: MouseEvent) => void;
+  onColorMouseDown: () => void;
+}) {
+  return (
+    <span className="relative inline-flex">
+      <button onMouseDown={keepFocus} onClick={onApply} title="Highlight selection" className={`${ICON_BTN} relative z-30 rounded-r-none`} style={{ background: color, color: "#1f2937" }}>H</button>
+      <button onMouseDown={keepFocus} onClick={onToggle} title="Highlight color" aria-label="Highlight color" className={`relative z-30 grid h-9 w-5 place-items-center rounded-r-md border border-l-0 text-[9px] hover:border-accent ${open ? "border-accent text-accent" : "border-border text-muted"}`}>▾</button>
+      {open && (
+        <>
+          <button className="fixed inset-0 z-20 cursor-default" aria-hidden tabIndex={-1} onClick={onToggle} />
+          <div className="absolute left-0 top-full z-30 mt-1 rounded-md border border-border bg-surface p-2 shadow-lg">
+            <div className="grid grid-cols-4 gap-1">
+              {HIGHLIGHT_COLORS.map((c) => (
+                <button key={c} onMouseDown={keepFocus} onClick={() => { onColor(c); onToggle(); }} title={c} className="h-6 w-6 rounded" style={{ background: c, outline: color.toLowerCase() === c ? "2px solid var(--foreground)" : "1px solid rgba(0,0,0,.12)", outlineOffset: "1px" }} />
+              ))}
+            </div>
+            <label className="mt-2 flex items-center gap-2 text-xs text-muted">
+              Custom
+              {/* sticky-only (no preventDefault) so the native color picker still opens while editing */}
+              <input type="color" value={color} onMouseDown={onColorMouseDown} onChange={(e) => onColor(e.target.value)} className="h-6 w-8 cursor-pointer rounded border border-border bg-transparent p-0.5" />
+            </label>
+          </div>
+        </>
+      )}
+    </span>
+  );
 }

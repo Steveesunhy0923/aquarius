@@ -27,7 +27,7 @@ export function headingLevel(block: Block): HeadingLevel {
 }
 
 export function headingNumbered(block: Block): boolean {
-  return block.attrs?.numbered !== false; // default numbered
+  return block.attrs?.numbered === true; // default unnumbered
 }
 
 /** Title (level 1) is always centered; other levels default to left. */
@@ -38,7 +38,7 @@ export function headingAlign(block: Block): ImageAlign {
 }
 
 export function makeHeading(level: HeadingLevel = 1, text = ""): Block {
-  return { id: uid(), type: "heading", value: text, attrs: { level, numbered: true } };
+  return { id: uid(), type: "heading", value: text, attrs: { level, numbered: false } };
 }
 
 export function withHeading(

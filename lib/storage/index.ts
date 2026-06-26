@@ -43,6 +43,8 @@ function createServerStub(): LibraryStore {
     updateNoteMeta: reject,
     deleteNote: reject,
     moveNote: reject,
+    searchNotes: reject,
+    listDeletedNotes: reject,
     openNote: reject,
     saveNote: reject,
     putAsset: reject,

@@ -21,7 +21,7 @@ import { escapeLatex } from "./captions";
 import { formatToLatex } from "./format";
 import { headingToLatex } from "./headings";
 import { imageAlign, imageItems } from "./images";
-import { listItems, listOrdered } from "./lists";
+import { listItems, listMarker, listOrdered } from "./lists";
 import { tableAlign, tableItems, tableRowToLatex } from "./tables";
 
 /** A serializer turns one block subtree into a LaTeX fragment. */
@@ -162,12 +162,29 @@ function serializeHeading(b: Block): string {
   return headingToLatex(b);
 }
 
+/** LaTeX `\item` label per marker style (non-default ones need `enumitem`). */
+const LIST_LABEL: Record<string, string> = {
+  disc: "$\\bullet$",
+  circle: "$\\circ$",
+  square: "$\\blacksquare$",
+  decimal: "\\arabic*.",
+  "lower-alpha": "\\alph*.",
+  "lower-roman": "\\roman*.",
+};
+
 /** list → enumerate / itemize. */
 function serializeList(b: Block): string {
-  const env = listOrdered(b) ? "enumerate" : "itemize";
+  const ordered = listOrdered(b);
+  const env = ordered ? "enumerate" : "itemize";
+  const marker = listMarker(b);
   const items = listItems(b).filter((it) => it.trim());
   const lines = items.map((it) => `  \\item ${formatToLatex(it)}`);
-  return `\\begin{${env}}\n${lines.join("\n")}\n\\end{${env}}`;
+  // Default markers need no package; others set a label via `enumitem`.
+  const opt =
+    marker === (ordered ? "decimal" : "disc")
+      ? ""
+      : `[label=${LIST_LABEL[marker]}]`; // requires \usepackage{enumitem}
+  return `\\begin{${env}}${opt}\n${lines.join("\n")}\n\\end{${env}}`;
 }
 
 function serializeFraction(b: Block): string {

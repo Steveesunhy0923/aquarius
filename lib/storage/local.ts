@@ -355,12 +355,57 @@ export class LocalLibraryStore implements LibraryStore {
       "by-notebook",
       notebookId,
     );
-    return notes.sort((a, b) => a.order - b.order);
+    return notes.filter((n) => !n.deletedAt).sort((a, b) => a.order - b.order);
+  }
+
+  async listDeletedNotes(): Promise<NoteMeta[]> {
+    const db = await this.db();
+    const notes = await db.getAll("notes");
+    return notes
+      .filter((n) => !!n.deletedAt)
+      .sort((a, b) => (b.deletedAt ?? "").localeCompare(a.deletedAt ?? ""));
   }
 
   async getNoteMeta(id: EntityId): Promise<NoteMeta | undefined> {
     const db = await this.db();
     return db.get("notes", id);
+  }
+
+  async searchNotes(
+    query: string,
+  ): Promise<{ title: NoteMeta[]; content: NoteMeta[] }> {
+    const q = query.trim().toLowerCase();
+    if (!q) return { title: [], content: [] };
+    const db = await this.db();
+    const notes = (await db.getAll("notes")).filter((n) => !n.deletedAt);
+    const byRecent = (a: NoteMeta, b: NoteMeta) =>
+      b.updatedAt.localeCompare(a.updatedAt);
+
+    // Tier 1: title or tag match.
+    const title = notes
+      .filter(
+        (n) =>
+          n.title.toLowerCase().includes(q) ||
+          n.tags.some((t) => t.toLowerCase().includes(q)),
+      )
+      .sort(byRecent);
+
+    // Tier 2: body match, excluding notes already matched above. Strip LaTeX
+    // commands/markup from the cached body so the query matches the visible
+    // prose, not control sequences (so "frac"/"sum" don't match \frac/\sum).
+    const titleIds = new Set(title.map((n) => n.id));
+    const pkgs = await db.getAll("notePackages");
+    const strip = (s: string) =>
+      (s || "")
+        .replace(/\\[a-zA-Z]+\*?/g, " ")
+        .replace(/[{}$[\]\\^_&%#~]/g, " ")
+        .toLowerCase();
+    const cache = new Map(pkgs.map((p) => [p.noteId, strip(p.latexCache)] as const));
+    const content = notes
+      .filter((n) => !titleIds.has(n.id) && (cache.get(n.id) ?? "").includes(q))
+      .sort(byRecent);
+
+    return { title, content };
   }
 
   async createNote(input: CreateNoteInput): Promise<NoteMeta> {

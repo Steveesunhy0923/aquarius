@@ -1,14 +1,27 @@
 "use client";
 
+import { ExportMenu } from "@/components/ExportMenu";
+import { NoteCover } from "@/components/NoteCover";
 import { getStore, seedDemoLibrary } from "@/lib/storage";
-import type { NoteMeta, Notebook, Subject } from "@/lib/storage/types";
+import type { LibraryStore, NoteMeta, Notebook, Subject } from "@/lib/storage/types";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+
+const TRASH_DAYS = 30;
+
+/** Hard-delete soft-deleted notes whose retention window has elapsed. */
+async function purgeExpired(store: LibraryStore): Promise<void> {
+  const cutoff = new Date(Date.now() - TRASH_DAYS * 86400000).toISOString();
+  const deleted = await store.listDeletedNotes();
+  await Promise.all(
+    deleted.filter((n) => (n.deletedAt ?? "") < cutoff).map((n) => store.deleteNote(n.id)),
+  );
+}
 
 /**
- * Notability-style library: Subject ▸ Notebook ▸ Note.
- * Browses the LIGHT index only (no note packages loaded) so it stays instant.
+ * Notability-style library: Subject ▸ Notebook ▸ Note, plus global search,
+ * per-note tags/export, and a Recently Deleted (soft-delete) bin.
  */
 export default function LibraryPage() {
   const router = useRouter();
@@ -19,11 +32,18 @@ export default function LibraryPage() {
   const [notebookId, setNotebookId] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
 
-  // Initial load: seed a demo library on first run, then list subjects.
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<{ title: NoteMeta[]; content: NoteMeta[] } | null>(null);
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
+  const [trash, setTrash] = useState(false);
+  const [deleted, setDeleted] = useState<NoteMeta[]>([]);
+
+  // Initial load: seed on first run, purge expired trash, then list subjects.
   useEffect(() => {
     (async () => {
       const store = getStore();
       await seedDemoLibrary(store);
+      await purgeExpired(store).catch(() => {});
       const subs = await store.listSubjects();
       setSubjects(subs);
       setSubjectId(subs[0]?.id ?? null);
@@ -31,7 +51,6 @@ export default function LibraryPage() {
     })().catch(console.error);
   }, []);
 
-  // Load notebooks when the active subject changes.
   useEffect(() => {
     if (!subjectId) {
       setNotebooks([]);
@@ -47,14 +66,40 @@ export default function LibraryPage() {
       .catch(console.error);
   }, [subjectId]);
 
-  // Load notes when the active notebook changes.
   useEffect(() => {
     if (!notebookId) {
       setNotes([]);
       return;
     }
+    setTagFilter(null);
     getStore().listNotes(notebookId).then(setNotes).catch(console.error);
   }, [notebookId]);
+
+  // Debounced library-wide search (title/tags first, then note contents).
+  useEffect(() => {
+    const q = query.trim();
+    if (!q) {
+      setResults(null);
+      return;
+    }
+    let alive = true;
+    const t = setTimeout(() => {
+      getStore().searchNotes(q).then((r) => { if (alive) setResults(r); }).catch(console.error);
+    }, 200);
+    return () => { alive = false; clearTimeout(t); };
+  }, [query]);
+
+  useEffect(() => {
+    if (!trash) return;
+    getStore().listDeletedNotes().then(setDeleted).catch(console.error);
+  }, [trash]);
+
+  const refresh = useCallback(async () => {
+    const store = getStore();
+    if (notebookId) setNotes(await store.listNotes(notebookId));
+    if (query.trim()) setResults(await store.searchNotes(query.trim()));
+    if (trash) setDeleted(await store.listDeletedNotes());
+  }, [notebookId, query, trash]);
 
   const addSubject = useCallback(async () => {
     const name = prompt("New subject name?")?.trim();
@@ -77,10 +122,70 @@ export default function LibraryPage() {
 
   const addNote = useCallback(async () => {
     if (!notebookId) return;
-    const store = getStore();
-    const meta = await store.createNote({ notebookId, title: "Untitled note" });
-    router.push(`/editor/${meta.id}`);
+    const meta = await getStore().createNote({ notebookId, title: "Untitled note" });
+    router.push(`/editor/${meta.id}?new=1`);
   }, [notebookId, router]);
+
+  // User delete = soft delete (recoverable from Recently Deleted).
+  const softDelete = useCallback(
+    async (id: string) => {
+      await getStore().updateNoteMeta(id, { deletedAt: new Date().toISOString() });
+      await refresh();
+    },
+    [refresh],
+  );
+  const restore = useCallback(
+    async (id: string) => {
+      await getStore().updateNoteMeta(id, { deletedAt: null });
+      await refresh();
+    },
+    [refresh],
+  );
+  const purge = useCallback(
+    async (id: string) => {
+      if (!confirm("Delete permanently? This cannot be undone.")) return;
+      await getStore().deleteNote(id);
+      await refresh();
+    },
+    [refresh],
+  );
+  const emptyTrash = useCallback(async () => {
+    if (deleted.length === 0) return;
+    if (!confirm(`Permanently delete all ${deleted.length} note(s)? This cannot be undone.`)) return;
+    const store = getStore();
+    await Promise.all(deleted.map((n) => store.deleteNote(n.id)));
+    await refresh();
+  }, [deleted, refresh]);
+
+  const addTag = useCallback(
+    async (note: NoteMeta) => {
+      const raw = prompt("Add a tag")?.trim();
+      if (!raw) return;
+      const tag = raw.replace(/,/g, " ").trim();
+      if (!tag || note.tags.includes(tag)) return;
+      await getStore().updateNoteMeta(note.id, { tags: [...note.tags, tag] });
+      await refresh();
+    },
+    [refresh],
+  );
+  const removeTag = useCallback(
+    async (note: NoteMeta, tag: string) => {
+      await getStore().updateNoteMeta(note.id, { tags: note.tags.filter((t) => t !== tag) });
+      await refresh();
+    },
+    [refresh],
+  );
+
+  const tagsInNotebook = useMemo(
+    () => Array.from(new Set(notes.flatMap((n) => n.tags))).sort(),
+    [notes],
+  );
+  const visibleNotes = useMemo(
+    () => (tagFilter ? notes.filter((n) => n.tags.includes(tagFilter)) : notes),
+    [notes, tagFilter],
+  );
+
+  const cardProps = { onDelete: softDelete, onAddTag: addTag, onRemoveTag: removeTag };
 
   if (!ready) {
     return (
@@ -90,98 +195,279 @@ export default function LibraryPage() {
     );
   }
 
+  const searching = query.trim().length > 0;
+
   return (
     <main className="flex min-h-screen flex-col">
-      <header className="flex items-center justify-between border-b border-border px-6 py-4">
+      <header className="flex items-center justify-between gap-6 border-b border-border px-6 py-4">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Aquarius</h1>
           <p className="text-sm text-muted">
             WYSIWYG math notes · LaTeX is the output, not the input
           </p>
         </div>
+        <div className="flex items-center gap-3">
+          <div className="relative w-72">
+            <input
+              value={query}
+              onChange={(e) => { setQuery(e.target.value); if (e.target.value.trim()) setTrash(false); }}
+              placeholder="Search title, tag, or content…"
+              className="w-full rounded-lg border border-border bg-surface px-3 py-2 pr-8 text-sm outline-none focus:border-accent"
+            />
+            {searching && (
+              <button
+                onClick={() => setQuery("")}
+                title="Clear search"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-foreground"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+          <button
+            onClick={() => setTrash((t) => !t)}
+            className={`whitespace-nowrap rounded-lg border px-3 py-2 text-sm ${
+              trash ? "border-accent text-accent" : "border-border text-muted hover:border-accent"
+            }`}
+          >
+            🗑 Recently Deleted
+          </button>
+        </div>
       </header>
 
       <div className="grid flex-1 grid-cols-[220px_240px_1fr]">
         {/* Subjects */}
-        <Pane
-          title="Subjects"
-          onAdd={addSubject}
-          addLabel="Add subject"
-        >
+        <Pane title="Subjects" onAdd={addSubject} addLabel="Add subject">
           {subjects.map((s) => (
-            <Row
-              key={s.id}
-              active={s.id === subjectId}
-              onClick={() => setSubjectId(s.id)}
-            >
-              <span
-                className="inline-block h-3 w-3 rounded-full"
-                style={{ background: s.color || "var(--accent)" }}
-              />
+            <Row key={s.id} active={!trash && s.id === subjectId} onClick={() => { setTrash(false); setSubjectId(s.id); }}>
+              <span className="inline-block h-3 w-3 rounded-full" style={{ background: s.color || "var(--accent)" }} />
               {s.name}
             </Row>
           ))}
         </Pane>
 
         {/* Notebooks */}
-        <Pane
-          title="Notebooks"
-          onAdd={subjectId ? addNotebook : undefined}
-          addLabel="Add notebook"
-        >
+        <Pane title="Notebooks" onAdd={subjectId ? addNotebook : undefined} addLabel="Add notebook">
           {notebooks.map((nb) => (
-            <Row
-              key={nb.id}
-              active={nb.id === notebookId}
-              onClick={() => setNotebookId(nb.id)}
-            >
+            <Row key={nb.id} active={!trash && nb.id === notebookId} onClick={() => { setTrash(false); setNotebookId(nb.id); }}>
               📓 {nb.name}
             </Row>
           ))}
-          {subjectId && notebooks.length === 0 && (
-            <Empty>No notebooks yet</Empty>
-          )}
+          {subjectId && notebooks.length === 0 && <Empty>No notebooks yet</Empty>}
         </Pane>
 
-        {/* Notes */}
+        {/* Notes / Search / Trash */}
         <section className="p-6">
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-sm font-medium uppercase tracking-wide text-muted">
-              Notes
-            </h2>
-            <button
-              onClick={addNote}
-              disabled={!notebookId}
-              className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40"
-            >
-              + New note
-            </button>
-          </div>
-
-          {notes.length === 0 ? (
-            <Empty>No notes in this notebook yet — create one.</Empty>
+          {trash ? (
+            <>
+              <div className="mb-1 flex items-center justify-between">
+                <h2 className="text-sm font-medium uppercase tracking-wide text-muted">
+                  Recently Deleted
+                </h2>
+                {deleted.length > 0 && (
+                  <button onClick={emptyTrash} className="rounded-md border border-border px-3 py-1.5 text-sm text-muted hover:border-red-500 hover:text-red-500">
+                    Empty
+                  </button>
+                )}
+              </div>
+              <p className="mb-4 text-xs text-muted">Notes are removed permanently after {TRASH_DAYS} days.</p>
+              {deleted.length === 0 ? (
+                <Empty>Nothing here. Deleted notes will appear for {TRASH_DAYS} days.</Empty>
+              ) : (
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] items-start gap-4">
+                  {deleted.map((n) => (
+                    <DeletedCard key={n.id} note={n} onRestore={restore} onPurge={purge} />
+                  ))}
+                </div>
+              )}
+            </>
           ) : (
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-4">
-              {notes.map((n) => (
-                <Link
-                  key={n.id}
-                  href={`/editor/${n.id}`}
-                  className="flex aspect-[3/4] flex-col rounded-xl border border-border bg-surface p-3 transition hover:border-accent"
-                >
-                  <div className="flex-1 overflow-hidden rounded-md bg-background" />
-                  <div className="mt-2 truncate text-sm font-medium">
-                    {n.title}
+            <>
+              <div className="mb-4 flex items-center justify-between">
+                <h2 className="text-sm font-medium uppercase tracking-wide text-muted">
+                  {searching ? "Search results" : "Notes"}
+                </h2>
+                {!searching && (
+                  <button
+                    onClick={addNote}
+                    disabled={!notebookId}
+                    className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40"
+                  >
+                    + New note
+                  </button>
+                )}
+              </div>
+
+              {searching ? (
+                !results ? (
+                  <Empty>Searching…</Empty>
+                ) : results.title.length + results.content.length === 0 ? (
+                  <Empty>No notes match “{query.trim()}”.</Empty>
+                ) : (
+                  <div className="space-y-8">
+                    {results.title.length > 0 && (
+                      <ResultGroup label="Title &amp; tags" notes={results.title} {...cardProps} />
+                    )}
+                    {results.content.length > 0 && (
+                      <ResultGroup label="In contents" notes={results.content} {...cardProps} />
+                    )}
                   </div>
-                  <div className="text-xs text-muted">
-                    {new Date(n.updatedAt).toLocaleDateString()}
-                  </div>
-                </Link>
-              ))}
-            </div>
+                )
+              ) : !notebookId ? (
+                <Empty>Select or create a notebook to see its notes.</Empty>
+              ) : (
+                <>
+                  {tagsInNotebook.length > 0 && (
+                    <div className="mb-4 flex flex-wrap items-center gap-1.5">
+                      <TagChip active={tagFilter === null} onClick={() => setTagFilter(null)}>
+                        All
+                      </TagChip>
+                      {tagsInNotebook.map((tag) => (
+                        <TagChip
+                          key={tag}
+                          active={tagFilter === tag}
+                          onClick={() => setTagFilter((t) => (t === tag ? null : tag))}
+                        >
+                          {tag}
+                        </TagChip>
+                      ))}
+                    </div>
+                  )}
+                  {visibleNotes.length === 0 ? (
+                    <Empty>
+                      {tagFilter
+                        ? `No notes tagged “${tagFilter}”.`
+                        : "No notes in this notebook yet — create one."}
+                    </Empty>
+                  ) : (
+                    <NoteGrid notes={visibleNotes} {...cardProps} />
+                  )}
+                </>
+              )}
+            </>
           )}
         </section>
       </div>
     </main>
+  );
+}
+
+type CardHandlers = {
+  onDelete: (id: string) => void;
+  onAddTag: (n: NoteMeta) => void;
+  onRemoveTag: (n: NoteMeta, tag: string) => void;
+};
+
+function ResultGroup({ label, notes, ...h }: { label: string; notes: NoteMeta[] } & CardHandlers) {
+  return (
+    <div>
+      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">
+        {label} <span className="font-normal">· {notes.length}</span>
+      </h3>
+      <NoteGrid notes={notes} {...h} />
+    </div>
+  );
+}
+
+function NoteGrid({ notes, ...h }: { notes: NoteMeta[] } & CardHandlers) {
+  return (
+    <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] items-start gap-4">
+      {notes.map((n) => (
+        <NoteCard key={n.id} note={n} {...h} />
+      ))}
+    </div>
+  );
+}
+
+function NoteCard({ note, onDelete, onAddTag, onRemoveTag }: { note: NoteMeta } & CardHandlers) {
+  return (
+    <div className="group relative flex flex-col rounded-xl border border-border bg-surface p-3 transition hover:border-accent">
+      <div className="absolute right-2 top-2 z-10 flex items-center gap-1 opacity-60 transition group-hover:opacity-100">
+        <ExportMenu
+          noteId={note.id}
+          title={note.title}
+          label="⬇"
+          className="grid h-6 w-6 place-items-center rounded-full bg-surface text-xs shadow ring-1 ring-border hover:ring-accent"
+        />
+        <button
+          onClick={() => onDelete(note.id)}
+          title="Move to Recently Deleted"
+          className="grid h-6 w-6 place-items-center rounded-full bg-surface text-xs shadow ring-1 ring-border hover:ring-red-500"
+        >
+          🗑
+        </button>
+      </div>
+      <Link href={`/editor/${note.id}`} className="flex flex-col">
+        <div className="aspect-[3/4] overflow-hidden rounded-md border border-border">
+          <NoteCover noteId={note.id} />
+        </div>
+        <div className="mt-2 truncate text-sm font-medium">{note.title}</div>
+        <div className="text-xs text-muted">{new Date(note.updatedAt).toLocaleDateString()}</div>
+      </Link>
+      <div className="mt-1.5 flex flex-wrap items-center gap-1">
+        {note.tags.map((tag) => (
+          <span key={tag} className="group/tag inline-flex items-center gap-0.5 rounded-full bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent">
+            {tag}
+            <button onClick={() => onRemoveTag(note, tag)} title="Remove tag" className="hidden leading-none hover:text-foreground group-hover/tag:inline">
+              ✕
+            </button>
+          </span>
+        ))}
+        <button onClick={() => onAddTag(note)} title="Add tag" className="rounded-full border border-dashed border-border px-1.5 py-0.5 text-[10px] text-muted hover:border-accent hover:text-accent">
+          + tag
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function DeletedCard({
+  note,
+  onRestore,
+  onPurge,
+}: {
+  note: NoteMeta;
+  onRestore: (id: string) => void;
+  onPurge: (id: string) => void;
+}) {
+  return (
+    <div className="flex flex-col rounded-xl border border-border bg-surface p-3">
+      <div className="aspect-[3/4] overflow-hidden rounded-md border border-border opacity-70">
+        <NoteCover noteId={note.id} />
+      </div>
+      <div className="mt-2 truncate text-sm font-medium">{note.title}</div>
+      <div className="text-xs text-muted">
+        Deleted {note.deletedAt ? new Date(note.deletedAt).toLocaleDateString() : ""}
+      </div>
+      <div className="mt-2 flex gap-1.5">
+        <button
+          onClick={() => onRestore(note.id)}
+          className="flex-1 rounded-md border border-border px-2 py-1 text-xs hover:border-accent hover:text-accent"
+        >
+          Restore
+        </button>
+        <button
+          onClick={() => onPurge(note.id)}
+          title="Delete permanently"
+          className="rounded-md border border-border px-2 py-1 text-xs text-muted hover:border-red-500 hover:text-red-500"
+        >
+          Delete
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function TagChip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded-full px-2.5 py-0.5 text-xs transition ${
+        active ? "bg-accent text-white" : "border border-border text-muted hover:border-accent"
+      }`}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -199,15 +485,9 @@ function Pane({
   return (
     <aside className="flex flex-col border-r border-border">
       <div className="flex items-center justify-between px-4 py-3">
-        <h2 className="text-sm font-medium uppercase tracking-wide text-muted">
-          {title}
-        </h2>
+        <h2 className="text-sm font-medium uppercase tracking-wide text-muted">{title}</h2>
         {onAdd && (
-          <button
-            onClick={onAdd}
-            title={addLabel}
-            className="rounded px-1.5 text-lg leading-none text-muted hover:text-accent"
-          >
+          <button onClick={onAdd} title={addLabel} className="rounded px-1.5 text-lg leading-none text-muted hover:text-accent">
             +
           </button>
         )}
@@ -217,15 +497,7 @@ function Pane({
   );
 }
 
-function Row({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
+function Row({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
     <button
       onClick={onClick}

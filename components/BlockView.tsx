@@ -6,7 +6,7 @@ import { blockToKatex } from "@/lib/blocks";
 import { boxStyle, calloutColorOf } from "@/lib/blocks/callouts";
 import { parseFormat } from "@/lib/blocks/format";
 import { headingAlign, headingLevel } from "@/lib/blocks/headings";
-import { listItems, listOrdered } from "@/lib/blocks/lists";
+import { listItems, listMarker, listOrdered } from "@/lib/blocks/lists";
 import {
   imageAlign,
   imageItems,
@@ -65,10 +65,11 @@ export function BlockView({ block }: { block: Block }) {
     case "list": {
       const items = listItems(block).filter((x) => x.trim());
       const inner = items.map((it, i) => <li key={i}>{renderFormatted(it)}</li>);
+      const style = { listStyleType: listMarker(block) };
       return listOrdered(block) ? (
-        <ol className="ml-6 list-decimal space-y-0.5 leading-relaxed">{inner}</ol>
+        <ol className="ml-6 list-decimal space-y-0.5 leading-relaxed" style={style}>{inner}</ol>
       ) : (
-        <ul className="ml-6 list-disc space-y-0.5 leading-relaxed">{inner}</ul>
+        <ul className="ml-6 list-disc space-y-0.5 leading-relaxed" style={style}>{inner}</ul>
       );
     }
 
@@ -220,6 +221,7 @@ function renderFormatted(text: string): ReactNode {
     if (s.bold) return <strong key={i}>{s.text}</strong>;
     if (s.italic) return <em key={i}>{s.text}</em>;
     if (s.underline) return <u key={i}>{s.text}</u>;
+    if (s.strike) return <s key={i}>{s.text}</s>;
     return <span key={i}>{s.text}</span>;
   });
 }

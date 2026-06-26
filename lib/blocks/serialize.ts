@@ -299,10 +299,28 @@ function serializeCode(b: Block): string {
   return `\\begin{lstlisting}[language=${lang}]\n${source}\n\\end{lstlisting}`;
 }
 
+/** Format a horizontal-offset fraction (0..1) for \hspace*{x\linewidth}. */
+function offsetOf(b: Block): number | null {
+  const o = attrs(b).offset;
+  return typeof o === "number" && o > 0.001 ? Math.min(0.99, o) : null;
+}
+function hoffLen(off: number): string {
+  return `${parseFloat(off.toFixed(4))}\\linewidth`;
+}
+
 function serializeImage(b: Block): string {
   const items = imageItems(b);
   if (items.length === 0) return "";
   const align = imageAlign(b);
+  const off = offsetOf(b);
+  // Free horizontal position (uncaptioned only — captioned uses a float below).
+  if (off !== null && !items.some((it) => (it.caption ?? "").trim())) {
+    const parts = items.map((it) => {
+      const w = typeof it.width === "number" ? `[width=${(it.width / 100).toFixed(2)}\\linewidth]` : "";
+      return `\\includegraphics${w}{${it.assetId}}`;
+    });
+    return `\\noindent\\hspace*{${hoffLen(off)}}${parts.join("\\quad ")}`;
+  }
   const cmd =
     align === "left"
       ? "\\raggedright"
@@ -339,7 +357,7 @@ function serializeImage(b: Block): string {
 
 /** table → a row of centered LaTeX tabulars / subtables in the block's style. */
 function serializeTable(b: Block): string {
-  return tableRowToLatex(tableItems(b), tableAlign(b));
+  return tableRowToLatex(tableItems(b), tableAlign(b), offsetOf(b) ?? undefined);
 }
 
 /** tikz → value is already a tikzpicture; emit verbatim. */
@@ -349,7 +367,14 @@ function serializeTikz(b: Block): string {
 
 /** graph → render the structured figure model as a tikzpicture. */
 function serializeGraph(b: Block): string {
-  return graphToTikz(graphModel(b));
+  const model = graphModel(b);
+  const tex = graphToTikz(model);
+  const off = offsetOf(b);
+  // Shift uncaptioned graphs horizontally (captioned ones are floats — keep centered).
+  if (off !== null && !(model.caption ?? "").trim()) {
+    return tex.replace("\\begin{tikzpicture}", `\\noindent\\hspace*{${hoffLen(off)}}\\begin{tikzpicture}`);
+  }
+  return tex;
 }
 
 // ──────────────────────────────────────────────────────────────────────────

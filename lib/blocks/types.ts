@@ -83,6 +83,9 @@ export interface BlockAttrs {
   assetId?: string;
   alt?: string;
   width?: number;
+  // free horizontal position of an image/table/graph block along its line:
+  // the content's LEFT edge as a fraction [0,1) of the text width (\linewidth).
+  offset?: number;
   // text: inline math runs interleaved with prose
   runs?: InlineRun[];
   // tikz canvas model (V1 constrained drawing mode)

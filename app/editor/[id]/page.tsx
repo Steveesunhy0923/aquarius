@@ -80,6 +80,7 @@ import {
   type KeyboardEvent,
   type MouseEvent,
   type MutableRefObject,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type RefObject,
 } from "react";
@@ -174,6 +175,10 @@ function isEmptyDoc(blocks: Block[]): boolean {
 // ─── Section outline helpers ──────────────────────────────────────────────────
 
 const isHeadingCollapsed = (b: Block): boolean => !!b.attrs?.collapsed;
+
+/** A movable block's stored left-edge fraction, or undefined to follow its align. */
+const blockOffsetOf = (b: Block): number | undefined =>
+  typeof b.attrs?.offset === "number" ? b.attrs.offset : undefined;
 
 /** The flat outline (one entry per heading), in document order. */
 function computeOutline(blocks: Block[]): OutlineItem[] {
@@ -292,6 +297,9 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   const dragFrom = useRef<number | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const addTarget = useRef<string | null>(null);
+  // Center fraction [0,1] of each movable block, shared so dragging one can snap
+  // its center to line up with the others (the "magnet").
+  const blockCenters = useRef<Map<string, number>>(new Map());
   // Mirrors of state read by the debounced autosave (avoid stale closures).
   const titleRef = useRef(title);
   titleRef.current = title;
@@ -419,6 +427,17 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   }
   function updateTableItem(blockId: string, i: number, fn: (t: TableData) => TableData) {
     updateById(blockId, (b) => withTables(b, tableItems(b).map((t, k) => (k === i ? fn(t) : t))));
+  }
+
+  // Horizontal block position: attrs.offset is the content's left edge as a
+  // fraction of the line width (undefined = follow the align preset).
+  function setBlockOffset(blockId: string, frac: number | undefined) {
+    updateById(blockId, (b) => {
+      const attrs = { ...b.attrs };
+      if (frac == null) delete attrs.offset;
+      else attrs.offset = Math.max(0, Math.min(0.999, frac));
+      return { ...b, attrs };
+    });
   }
 
   // ── section outline (driven from the page's left sidebar) ──────────────────
@@ -683,8 +702,13 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   }
   function rowAlign(align: ImageAlign) {
     if (!selected) return;
-    if (selected.kind === "image") updateById(selected.id, (b) => withImages(b, imageItems(b), align));
-    else updateById(selected.id, (b) => withTables(b, tableItems(b), align));
+    // An align preset also clears any free horizontal offset.
+    updateById(selected.id, (b) => {
+      const aligned = selected.kind === "image" ? withImages(b, imageItems(b), align) : withTables(b, tableItems(b), align);
+      const attrs = { ...aligned.attrs };
+      delete attrs.offset;
+      return { ...aligned, attrs };
+    });
   }
   function reorderImage(blockId: string, from: number, to: number) {
     updateById(blockId, (b) => {
@@ -1162,18 +1186,24 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
             )
           ) : isImage ? (
             <>
-              <ImageRowEditor blockId={b.id} items={imageItems(b)} align={imageAlign(b)} selectedIndex={selected?.id === b.id ? selected.index : null} onSelect={(idx) => selectItem(b.id, idx, "image")} onMove={moveImageItem} onCaption={(idx, text) => imgCaption(b.id, idx, text)} />
+              <HorizontalMover blockId={b.id} offset={blockOffsetOf(b)} align={imageAlign(b)} snap centers={blockCenters} onChange={(f) => setBlockOffset(b.id, f)}>
+                <ImageRowEditor blockId={b.id} items={imageItems(b)} align={imageAlign(b)} selectedIndex={selected?.id === b.id ? selected.index : null} onSelect={(idx) => selectItem(b.id, idx, "image")} onMove={moveImageItem} onCaption={(idx, text) => imgCaption(b.id, idx, text)} />
+              </HorizontalMover>
               {selected?.id === b.id && renderControls(b)}
             </>
           ) : isTable ? (
             <>
-              <TableRowEditor blockId={b.id} tables={tableItems(b)} align={tableAlign(b)} selectedIndex={selected?.id === b.id ? selected.index : null} onSelect={(idx) => selectItem(b.id, idx, "table")} onMove={moveTableItem} onCell={(idx, r, c, v) => tblCell(b.id, idx, r, c, v)} onCaption={(idx, text) => tblCaption(b.id, idx, text)} />
+              <HorizontalMover blockId={b.id} offset={blockOffsetOf(b)} align={tableAlign(b)} snap={false} centers={blockCenters} onChange={(f) => setBlockOffset(b.id, f)}>
+                <TableRowEditor blockId={b.id} tables={tableItems(b)} align={tableAlign(b)} selectedIndex={selected?.id === b.id ? selected.index : null} onSelect={(idx) => selectItem(b.id, idx, "table")} onMove={moveTableItem} onCell={(idx, r, c, v) => tblCell(b.id, idx, r, c, v)} onCaption={(idx, text) => tblCaption(b.id, idx, text)} />
+              </HorizontalMover>
               {selected?.id === b.id && renderControls(b)}
             </>
           ) : isGraph ? (
-            <button onClick={() => { setSelected(null); setEditingId(null); setGraphEdit({ id: b.id }); }} title="Click to edit this graph" className="block w-full rounded-md px-2 py-1 text-left hover:bg-foreground/[0.03]">
-              <BlockView block={b} />
-            </button>
+            <HorizontalMover blockId={b.id} offset={blockOffsetOf(b)} align="center" snap centers={blockCenters} onChange={(f) => setBlockOffset(b.id, f)}>
+              <button onClick={() => { setSelected(null); setEditingId(null); setGraphEdit({ id: b.id }); }} title="Click to edit this graph" className="block rounded-md px-2 py-1 text-left hover:bg-foreground/[0.03]">
+                <BlockView block={b} />
+              </button>
+            </HorizontalMover>
           ) : b.id === editingId ? (
             <EditBox taRef={taRef} para={editingPara} draft={draft} color={color} previewBlock={editingPara ? withCalloutColor(paragraphFromSource(draft, b.id), color) : displayFromSource(draft, b.id)} onChange={onDraftChange} onColor={pickColor} onExit={() => endEdit(b.id)} sticky={sticky} />
           ) : (
@@ -1425,6 +1455,126 @@ function SectionOutline({ outline, handle }: { outline: OutlineItem[]; handle: M
             </div>
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Wraps an image/table/graph block so it can be slid horizontally along its line.
+ * `offset` is the content's left-edge fraction (undefined → centered per `align`).
+ * For pictures/graphs (`snap`), dragging shows a horizontal centerline and the
+ * center magnet-snaps to the page center and to other movable blocks' centers.
+ */
+function HorizontalMover({
+  blockId,
+  offset,
+  align,
+  snap,
+  centers,
+  onChange,
+  children,
+}: {
+  blockId: string;
+  offset: number | undefined;
+  align: ImageAlign;
+  snap: boolean;
+  centers: MutableRefObject<Map<string, number>>;
+  onChange: (frac: number | undefined) => void;
+  children: ReactNode;
+}) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [dims, setDims] = useState({ w: 0, cw: 0, ch: 0 });
+  const [live, setLive] = useState<{ left: number; snapped: boolean } | null>(null);
+  const dragRef = useRef<{ startX: number; startLeft: number; left: number } | null>(null);
+
+  useLayoutEffect(() => {
+    const wrap = wrapRef.current;
+    const content = contentRef.current;
+    if (!wrap || !content) return;
+    const measure = () => setDims({ w: wrap.clientWidth, cw: content.offsetWidth, ch: content.offsetHeight });
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(wrap);
+    ro.observe(content);
+    return () => ro.disconnect();
+  }, []);
+
+  const { w, cw, ch } = dims;
+  const maxLeft = Math.max(0, w - cw);
+  const defaultLeft = align === "left" ? 0 : align === "right" ? maxLeft : maxLeft / 2;
+  const baseLeft = offset == null ? defaultLeft : Math.min(maxLeft, Math.max(0, offset * w));
+  const leftPx = live ? live.left : baseLeft;
+  const centerFrac = w > 0 ? (leftPx + cw / 2) / w : 0.5;
+
+  useEffect(() => {
+    centers.current.set(blockId, centerFrac);
+    return () => { centers.current.delete(blockId); };
+  }, [blockId, centerFrac, centers]);
+
+  function snapLeft(rawLeft: number): { left: number; snapped: boolean } {
+    const clamp = (v: number) => Math.min(maxLeft, Math.max(0, v));
+    let left = clamp(rawLeft);
+    if (snap && w > 0) {
+      const center = left + cw / 2;
+      const targets = [w / 2, ...[...centers.current].filter(([k]) => k !== blockId).map(([, c]) => c * w)];
+      for (const t of targets) {
+        if (Math.abs(center - t) <= 8) return { left: clamp(t - cw / 2), snapped: true };
+      }
+    }
+    return { left, snapped: false };
+  }
+
+  function onDown(e: ReactPointerEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    try { (e.currentTarget as Element).setPointerCapture(e.pointerId); } catch { /* noop */ }
+    dragRef.current = { startX: e.clientX, startLeft: leftPx, left: leftPx };
+    setLive({ left: leftPx, snapped: false });
+  }
+  function onMove(e: ReactPointerEvent) {
+    const d = dragRef.current;
+    if (!d) return;
+    const res = snapLeft(d.startLeft + (e.clientX - d.startX));
+    d.left = res.left;
+    setLive(res);
+  }
+  function onUp(e: ReactPointerEvent) {
+    const d = dragRef.current;
+    if (!d) return;
+    try { (e.currentTarget as Element).releasePointerCapture(e.pointerId); } catch { /* noop */ }
+    onChange(w > 0 ? Math.max(0, Math.min(0.999, d.left / w)) : undefined);
+    dragRef.current = null;
+    setLive(null);
+  }
+
+  return (
+    <div ref={wrapRef} className="relative w-full">
+      {live && snap && ch > 0 && (
+        <>
+          <div
+            className="pointer-events-none absolute left-0 right-0 z-10"
+            style={{ top: ch / 2, borderTop: `1.5px ${live.snapped ? "solid" : "dashed"} var(--accent)`, opacity: live.snapped ? 1 : 0.6 }}
+          />
+          {live.snapped && (
+            <div className="pointer-events-none absolute z-10 w-px bg-accent" style={{ left: live.left + cw / 2, top: 0, height: ch }} />
+          )}
+        </>
+      )}
+      <div ref={contentRef} className="relative w-fit max-w-full" style={{ marginLeft: leftPx }}>
+        {children}
+        <button
+          onPointerDown={onDown}
+          onPointerMove={onMove}
+          onPointerUp={onUp}
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
+          onDoubleClick={(e) => { e.preventDefault(); e.stopPropagation(); onChange(undefined); }}
+          title="Drag to move horizontally · double-click to recenter"
+          className="print-hide absolute -left-2 -top-3 z-20 grid h-6 w-6 cursor-ew-resize touch-none place-items-center rounded-full border border-border bg-surface text-xs text-muted opacity-0 shadow-sm hover:border-accent hover:text-accent group-hover:opacity-100"
+        >
+          ↔
+        </button>
       </div>
     </div>
   );

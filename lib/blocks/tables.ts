@@ -156,11 +156,16 @@ function tabularOf(data: TableData): string {
 }
 
 /** Serialize a row of tables: subtables (with \caption) when captioned/multiple. */
-export function tableRowToLatex(tables: TableData[], align: ImageAlign): string {
+export function tableRowToLatex(tables: TableData[], align: ImageAlign, offset?: number): string {
   if (tables.length === 0) return "";
   const cmd =
     align === "left" ? "\\raggedright" : align === "right" ? "\\raggedleft" : "\\centering";
   const anyCaption = tables.some((t) => (t.caption ?? "").trim());
+
+  // Free horizontal position for a single uncaptioned table (in-flow shift).
+  if (typeof offset === "number" && offset > 0.001 && tables.length === 1 && !anyCaption) {
+    return `\\noindent\\hspace*{${parseFloat(Math.min(0.99, offset).toFixed(4))}\\linewidth}${tabularOf(tables[0])}`;
+  }
 
   if (tables.length > 1 || anyCaption) {
     const frac = (Math.min(0.9, 1 / Math.max(1, tables.length)) * 0.95).toFixed(2);

@@ -9,8 +9,11 @@ import { Katex } from "@/components/Katex";
 import { SymbolPicker } from "@/components/SymbolPicker";
 import { TablePicker } from "@/components/TablePicker";
 import { TableRowEditor } from "@/components/TableRowEditor";
+import { TemplatePicker } from "@/components/TemplatePicker";
+import { freshTree, saveTemplate, type SavedTemplate } from "@/lib/templates/templates";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { documentToLatex } from "@/lib/blocks";
+import { emptyDocument } from "@/lib/blocks/types";
 import {
   CALLOUT_COLORS,
   calloutColorOf,
@@ -279,6 +282,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   const [editSyms, setEditSyms] = useState(false);
   const [picker, setPicker] = useState<Picker>(null);
   const [tablePicker, setTablePicker] = useState(false);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
   // null = closed; { id: null } = drawing a new graph; { id } = editing an existing one.
   const [graphEdit, setGraphEdit] = useState<{ id: string | null } | null>(null);
   const [listMenu, setListMenu] = useState<null | "bullet" | "number">(null);
@@ -384,7 +388,12 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
       const loadedTitle = meta?.title ?? "Untitled";
       initialTitleRef.current = loadedTitle;
       setTitle(loadedTitle);
-    })().catch(console.error);
+    })().catch((e) => {
+      console.error(e);
+      // Never get stuck on "Opening note…": render the editor with an empty
+      // document so the toolbar/header (and the rest of the UI) still appear.
+      setPkg((prev) => prev ?? { noteId: id, tree: emptyDocument("flow"), latexCache: "", assets: [], updatedAt: new Date().toISOString(), rev: null });
+    });
   }, [id, authLoading]);
   // Arrived via a "Download PDF" action (?print=1): open the print dialog once
   // the document has loaded and rendered.
@@ -465,6 +474,23 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     lastSnapCoalesced.current = false;
     applyTree(next);
   }, [applyTree]);
+
+  // ── templates ──────────────────────────────────────────────────────────────
+  /** Replace the document with a template (undoable; fresh block ids). */
+  function applyTemplate(t: DocumentTree) {
+    snapshot(false);
+    setEditingId(null);
+    setSelected(null);
+    setPkg((prev) => (prev ? { ...prev, tree: freshTree(t) } : prev));
+    setSaved(false);
+    setTemplatesOpen(false);
+  }
+  /** Save the current document as a reusable template. */
+  function saveCurrentAsTemplate(name: string): SavedTemplate | null {
+    const t = pkgRef.current?.tree;
+    if (!t) return null;
+    return saveTemplate(name, "Saved from a note", t, new Date().toISOString());
+  }
 
   // ⌘/Ctrl+Z = undo, ⌘/Ctrl+Shift+Z or Ctrl+Y = redo. Scoped to the pane the
   // user is in (or the primary pane when focus is outside any editor). Title and
@@ -1085,9 +1111,10 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
         {split && <span className="rounded bg-foreground/5 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted">{primary ? "A" : "B"}</span>}
         <input value={title} onChange={(e) => { setTitle(e.target.value); setSaved(false); }} className="flex-1 bg-transparent text-lg font-semibold outline-none" />
         <div className="flex items-center gap-1">
-          <button onMouseDown={(e) => e.preventDefault()} onClick={undo} disabled={undoStack.current.length === 0} title="Undo (⌘/Ctrl+Z)" aria-label="Undo" className="rounded-md border border-border px-2.5 py-1.5 text-base leading-none hover:border-accent disabled:opacity-30">↶</button>
-          <button onMouseDown={(e) => e.preventDefault()} onClick={redo} disabled={redoStack.current.length === 0} title="Redo (⌘/Ctrl+Shift+Z)" aria-label="Redo" className="rounded-md border border-border px-2.5 py-1.5 text-base leading-none hover:border-accent disabled:opacity-30">↷</button>
+          <button onMouseDown={(e) => e.preventDefault()} onClick={undo} disabled={undoStack.current.length === 0} title="Undo (⌘/Ctrl+Z)" aria-label="Undo" className="flex items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-sm hover:border-accent disabled:opacity-40"><span className="text-base leading-none">↶</span>Undo</button>
+          <button onMouseDown={(e) => e.preventDefault()} onClick={redo} disabled={redoStack.current.length === 0} title="Redo (⌘/Ctrl+Shift+Z)" aria-label="Redo" className="flex items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-sm hover:border-accent disabled:opacity-40"><span className="text-base leading-none">↷</span>Redo</button>
         </div>
+        <button onClick={() => setTemplatesOpen(true)} title="Start from a template" className="rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent">Templates</button>
         <button onClick={() => setShowSource((s) => !s)} className="rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent">{showSource ? "Editor" : "LaTeX"}</button>
         <ExportMenu noteId={id} title={title} beforeExport={save} onPdf={printPdf} label="Export ▾" className="rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent" />
         <button onClick={save} title="Saves automatically; click to save now" className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white">{saving ? "Saving…" : saved ? "Saved" : "Save"}</button>
@@ -1239,6 +1266,13 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
           initial={graphEdit.id ? graphModel(blocks.find((b) => b.id === graphEdit.id) ?? { id: "", type: "graph" }) : undefined}
           onPick={commitGraph}
           onClose={() => setGraphEdit(null)}
+        />
+      )}
+      {templatesOpen && (
+        <TemplatePicker
+          onApply={applyTemplate}
+          onSaveCurrent={saveCurrentAsTemplate}
+          onClose={() => setTemplatesOpen(false)}
         />
       )}
     </main>

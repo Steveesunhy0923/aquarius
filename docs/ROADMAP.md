@@ -1,5 +1,20 @@
 # Roadmap
 
+## 0.4 — Social platform (in progress)
+
+Turning Aquarius from local-only into a collaborative platform. **Slice 1 (auth +
+profiles + cloud documents) is implemented:** Supabase Auth (Google + email/password,
+with identity linking; Apple deferred), a `profiles` table with usernames
+(`supabase/migrations/0003_profiles.sql`), `owner_id default auth.uid()`
+(`0004`), note soft-delete in the cloud (`0005`), and a `SupabaseLibraryStore`
+(`lib/storage/cloud.ts`) that `getStore()` returns when signed in (guest stays on
+IndexedDB). Realtime collaboration uses Yjs-over-Supabase-Realtime in a later
+slice. **Still to build:** sharing by username + roles (viewer/commenter/editor)
+and the membership-based RLS rewrite; comments + the right-side overlay drawer;
+Yjs realtime co-editing; the template gallery + likes; Apple sign-in.
+
+---
+
 This is the intended build order. **Be precise about status:** the core loop is implemented
 end-to-end — the block tree, the LaTeX/KaTeX serializer, the IndexedDB store (with `.aqnote`
 export/import), the Supabase Postgres schema + RLS, and a minimal library browser and

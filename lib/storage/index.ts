@@ -12,6 +12,9 @@
 
 import { emptyDocument } from "@/lib/blocks/types";
 import type { Block, DocumentTree } from "@/lib/blocks/types";
+import { isSupabaseConfigured } from "@/lib/supabase/client";
+import { getCachedUserId } from "@/lib/supabase/session";
+import { SupabaseLibraryStore } from "./cloud";
 import { LocalLibraryStore } from "./local";
 import type { LibraryStore } from "./types";
 
@@ -56,17 +59,63 @@ function createServerStub(): LibraryStore {
   };
 }
 
-let singleton: LocalLibraryStore | null = null;
+let localSingleton: LocalLibraryStore | null = null;
+let cloudSingleton: SupabaseLibraryStore | null = null;
 
-/** Lazily create and return the process-wide `LibraryStore` singleton. */
+/** The IndexedDB store (always local), regardless of auth — used for migration. */
+export function getLocalStore(): LibraryStore {
+  if (typeof indexedDB === "undefined") return createServerStub();
+  if (!localSingleton) localSingleton = new LocalLibraryStore();
+  return localSingleton;
+}
+
+/**
+ * The active `LibraryStore`: the Supabase cloud store when a user is signed in
+ * (and cloud is configured), otherwise the local IndexedDB store (guest mode).
+ * Synchronous by design — the auth session is mirrored into a module cache
+ * (lib/supabase/session.ts) so this never needs to await.
+ */
 export function getStore(): LibraryStore {
   // Never memoize the server stub: caching it on a first SSR/prerender call
-  // would poison a later client call. Only the real browser store is cached, so
-  // the stub decision always reflects the CURRENT environment, not first-call
-  // timing.
+  // would poison a later client call.
   if (typeof indexedDB === "undefined") return createServerStub();
-  if (!singleton) singleton = new LocalLibraryStore();
-  return singleton;
+  if (isSupabaseConfigured() && getCachedUserId()) {
+    if (!cloudSingleton) cloudSingleton = new SupabaseLibraryStore();
+    return cloudSingleton;
+  }
+  if (!localSingleton) localSingleton = new LocalLibraryStore();
+  return localSingleton;
+}
+
+/** True when `getStore()` currently resolves to the cloud (signed-in) store. */
+export function isCloudActive(): boolean {
+  return isSupabaseConfigured() && Boolean(getCachedUserId());
+}
+
+/**
+ * Copy the entire local IndexedDB library into the active cloud store, so a
+ * guest's notes aren't stranded after signing in. Recreates the
+ * subject→notebook→note structure; each note round-trips through the portable
+ * bundle (content + assets). No-op unless the cloud store is active. Returns how
+ * many notes were uploaded.
+ */
+export async function migrateLocalToCloud(): Promise<{ notes: number }> {
+  if (!isCloudActive()) throw new Error("Sign in first to upload to the cloud.");
+  const local = getLocalStore();
+  const cloud = getStore();
+  let notes = 0;
+  for (const subject of await local.listSubjects()) {
+    const cs = await cloud.createSubject({ name: subject.name, color: subject.color, icon: subject.icon });
+    for (const nb of await local.listNotebooks(subject.id)) {
+      const cnb = await cloud.createNotebook({ subjectId: cs.id, name: nb.name, color: nb.color });
+      for (const note of await local.listNotes(nb.id)) {
+        const bundle = await local.exportNote(note.id);
+        await cloud.importNote(bundle, cnb.id);
+        notes += 1;
+      }
+    }
+  }
+  return { notes };
 }
 
 // ─── Demo seed ───────────────────────────────────────────────────────────────

@@ -27,7 +27,16 @@ export function getSupabaseClient(): SupabaseClient | null {
   if (cached !== undefined) return cached;
   cached = isSupabaseConfigured()
     ? createClient(url as string, anonKey as string, {
-        auth: { persistSession: true, autoRefreshToken: true },
+        auth: {
+          persistSession: true,
+          autoRefreshToken: true,
+          // PKCE: the OAuth redirect carries a `code` we exchange explicitly at
+          // /auth/callback (see app/auth/callback/page.tsx) so failures surface a
+          // message instead of silently leaving the user signed-out. Disable the
+          // implicit URL detection to avoid a double-exchange of that code.
+          flowType: "pkce",
+          detectSessionInUrl: false,
+        },
       })
     : null;
   return cached;

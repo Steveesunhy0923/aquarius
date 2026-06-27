@@ -9,6 +9,7 @@ import { Katex } from "@/components/Katex";
 import { SymbolPicker } from "@/components/SymbolPicker";
 import { TablePicker } from "@/components/TablePicker";
 import { TableRowEditor } from "@/components/TableRowEditor";
+import { useAuth } from "@/lib/auth/AuthProvider";
 import { documentToLatex } from "@/lib/blocks";
 import {
   CALLOUT_COLORS,
@@ -63,7 +64,7 @@ import {
   type TableData,
   type TableStyle,
 } from "@/lib/blocks/tables";
-import type { Block, DocumentStyle, Placement } from "@/lib/blocks/types";
+import type { Block, DocumentStyle, DocumentTree, Placement } from "@/lib/blocks/types";
 import { getStore } from "@/lib/storage";
 import type { NotePackage, NoteMeta } from "@/lib/storage/types";
 import Link from "next/link";
@@ -257,6 +258,7 @@ type Picker = { kind: "symbol"; index: number } | { kind: "insert" } | null;
 type Selected = { id: string; index: number; kind: "image" | "table" } | null;
 
 function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, onSaved, handleRef }: DocProps) {
+  const { loading: authLoading } = useAuth();
   const [pkg, setPkg] = useState<NotePackage | null>(null);
   const [title, setTitle] = useState("");
   const [showSource, setShowSource] = useState(false);
@@ -288,6 +290,13 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   const blockEls = useRef<Map<string, HTMLElement>>(new Map());
   const lastEditedId = useRef<string | null>(null);
   const pkgRef = useRef<NotePackage | null>(null);
+  const rootRef = useRef<HTMLElement>(null);
+  // Undo/redo: stacks of whole-document snapshots. Consecutive text edits within
+  // COALESCE_MS collapse into one step so typing isn't undone character-by-char.
+  const undoStack = useRef<DocumentTree[]>([]);
+  const redoStack = useRef<DocumentTree[]>([]);
+  const lastSnapAt = useRef(0);
+  const lastSnapCoalesced = useRef(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const caretRef = useRef(0);
   const sticky = useRef(false);
@@ -362,17 +371,21 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
       }
     };
   }, [id]);
+  // Wait for the auth session to resolve so a directly-opened cloud note loads
+  // from the cloud store (not a transient local miss) — see getStore().
   useEffect(() => {
+    if (authLoading) return;
     (async () => {
       const store = getStore();
       const [p, meta] = await Promise.all([store.openNote(id), store.getNoteMeta(id)]);
+      resetHistory(); // a freshly loaded document starts with an empty undo history
       setPkg(p);
       metaPresentRef.current = !!meta;
       const loadedTitle = meta?.title ?? "Untitled";
       initialTitleRef.current = loadedTitle;
       setTitle(loadedTitle);
     })().catch(console.error);
-  }, [id]);
+  }, [id, authLoading]);
   // Arrived via a "Download PDF" action (?print=1): open the print dialog once
   // the document has loaded and rendered.
   useEffect(() => {
@@ -408,8 +421,83 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     });
   });
 
+  // ── undo / redo (whole-document snapshots) ─────────────────────────────────
+  const HISTORY_LIMIT = 100;
+  const COALESCE_MS = 400;
+  /** Snapshot the current tree before a change so it can be undone back to. */
+  function snapshot(coalesce: boolean) {
+    const prev = pkgRef.current?.tree;
+    if (!prev) return;
+    const now = Date.now();
+    const merge = coalesce && lastSnapCoalesced.current && now - lastSnapAt.current <= COALESCE_MS;
+    if (!merge) {
+      undoStack.current.push(prev);
+      if (undoStack.current.length > HISTORY_LIMIT) undoStack.current.shift();
+    }
+    redoStack.current = []; // any new edit invalidates the redo stack
+    lastSnapAt.current = now;
+    lastSnapCoalesced.current = coalesce;
+  }
+  function resetHistory() {
+    undoStack.current = [];
+    redoStack.current = [];
+    lastSnapCoalesced.current = false;
+  }
+  const applyTree = useCallback((tree: DocumentTree) => {
+    setEditingId(null); // close any open editor so its draft can't fight the restore
+    setSelected(null);
+    setPkg((prev) => (prev ? { ...prev, tree } : prev));
+    setSaved(false);
+  }, []);
+  const undo = useCallback(() => {
+    const prev = undoStack.current.pop();
+    const cur = pkgRef.current;
+    if (!prev || !cur) return;
+    redoStack.current.push(cur.tree);
+    lastSnapCoalesced.current = false;
+    applyTree(prev);
+  }, [applyTree]);
+  const redo = useCallback(() => {
+    const next = redoStack.current.pop();
+    const cur = pkgRef.current;
+    if (!next || !cur) return;
+    undoStack.current.push(cur.tree);
+    lastSnapCoalesced.current = false;
+    applyTree(next);
+  }, [applyTree]);
+
+  // ⌘/Ctrl+Z = undo, ⌘/Ctrl+Shift+Z or Ctrl+Y = redo. Scoped to the pane the
+  // user is in (or the primary pane when focus is outside any editor). Title and
+  // caption inputs keep their native undo; the main block editor uses ours.
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+      const k = e.key.toLowerCase();
+      if (k !== "z" && k !== "y") return;
+      const ae = document.activeElement as HTMLElement | null;
+      // Leave native undo to other text fields (note title, captions, …).
+      const isOtherField =
+        !!ae && ae !== taRef.current &&
+        (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable);
+      if (isOtherField) return;
+      const root = rootRef.current;
+      const focusedHere = !!root && !!ae && root.contains(ae);
+      if (!focusedHere) {
+        if (!primary) return; // a non-primary pane only acts on its own focus
+        if (ae && ae !== document.body) return; // focus is in the other pane
+      }
+      e.preventDefault();
+      if (k === "y" || e.shiftKey) redo();
+      else undo();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [primary, undo, redo]);
+
   // ── tree mutations ────────────────────────────────────────────────────────
-  function setBlocks(update: (blocks: Block[]) => Block[]) {
+  // `coalesce` merges rapid same-burst edits (text typing) into one undo step.
+  function setBlocks(update: (blocks: Block[]) => Block[], coalesce = false) {
+    snapshot(coalesce);
     setPkg((prev) => (prev ? { ...prev, tree: { ...prev.tree, blocks: update(prev.tree.blocks) } } : prev));
     setSaved(false);
   }
@@ -499,7 +587,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   function commit(text: string, c: string | null) {
     if (!editingId) return;
     const next = editingPara ? withCalloutColor(paragraphFromSource(text, editingId), c) : displayFromSource(text, editingId);
-    setBlocks((bs) => bs.map((b) => (b.id === editingId ? next : b)));
+    setBlocks((bs) => bs.map((b) => (b.id === editingId ? next : b)), true); // coalesce keystrokes
   }
   function startEdit(block: Block) {
     sticky.current = false; // never let a leftover one-shot absorb this session's first blur
@@ -551,6 +639,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     else blockEls.current.delete(id);
   };
   function setDocStyle(patch: Partial<DocumentStyle>) {
+    snapshot(false);
     setPkg((prev) =>
       prev ? { ...prev, tree: { ...prev.tree, style: { ...prev.tree.style, ...patch } } } : prev,
     );
@@ -989,12 +1078,16 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   } as CSSProperties;
 
   return (
-    <main className="flex h-full min-h-0 flex-col" onMouseDown={onActivate}>
+    <main ref={rootRef} className="flex h-full min-h-0 flex-col" onMouseDown={onActivate}>
       <input ref={fileRef} type="file" accept="image/*" onChange={onPickImage} className="hidden" />
 
       <header className="print-hide flex items-center gap-3 border-b border-border px-4 py-3">
         {split && <span className="rounded bg-foreground/5 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted">{primary ? "A" : "B"}</span>}
         <input value={title} onChange={(e) => { setTitle(e.target.value); setSaved(false); }} className="flex-1 bg-transparent text-lg font-semibold outline-none" />
+        <div className="flex items-center gap-1">
+          <button onMouseDown={(e) => e.preventDefault()} onClick={undo} disabled={undoStack.current.length === 0} title="Undo (⌘/Ctrl+Z)" aria-label="Undo" className="rounded-md border border-border px-2.5 py-1.5 text-base leading-none hover:border-accent disabled:opacity-30">↶</button>
+          <button onMouseDown={(e) => e.preventDefault()} onClick={redo} disabled={redoStack.current.length === 0} title="Redo (⌘/Ctrl+Shift+Z)" aria-label="Redo" className="rounded-md border border-border px-2.5 py-1.5 text-base leading-none hover:border-accent disabled:opacity-30">↷</button>
+        </div>
         <button onClick={() => setShowSource((s) => !s)} className="rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent">{showSource ? "Editor" : "LaTeX"}</button>
         <ExportMenu noteId={id} title={title} beforeExport={save} onPdf={printPdf} label="Export ▾" className="rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent" />
         <button onClick={save} title="Saves automatically; click to save now" className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white">{saving ? "Saving…" : saved ? "Saved" : "Save"}</button>

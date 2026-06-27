@@ -1,8 +1,10 @@
 "use client";
 
+import { AccountMenu } from "@/components/auth/AccountMenu";
 import { downloadNote } from "@/components/ExportMenu";
 import { NoteCover } from "@/components/NoteCover";
-import { getStore, seedDemoLibrary } from "@/lib/storage";
+import { useAuth } from "@/lib/auth/AuthProvider";
+import { getStore, migrateLocalToCloud, seedDemoLibrary } from "@/lib/storage";
 import type { LibraryStore, NoteBundleFile, NoteMeta, Notebook, Subject } from "@/lib/storage/types";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -40,6 +42,8 @@ async function purgeExpired(store: LibraryStore): Promise<void> {
  */
 export default function LibraryPage() {
   const router = useRouter();
+  const { user, loading: authLoading } = useAuth();
+  const userId = user?.id ?? null;
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [notebooks, setNotebooks] = useState<Notebook[]>([]);
   const [notes, setNotes] = useState<NoteMeta[]>([]);
@@ -54,17 +58,24 @@ export default function LibraryPage() {
   const [deleted, setDeleted] = useState<NoteMeta[]>([]);
 
   // Initial load: seed on first run, purge expired trash, then list subjects.
+  // Re-runs when the signed-in user changes (sign in/out swaps cloud ↔ local
+  // store); waits for the auth session to resolve so we load the right library
+  // once rather than flashing the local one first.
   useEffect(() => {
+    if (authLoading) return;
+    let alive = true;
     (async () => {
       const store = getStore();
       await seedDemoLibrary(store);
       await purgeExpired(store).catch(() => {});
       const subs = await store.listSubjects();
+      if (!alive) return;
       setSubjects(subs);
       setSubjectId(subs[0]?.id ?? null);
       setReady(true);
     })().catch(console.error);
-  }, []);
+    return () => { alive = false; };
+  }, [authLoading, userId]);
 
   useEffect(() => {
     if (!subjectId) {
@@ -316,6 +327,13 @@ export default function LibraryPage() {
           >
             🗑 Recently Deleted
           </button>
+          <AccountMenu
+            onUploadLocal={async () => {
+              await migrateLocalToCloud();
+              await refresh();
+              setSubjects(await getStore().listSubjects());
+            }}
+          />
         </div>
       </header>
 

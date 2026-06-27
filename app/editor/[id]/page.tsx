@@ -11,8 +11,10 @@ import { TablePicker } from "@/components/TablePicker";
 import { TableRowEditor } from "@/components/TableRowEditor";
 import { DesignPicker } from "@/components/DesignPicker";
 import { ShareDialog } from "@/components/ShareDialog";
+import { PresenceAvatars } from "@/components/PresenceAvatars";
 import { TemplateApplyDialog } from "@/components/TemplateApplyDialog";
-import { getMyAccess, type Access } from "@/lib/sharing/sharing";
+import { getMyAccess, listCollaborators, type Access } from "@/lib/sharing/sharing";
+import { useCollab, type PeerInfo } from "@/lib/collab";
 import { getSettings, setSettings } from "@/lib/settings/settings";
 import { freshTree, saveTemplate, type BuiltInBackground, type SavedTemplate } from "@/lib/templates/templates";
 import { useAuth } from "@/lib/auth/AuthProvider";
@@ -265,7 +267,7 @@ type Picker = { kind: "symbol"; index: number } | { kind: "insert" } | null;
 type Selected = { id: string; index: number; kind: "image" | "table" } | null;
 
 function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, onSaved, handleRef }: DocProps) {
-  const { loading: authLoading } = useAuth();
+  const { loading: authLoading, user } = useAuth();
   const [pkg, setPkg] = useState<NotePackage | null>(null);
   const [title, setTitle] = useState("");
   const [showSource, setShowSource] = useState(false);
@@ -295,6 +297,22 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   const readOnly = access === "viewer" || access === "commenter";
   const readOnlyRef = useRef(readOnly);
   readOnlyRef.current = readOnly;
+  // Real-time co-editing is eligible only for a SHARED cloud note (a Role access
+  // implies it's shared; an owner must actually have collaborators).
+  const [shared, setShared] = useState(false);
+  // A remote-originated tree is stored here by reference; the bridge effect that
+  // pushes local edits into the Y.Doc skips a tree it recognizes as remote, so a
+  // remote edit never loops back into the doc (and the initial projection from
+  // the authoritative `ydoc` never clobbers it with a stale local tree).
+  const lastRemoteTreeRef = useRef<DocumentTree | null>(null);
+  const applyRemoteTree = useCallback((tree: DocumentTree) => {
+    lastRemoteTreeRef.current = tree;
+    // Update content WITHOUT marking the editor dirty (autosave stays gated on
+    // `saved`, so only the client that actually edited persists) and WITHOUT
+    // pushing an undo snapshot (you only undo your own actions).
+    setPkg((prev) => (prev ? { ...prev, tree } : prev));
+  }, []);
+  const collab = useCollab({ noteId: id, access, enabled: shared, pkg, applyRemoteTree });
   // null = closed; { id: null } = drawing a new graph; { id } = editing an existing one.
   const [graphEdit, setGraphEdit] = useState<{ id: string | null } | null>(null);
   const [listMenu, setListMenu] = useState<null | "bullet" | "number">(null);
@@ -358,6 +376,33 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     const t = setTimeout(() => { void saveFnRef.current(); }, 800);
     return () => clearTimeout(t);
   }, [pkg, title, saved]);
+  // Bridge LOCAL edits into the Y.Doc when collab is active. Every editor mutator
+  // funnels into a NEW `pkg.tree` object, while a remote-applied tree is the exact
+  // object stored in `lastRemoteTreeRef` — so identity-comparing cleanly skips
+  // remote-originated changes (no feedback loop), regardless of render timing.
+  useEffect(() => {
+    if (!collab.active || !pkg) return;
+    if (pkg.tree === lastRemoteTreeRef.current) return; // came from a remote apply
+    collab.pushLocalTree(pkg.tree);
+    // `pushLocalTree` is stable (useCallback); `collab.active` is a boolean.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pkg, collab.active, collab.pushLocalTree]);
+  // Announce which block we're editing so peers can flag our "typing line".
+  useEffect(() => {
+    if (collab.active) collab.setEditing(editingId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingId, collab.active, collab.setEditing]);
+  // Map of blockId → peers (excluding self) currently editing that block.
+  const selfId = user?.id ?? null;
+  const remoteEditing = useMemo(() => {
+    const m = new Map<string, PeerInfo[]>();
+    for (const p of collab.peers) {
+      if (p.userId === selfId || !p.editingId) continue;
+      const arr = m.get(p.editingId);
+      if (arr) arr.push(p); else m.set(p.editingId, [p]);
+    }
+    return m;
+  }, [collab.peers, selfId]);
   // Flush any pending save when the tab is hidden/closed or the editor unmounts
   // (e.g. navigating back to the library), so the debounced write isn't lost.
   useEffect(() => {
@@ -418,6 +463,18 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
       .catch(() => { if (alive) setAccess("owner"); });
     return () => { alive = false; };
   }, [id, authLoading]);
+  // Is this note shared? A collaborator role implies yes; an owner must have at
+  // least one collaborator. Drives whether the live co-editing channel opens.
+  useEffect(() => {
+    if (authLoading) return;
+    if (!isCloudActive()) { setShared(false); return; }
+    if (access === "viewer" || access === "commenter" || access === "editor") { setShared(true); return; }
+    let alive = true;
+    listCollaborators(id)
+      .then((c) => { if (alive) setShared(c.length > 0); })
+      .catch(() => { if (alive) setShared(false); });
+    return () => { alive = false; };
+  }, [id, authLoading, access]);
   // Arrived via a "Download PDF" action (?print=1): open the print dialog once
   // the document has loaded and rendered.
   useEffect(() => {
@@ -1066,7 +1123,11 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     const run = (async () => {
       try {
         const store = getStore();
-        await store.saveNote({ ...p, latexCache: documentToLatex(p.tree) });
+        // When collab is active, persist the authoritative Yjs snapshot (which
+        // encodes ALL merged peers' edits) alongside the materialized read model;
+        // otherwise preserve any existing snapshot. cloud.ts omits a null ydoc.
+        const ydoc = collab.snapshot() ?? p.ydoc ?? null;
+        await store.saveNote({ ...p, latexCache: documentToLatex(p.tree), ydoc });
         // `deletedAt: null` implicitly restores a trashed note the moment it is
         // edited — so edited work can never be silently purged from the bin.
         await store.updateNoteMeta(id, { title: t, deletedAt: null });
@@ -1173,6 +1234,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
           </div>
         )}
         {!readOnly && <button onClick={() => setTemplatesOpen(true)} title="Templates & backgrounds" className="rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent">Design</button>}
+        {collab.active && <PresenceAvatars peers={collab.peers} selfId={user?.id ?? null} connected={collab.connected} />}
         {isCloudActive() && <button onClick={() => setShareOpen(true)} title="Share this document" className="rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent">🔗 Share</button>}
         <button onClick={() => setShowSource((s) => !s)} className="rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent">{showSource ? "Editor" : "LaTeX"}</button>
         <ExportMenu noteId={id} title={title} beforeExport={save} onPdf={printPdf} label="Export ▾" className="rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent" />
@@ -1297,9 +1359,28 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
                       {ids.map((id) => {
                         const gi = indexById.get(id) ?? -1;
                         const b = blocks[gi];
-                        return b ? (
-                          <div key={id} ref={setBlockRef(id)}>{renderBlock(b, gi)}</div>
-                        ) : null;
+                        if (!b) return null;
+                        const editors = remoteEditing.get(id);
+                        // Highlight a block a collaborator is editing (outline does
+                        // not affect offsetHeight, so pagination is unaffected) and
+                        // flag it with their name(s), Google-Docs style.
+                        return (
+                          <div
+                            key={id}
+                            ref={setBlockRef(id)}
+                            className="relative"
+                            style={editors ? { outline: `2px solid ${editors[0].color}`, outlineOffset: "3px", borderRadius: "3px" } : undefined}
+                          >
+                            {editors && (
+                              <span className="print-hide pointer-events-none absolute -top-2.5 right-0 z-10 flex gap-1">
+                                {editors.map((peer) => (
+                                  <span key={peer.userId} className="rounded px-1.5 py-0.5 text-[10px] font-medium leading-none text-white shadow" style={{ backgroundColor: peer.color }}>{peer.username}</span>
+                                ))}
+                              </span>
+                            )}
+                            {renderBlock(b, gi)}
+                          </div>
+                        );
                       })}
                     </div>
                   )}

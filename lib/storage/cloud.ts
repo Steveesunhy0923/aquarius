@@ -16,6 +16,7 @@ import { emptyDocument } from "@/lib/blocks/types";
 import type { DocumentTree } from "@/lib/blocks/types";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { getCachedUserId } from "@/lib/supabase/session";
+import { bytesToPgHex, pgHexToBytes } from "@/lib/collab/bytes";
 import { base64ToBlob, blobToBase64, remapTreeAssetIds } from "./bundle";
 import type {
   AssetBlob,
@@ -55,6 +56,7 @@ interface NoteRow {
 }
 interface PackageRow {
   note_id: string; tree: DocumentTree; latex_cache: string | null; updated_at: string;
+  ydoc: string | null; // Postgres bytea, returned by PostgREST as a `\x…` hex string
 }
 interface AssetRow {
   id: string; note_id: string; kind: AssetRef["kind"]; mime: string;
@@ -297,22 +299,32 @@ export class SupabaseLibraryStore implements LibraryStore {
   // ── Note packages (heavy content) ────────────────────────────────────────────
   async openNote(id: EntityId): Promise<NotePackage> {
     const { data: pkg, error } = await this.sb.from("note_packages")
-      .select("note_id,tree,latex_cache,updated_at").eq("note_id", id).maybeSingle();
+      .select("note_id,tree,latex_cache,updated_at,ydoc").eq("note_id", id).maybeSingle();
     if (error) throw error;
     const { data: assetRows, error: aErr } = await this.sb.from("assets").select("*").eq("note_id", id);
     if (aErr) throw aErr;
     const assets = (assetRows as AssetRow[]).map(assetFromRow);
     if (!pkg) {
       // Note exists but its package row is missing — return an empty document.
-      return { noteId: id, tree: emptyDocument("flow"), latexCache: "", assets, updatedAt: new Date(0).toISOString(), rev: null };
+      return { noteId: id, tree: emptyDocument("flow"), latexCache: "", assets, updatedAt: new Date(0).toISOString(), rev: null, ydoc: null };
     }
     const row = pkg as PackageRow;
-    return { noteId: id, tree: row.tree, latexCache: row.latex_cache ?? "", assets, updatedAt: row.updated_at, rev: null };
+    // `ydoc` is present only once a note has been co-edited; null otherwise so
+    // the collab layer seeds a fresh Y.Doc from `tree`.
+    const ydoc = row.ydoc ? pgHexToBytes(row.ydoc) : null;
+    return { noteId: id, tree: row.tree, latexCache: row.latex_cache ?? "", assets, updatedAt: row.updated_at, rev: null, ydoc };
   }
   async saveNote(pkg: NotePackage): Promise<void> {
     const ts = new Date().toISOString();
-    const { error } = await this.sb.from("note_packages")
-      .upsert({ note_id: pkg.noteId, tree: pkg.tree, latex_cache: pkg.latexCache, updated_at: ts }, { onConflict: "note_id" });
+    // Persist the authoritative Yjs snapshot (collab notes) alongside the
+    // materialized read model (`tree`/`latex_cache`). For private notes `ydoc`
+    // is absent and the column is left untouched (undefined is omitted by
+    // supabase-js, so a prior snapshot is never clobbered with null).
+    const row: Record<string, unknown> = {
+      note_id: pkg.noteId, tree: pkg.tree, latex_cache: pkg.latexCache, updated_at: ts,
+    };
+    if (pkg.ydoc != null) row.ydoc = bytesToPgHex(pkg.ydoc);
+    const { error } = await this.sb.from("note_packages").upsert(row, { onConflict: "note_id" });
     if (error) throw error;
     const { error: e2 } = await this.sb.from("notes").update({ mode: pkg.tree.mode, updated_at: ts }).eq("id", pkg.noteId);
     if (e2) throw e2;

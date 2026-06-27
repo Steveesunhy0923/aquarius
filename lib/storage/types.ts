@@ -130,6 +130,13 @@ export interface NotePackage {
   assets: AssetRef[];
   updatedAt: ISOTimestamp;
   rev?: string | null;
+  /**
+   * Authoritative Yjs document state (`Y.encodeStateAsUpdate`) for notes that
+   * have been co-edited. `tree`/`latexCache` are a derived read model. Absent
+   * (undefined/null) for private notes and the local store — those keep the
+   * simple last-write-wins tree path. See `lib/collab/`.
+   */
+  ydoc?: Uint8Array | null;
 }
 
 /**

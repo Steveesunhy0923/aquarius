@@ -5,6 +5,7 @@ import { SettingsDialog } from "@/components/SettingsDialog";
 import { downloadNote } from "@/components/ExportMenu";
 import { NoteCover } from "@/components/NoteCover";
 import { useAuth } from "@/lib/auth/AuthProvider";
+import { listSharedWithMe, type Role } from "@/lib/sharing/sharing";
 import { getStore, migrateLocalToCloud, seedDemoLibrary } from "@/lib/storage";
 import type { LibraryStore, NoteBundleFile, NoteMeta, Notebook, Subject } from "@/lib/storage/types";
 import Link from "next/link";
@@ -58,6 +59,9 @@ export default function LibraryPage() {
   const [trash, setTrash] = useState(false);
   const [deleted, setDeleted] = useState<NoteMeta[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [shared, setShared] = useState(false);
+  const [sharedNotes, setSharedNotes] = useState<{ note: NoteMeta; role: Role }[]>([]);
 
   // Initial load: seed on first run, purge expired trash, then list subjects.
   // Re-runs when the signed-in user changes (sign in/out swaps cloud ↔ local
@@ -122,6 +126,11 @@ export default function LibraryPage() {
     getStore().listDeletedNotes().then(setDeleted).catch(console.error);
   }, [trash]);
 
+  useEffect(() => {
+    if (!shared) return;
+    listSharedWithMe().then(setSharedNotes).catch(() => setSharedNotes([]));
+  }, [shared]);
+
   const refresh = useCallback(async () => {
     const store = getStore();
     if (notebookId) setNotes(await store.listNotes(notebookId));
@@ -157,6 +166,22 @@ export default function LibraryPage() {
     setSubjects(subs);
     if (subjectId === sid) setSubjectId(subs[0]?.id ?? null);
   }, [subjects, subjectId]);
+
+  const uploadToCloud = useCallback(async () => {
+    if (uploading) return;
+    if (!confirm("Copy your local notes into your cloud library?")) return;
+    setUploading(true);
+    try {
+      const { notes } = await migrateLocalToCloud();
+      setSubjects(await getStore().listSubjects());
+      await refresh();
+      alert(notes > 0 ? `Uploaded ${notes} note${notes === 1 ? "" : "s"} to the cloud.` : "No local notes to upload.");
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e));
+    } finally {
+      setUploading(false);
+    }
+  }, [uploading, refresh]);
 
   const removeNotebook = useCallback(async (nbId: string) => {
     const nb = notebooks.find((x) => x.id === nbId);
@@ -342,14 +367,34 @@ export default function LibraryPage() {
               </button>
             )}
           </div>
+          {user && (
+            <button
+              onClick={() => { setShared((s) => !s); setTrash(false); setQuery(""); }}
+              className={`whitespace-nowrap rounded-lg border px-3 py-2 text-sm ${
+                shared ? "border-accent text-accent" : "border-border text-muted hover:border-accent"
+              }`}
+            >
+              🔗 Shared with me
+            </button>
+          )}
           <button
-            onClick={() => setTrash((t) => !t)}
+            onClick={() => { setTrash((t) => !t); setShared(false); }}
             className={`whitespace-nowrap rounded-lg border px-3 py-2 text-sm ${
               trash ? "border-accent text-accent" : "border-border text-muted hover:border-accent"
             }`}
           >
             🗑 Recently Deleted
           </button>
+          {user && (
+            <button
+              onClick={uploadToCloud}
+              disabled={uploading}
+              title="Copy your local notes into your cloud library"
+              className="whitespace-nowrap rounded-lg border border-border px-3 py-2 text-sm text-muted hover:border-accent disabled:opacity-50"
+            >
+              {uploading ? "Uploading…" : "⤴ Upload to cloud"}
+            </button>
+          )}
           <button
             onClick={() => setSettingsOpen(true)}
             title="Settings"
@@ -358,13 +403,7 @@ export default function LibraryPage() {
           >
             ⚙
           </button>
-          <AccountMenu
-            onUploadLocal={async () => {
-              await migrateLocalToCloud();
-              await refresh();
-              setSubjects(await getStore().listSubjects());
-            }}
-          />
+          <AccountMenu />
         </div>
       </header>
 
@@ -372,7 +411,7 @@ export default function LibraryPage() {
         {/* Subjects */}
         <Pane title="Subjects" onAdd={addSubject} addLabel="Add subject">
           {subjects.map((s) => (
-            <Row key={s.id} active={!trash && s.id === subjectId} onClick={() => { setTrash(false); setSubjectId(s.id); }} onDelete={() => removeSubject(s.id)}>
+            <Row key={s.id} active={!trash && !shared && s.id === subjectId} onClick={() => { setTrash(false); setShared(false); setSubjectId(s.id); }} onDelete={() => removeSubject(s.id)}>
               <span className="inline-block h-3 w-3 shrink-0 rounded-full" style={{ background: s.color || "var(--accent)" }} />
               <span className="truncate">{s.name}</span>
             </Row>
@@ -382,7 +421,7 @@ export default function LibraryPage() {
         {/* Notebooks */}
         <Pane title="Notebooks" onAdd={subjectId ? addNotebook : undefined} addLabel="Add notebook">
           {notebooks.map((nb) => (
-            <Row key={nb.id} active={!trash && nb.id === notebookId} onClick={() => { setTrash(false); setNotebookId(nb.id); }} onDelete={() => removeNotebook(nb.id)}>
+            <Row key={nb.id} active={!trash && !shared && nb.id === notebookId} onClick={() => { setTrash(false); setShared(false); setNotebookId(nb.id); }} onDelete={() => removeNotebook(nb.id)}>
               <span className="shrink-0">📓</span>
               <span className="truncate">{nb.name}</span>
             </Row>
@@ -411,6 +450,29 @@ export default function LibraryPage() {
                 <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] items-start gap-4">
                   {deleted.map((n) => (
                     <DeletedCard key={n.id} note={n} onRestore={restore} onPurge={purge} />
+                  ))}
+                </div>
+              )}
+            </>
+          ) : shared ? (
+            <>
+              <h2 className="mb-4 text-sm font-medium uppercase tracking-wide text-muted">Shared with me</h2>
+              {sharedNotes.length === 0 ? (
+                <Empty>Nothing yet. Notes other people share with you appear here.</Empty>
+              ) : (
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] items-start gap-4">
+                  {sharedNotes.map(({ note, role }) => (
+                    <button
+                      key={note.id}
+                      onClick={() => router.push(`/editor/${note.id}`)}
+                      className="flex flex-col items-stretch overflow-hidden rounded-lg border border-border bg-surface text-left hover:border-accent"
+                    >
+                      <NoteCover noteId={note.id} />
+                      <span className="line-clamp-2 px-3 pt-2 text-sm font-medium">{note.title}</span>
+                      <span className="px-3 pb-3 pt-1">
+                        <span className="rounded bg-foreground/5 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted">{role}</span>
+                      </span>
+                    </button>
                   ))}
                 </div>
               )}

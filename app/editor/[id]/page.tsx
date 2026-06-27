@@ -10,7 +10,9 @@ import { SymbolPicker } from "@/components/SymbolPicker";
 import { TablePicker } from "@/components/TablePicker";
 import { TableRowEditor } from "@/components/TableRowEditor";
 import { DesignPicker } from "@/components/DesignPicker";
+import { ShareDialog } from "@/components/ShareDialog";
 import { TemplateApplyDialog } from "@/components/TemplateApplyDialog";
+import { getMyAccess, type Access } from "@/lib/sharing/sharing";
 import { getSettings, setSettings } from "@/lib/settings/settings";
 import { freshTree, saveTemplate, type BuiltInBackground, type SavedTemplate } from "@/lib/templates/templates";
 import { useAuth } from "@/lib/auth/AuthProvider";
@@ -70,7 +72,7 @@ import {
   type TableStyle,
 } from "@/lib/blocks/tables";
 import type { Block, DocumentStyle, DocumentTree, Placement } from "@/lib/blocks/types";
-import { getStore } from "@/lib/storage";
+import { getStore, isCloudActive } from "@/lib/storage";
 import type { NotePackage, NoteMeta } from "@/lib/storage/types";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -286,6 +288,13 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   const [tablePicker, setTablePicker] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [confirmTemplate, setConfirmTemplate] = useState<DocumentTree | null>(null);
+  const [shareOpen, setShareOpen] = useState(false);
+  // Current user's access to this note: "owner" (incl. local/guest), an editor
+  // role, or a read-only role. Drives the Share dialog and read-only mode.
+  const [access, setAccess] = useState<Access>("owner");
+  const readOnly = access === "viewer" || access === "commenter";
+  const readOnlyRef = useRef(readOnly);
+  readOnlyRef.current = readOnly;
   // null = closed; { id: null } = drawing a new graph; { id } = editing an existing one.
   const [graphEdit, setGraphEdit] = useState<{ id: string | null } | null>(null);
   const [listMenu, setListMenu] = useState<null | "bullet" | "number">(null);
@@ -398,6 +407,17 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
       setPkg((prev) => prev ?? { noteId: id, tree: emptyDocument("flow"), latexCache: "", assets: [], updatedAt: new Date().toISOString(), rev: null });
     });
   }, [id, authLoading]);
+  // Determine the current user's access (owner / role) for this note. Local and
+  // guest notes are always "owner"; cloud notes ask the sharing layer.
+  useEffect(() => {
+    if (authLoading) return;
+    if (!isCloudActive()) { setAccess("owner"); return; }
+    let alive = true;
+    getMyAccess(id)
+      .then((a) => { if (alive) setAccess(a ?? "owner"); })
+      .catch(() => { if (alive) setAccess("owner"); });
+    return () => { alive = false; };
+  }, [id, authLoading]);
   // Arrived via a "Download PDF" action (?print=1): open the print dialog once
   // the document has loaded and rendered.
   useEffect(() => {
@@ -482,6 +502,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   /** Apply a template (undoable; fresh block ids). "add" appends its blocks and
    *  keeps the current page style; "replace" swaps in the whole template. */
   function applyTemplate(t: DocumentTree, action: "add" | "replace") {
+    if (readOnlyRef.current) return;
     snapshot(false);
     setEditingId(null);
     setSelected(null);
@@ -517,6 +538,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   }
   /** Apply a page background (or clear it). Undoable via setDocStyle's snapshot. */
   function applyBackground(bg: BuiltInBackground | null) {
+    if (readOnlyRef.current) return;
     setDocStyle({ background: bg?.css, foreground: bg?.text });
     setTemplatesOpen(false);
   }
@@ -552,6 +574,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   // ── tree mutations ────────────────────────────────────────────────────────
   // `coalesce` merges rapid same-burst edits (text typing) into one undo step.
   function setBlocks(update: (blocks: Block[]) => Block[], coalesce = false) {
+    if (readOnlyRef.current) return; // viewer/commenter: no edits persist
     snapshot(coalesce);
     setPkg((prev) => (prev ? { ...prev, tree: { ...prev.tree, blocks: update(prev.tree.blocks) } } : prev));
     setSaved(false);
@@ -645,6 +668,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     setBlocks((bs) => bs.map((b) => (b.id === editingId ? next : b)), true); // coalesce keystrokes
   }
   function startEdit(block: Block) {
+    if (readOnlyRef.current) return;
     sticky.current = false; // never let a leftover one-shot absorb this session's first blur
     setSelected(null);
     setEditingId(block.id);
@@ -653,6 +677,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     setColor(calloutColorOf(block));
   }
   function startEditHeading(block: Block) {
+    if (readOnlyRef.current) return;
     sticky.current = false;
     setSelected(null);
     setEditingId(block.id);
@@ -694,6 +719,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     else blockEls.current.delete(id);
   };
   function setDocStyle(patch: Partial<DocumentStyle>) {
+    if (readOnlyRef.current) return;
     snapshot(false);
     setPkg((prev) =>
       prev ? { ...prev, tree: { ...prev.tree, style: { ...prev.tree.style, ...patch } } } : prev,
@@ -853,7 +879,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   async function onPickImage(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = "";
-    if (!file) return;
+    if (!file || readOnlyRef.current) return;
     const ref = await getStore().putAsset(id, file, { kind: "image", mime: file.type || "image/png" });
     setPkg((prev) => (prev ? { ...prev, assets: [...prev.assets, ref] } : prev));
     const target = addTarget.current;
@@ -1022,6 +1048,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   }
 
   async function save() {
+    if (readOnlyRef.current) return; // viewer/commenter: nothing to persist (RLS also blocks)
     if (deletedRef.current) return; // note is being discarded — don't resurrect it
     const p = pkgRef.current;
     if (!p) return;
@@ -1138,20 +1165,25 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
 
       <header className="print-hide flex items-center gap-3 border-b border-border px-4 py-3">
         {split && <span className="rounded bg-foreground/5 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted">{primary ? "A" : "B"}</span>}
-        <input value={title} onChange={(e) => { setTitle(e.target.value); setSaved(false); }} className="flex-1 bg-transparent text-lg font-semibold outline-none" />
-        <div className="flex items-center gap-1">
-          <button onMouseDown={(e) => e.preventDefault()} onClick={undo} disabled={undoStack.current.length === 0} title="Undo (⌘/Ctrl+Z)" aria-label="Undo" className="flex items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-sm hover:border-accent disabled:opacity-40"><span className="text-base leading-none">↶</span>Undo</button>
-          <button onMouseDown={(e) => e.preventDefault()} onClick={redo} disabled={redoStack.current.length === 0} title="Redo (⌘/Ctrl+Shift+Z)" aria-label="Redo" className="flex items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-sm hover:border-accent disabled:opacity-40"><span className="text-base leading-none">↷</span>Redo</button>
-        </div>
-        <button onClick={() => setTemplatesOpen(true)} title="Templates & backgrounds" className="rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent">Design</button>
+        <input value={title} readOnly={readOnly} onChange={(e) => { setTitle(e.target.value); setSaved(false); }} className="flex-1 bg-transparent text-lg font-semibold outline-none" />
+        {!readOnly && (
+          <div className="flex items-center gap-1">
+            <button onMouseDown={(e) => e.preventDefault()} onClick={undo} disabled={undoStack.current.length === 0} title="Undo (⌘/Ctrl+Z)" aria-label="Undo" className="flex items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-sm hover:border-accent disabled:opacity-40"><span className="text-base leading-none">↶</span>Undo</button>
+            <button onMouseDown={(e) => e.preventDefault()} onClick={redo} disabled={redoStack.current.length === 0} title="Redo (⌘/Ctrl+Shift+Z)" aria-label="Redo" className="flex items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-sm hover:border-accent disabled:opacity-40"><span className="text-base leading-none">↷</span>Redo</button>
+          </div>
+        )}
+        {!readOnly && <button onClick={() => setTemplatesOpen(true)} title="Templates & backgrounds" className="rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent">Design</button>}
+        {isCloudActive() && <button onClick={() => setShareOpen(true)} title="Share this document" className="rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent">🔗 Share</button>}
         <button onClick={() => setShowSource((s) => !s)} className="rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent">{showSource ? "Editor" : "LaTeX"}</button>
         <ExportMenu noteId={id} title={title} beforeExport={save} onPdf={printPdf} label="Export ▾" className="rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent" />
-        <button onClick={save} title="Saves automatically; click to save now" className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white">{saving ? "Saving…" : saved ? "Saved" : "Save"}</button>
+        {readOnly
+          ? <span className="rounded-md border border-border px-3 py-1.5 text-sm text-muted">🔒 {access === "commenter" ? "Comment only" : "View only"}</span>
+          : <button onClick={save} title="Saves automatically; click to save now" className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white">{saving ? "Saving…" : saved ? "Saved" : "Save"}</button>}
         {onClose && <button onClick={onClose} title="Close this pane" className="rounded-md border border-border px-2 py-1.5 text-sm text-muted hover:border-red-500 hover:text-red-500">✕</button>}
       </header>
 
-      {/* Block tools */}
-      <div className="print-hide flex flex-wrap items-center justify-center gap-2 border-b border-border px-6 py-2">
+      {/* Block tools — hidden in read-only (viewer/commenter) mode */}
+      <div className={`print-hide flex-wrap items-center justify-center gap-2 border-b border-border px-6 py-2 ${readOnly ? "hidden" : "flex"}`}>
         {/* Title — the only control that keeps a word label */}
         <select value={typeof currentStyle === "number" ? String(currentStyle) : ""} onChange={(e) => { if (e.target.value) applyStyle(Number(e.target.value) as HeadingLevel); }} title="Make the current block a heading" className="h-9 rounded-md border border-border bg-background px-2 text-sm">
           <option value="" disabled>Heading…</option>
@@ -1240,6 +1272,12 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
         </div>
       )}
 
+      {readOnly && (
+        <div className="print-hide border-b border-border bg-amber-500/10 px-6 py-2 text-center text-sm text-amber-700 dark:text-amber-400">
+          🔒 You have {access === "commenter" ? "comment-only" : "view-only"} access to this shared document — your changes won’t be saved.
+        </div>
+      )}
+
       {/* Body */}
       {showSource ? (
         <div className="mx-auto w-full max-w-3xl flex-1 p-8">
@@ -1306,6 +1344,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
           onClose={() => setTemplatesOpen(false)}
         />
       )}
+      {shareOpen && <ShareDialog noteId={id} access={access} onClose={() => setShareOpen(false)} />}
       {confirmTemplate && (
         <TemplateApplyDialog
           onAdd={(dontAsk) => { if (dontAsk) setSettings({ templateApplyMode: "add" }); applyTemplate(confirmTemplate, "add"); }}

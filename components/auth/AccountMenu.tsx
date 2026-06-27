@@ -11,7 +11,7 @@ import { AuthDialog } from "./AuthDialog";
  * avatar that opens a menu to set a username, link providers, push local notes
  * to the cloud, and sign out.
  */
-export function AccountMenu({ onUploadLocal }: { onUploadLocal?: () => Promise<void> }) {
+export function AccountMenu() {
   const { configured, loading, user, profile, linkedProviders, signOut, setPassword, linkGoogle, refreshProfile } = useAuth();
   const [dialog, setDialog] = useState(false);
   const [open, setOpen] = useState(false);
@@ -74,9 +74,6 @@ export function AccountMenu({ onUploadLocal }: { onUploadLocal?: () => Promise<v
 
             <div className="my-3 border-t border-border" />
 
-            {onUploadLocal && (
-              <UploadRow onUpload={onUploadLocal} />
-            )}
             <button
               onClick={() => { setOpen(false); void signOut(); }}
               className="mt-1 w-full rounded-lg px-2 py-1.5 text-left text-sm hover:bg-foreground/[0.05]"
@@ -201,24 +198,3 @@ function PasswordRow({ linked, onSet }: { linked: boolean; onSet: (pw: string) =
   );
 }
 
-function UploadRow({ onUpload }: { onUpload: () => Promise<void> }) {
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
-  return (
-    <div>
-      <button
-        disabled={busy}
-        onClick={async () => {
-          setBusy(true); setMsg(null);
-          try { await onUpload(); setMsg("Local notes uploaded."); }
-          catch (e) { setMsg(e instanceof Error ? e.message : String(e)); }
-          finally { setBusy(false); }
-        }}
-        className="w-full rounded-lg px-2 py-1.5 text-left text-sm hover:bg-foreground/[0.05] disabled:opacity-50"
-      >
-        {busy ? "Uploading…" : "Upload local notes to cloud"}
-      </button>
-      {msg && <p className="px-2 text-xs text-muted">{msg}</p>}
-    </div>
-  );
-}

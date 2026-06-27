@@ -11,8 +11,10 @@
   --muted: #6b7280;
 }
 
+/* Dark palette. Applied by the system preference UNLESS the user forced a theme
+   (.theme-light / .theme-dark, set from Settings → lib/settings/settings.ts). */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not(.theme-light):not(.theme-dark) {
     --background: #0e0e12;
     --foreground: #ededf2;
     --surface: #17171d;
@@ -20,6 +22,14 @@
     --accent: #818cf8;
     --muted: #9ca3af;
   }
+}
+:root.theme-dark {
+  --background: #0e0e12;
+  --foreground: #ededf2;
+  --surface: #17171d;
+  --border: #2a2a35;
+  --accent: #818cf8;
+  --muted: #9ca3af;
 }
 
 @theme inline {
@@ -106,7 +116,8 @@ body {
     outline: none !important;
     break-after: page;
     page-break-after: always;
-    background: #fff !important;
+    /* No forced white: default pages use `bg-surface` (white in print), while a
+       custom poster `background` set inline is preserved into the PDF. */
   }
   .print-page.last-print-page {
     break-after: auto;

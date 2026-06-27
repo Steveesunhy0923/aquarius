@@ -134,6 +134,11 @@ export interface DocumentStyle {
   lineSpacing?: number; // line-height multiplier, default 1.5
   indent?: number; // first-line paragraph indent in em, default 0
   pageLayout?: "vertical" | "horizontal"; // how the A4 pages are arranged
+  // CSS `background` value for the page surface (color/gradient/pattern). Shows
+  // on screen and in the printed PDF; used for poster-style designs.
+  background?: string;
+  // Page text color, paired with dark backgrounds so text stays readable.
+  foreground?: string;
 }
 
 export interface DocumentTree {

@@ -18,11 +18,17 @@ export const viewport: Viewport = {
   themeColor: "#4f46e5",
 };
 
+// Apply the saved theme before first paint (no flash of the wrong palette).
+const THEME_SCRIPT = `(function(){try{var s=JSON.parse(localStorage.getItem('aquarius.settings.v1')||'{}');var t=s.theme;var c=document.documentElement.classList;c.remove('theme-light','theme-dark');if(t==='light')c.add('theme-light');else if(t==='dark')c.add('theme-dark');}catch(e){}})();`;
+
 export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+      </head>
       <body>
         <Providers>{children}</Providers>
       </body>

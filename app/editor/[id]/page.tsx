@@ -9,8 +9,10 @@ import { Katex } from "@/components/Katex";
 import { SymbolPicker } from "@/components/SymbolPicker";
 import { TablePicker } from "@/components/TablePicker";
 import { TableRowEditor } from "@/components/TableRowEditor";
-import { TemplatePicker } from "@/components/TemplatePicker";
-import { freshTree, saveTemplate, type SavedTemplate } from "@/lib/templates/templates";
+import { DesignPicker } from "@/components/DesignPicker";
+import { TemplateApplyDialog } from "@/components/TemplateApplyDialog";
+import { getSettings, setSettings } from "@/lib/settings/settings";
+import { freshTree, saveTemplate, type BuiltInBackground, type SavedTemplate } from "@/lib/templates/templates";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { documentToLatex } from "@/lib/blocks";
 import { emptyDocument } from "@/lib/blocks/types";
@@ -283,6 +285,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   const [picker, setPicker] = useState<Picker>(null);
   const [tablePicker, setTablePicker] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
+  const [confirmTemplate, setConfirmTemplate] = useState<DocumentTree | null>(null);
   // null = closed; { id: null } = drawing a new graph; { id } = editing an existing one.
   const [graphEdit, setGraphEdit] = useState<{ id: string | null } | null>(null);
   const [listMenu, setListMenu] = useState<null | "bullet" | "number">(null);
@@ -476,20 +479,46 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   }, [applyTree]);
 
   // ── templates ──────────────────────────────────────────────────────────────
-  /** Replace the document with a template (undoable; fresh block ids). */
-  function applyTemplate(t: DocumentTree) {
+  /** Apply a template (undoable; fresh block ids). "add" appends its blocks and
+   *  keeps the current page style; "replace" swaps in the whole template. */
+  function applyTemplate(t: DocumentTree, action: "add" | "replace") {
     snapshot(false);
     setEditingId(null);
     setSelected(null);
-    setPkg((prev) => (prev ? { ...prev, tree: freshTree(t) } : prev));
+    const fresh = freshTree(t);
+    setPkg((prev) => {
+      if (!prev) return prev;
+      const tree = action === "add"
+        ? { ...prev.tree, blocks: [...prev.tree.blocks, ...fresh.blocks] }
+        : fresh;
+      return { ...prev, tree };
+    });
     setSaved(false);
     setTemplatesOpen(false);
+    setConfirmTemplate(null);
+  }
+  /** Entry point from the design picker: apply directly, or ask when the note
+   *  already has content (unless Settings has a saved preference). */
+  function requestApplyTemplate(t: DocumentTree) {
+    setTemplatesOpen(false);
+    const blocks = pkgRef.current?.tree.blocks ?? [];
+    const blank = blocks.every((b) => !hasContent(b));
+    if (blank) { applyTemplate(t, "replace"); return; }
+    const mode = getSettings().templateApplyMode;
+    if (mode === "add") applyTemplate(t, "add");
+    else if (mode === "replace") applyTemplate(t, "replace");
+    else setConfirmTemplate(t); // "ask"
   }
   /** Save the current document as a reusable template. */
   function saveCurrentAsTemplate(name: string): SavedTemplate | null {
     const t = pkgRef.current?.tree;
     if (!t) return null;
     return saveTemplate(name, "Saved from a note", t, new Date().toISOString());
+  }
+  /** Apply a page background (or clear it). Undoable via setDocStyle's snapshot. */
+  function applyBackground(bg: BuiltInBackground | null) {
+    setDocStyle({ background: bg?.css, foreground: bg?.text });
+    setTemplatesOpen(false);
   }
 
   // ⌘/Ctrl+Z = undo, ⌘/Ctrl+Shift+Z or Ctrl+Y = redo. Scoped to the pane the
@@ -1114,7 +1143,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
           <button onMouseDown={(e) => e.preventDefault()} onClick={undo} disabled={undoStack.current.length === 0} title="Undo (⌘/Ctrl+Z)" aria-label="Undo" className="flex items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-sm hover:border-accent disabled:opacity-40"><span className="text-base leading-none">↶</span>Undo</button>
           <button onMouseDown={(e) => e.preventDefault()} onClick={redo} disabled={redoStack.current.length === 0} title="Redo (⌘/Ctrl+Shift+Z)" aria-label="Redo" className="flex items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-sm hover:border-accent disabled:opacity-40"><span className="text-base leading-none">↷</span>Redo</button>
         </div>
-        <button onClick={() => setTemplatesOpen(true)} title="Start from a template" className="rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent">Templates</button>
+        <button onClick={() => setTemplatesOpen(true)} title="Templates & backgrounds" className="rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent">Design</button>
         <button onClick={() => setShowSource((s) => !s)} className="rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent">{showSource ? "Editor" : "LaTeX"}</button>
         <ExportMenu noteId={id} title={title} beforeExport={save} onPdf={printPdf} label="Export ▾" className="rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent" />
         <button onClick={save} title="Saves automatically; click to save now" className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white">{saving ? "Saving…" : saved ? "Saved" : "Save"}</button>
@@ -1221,7 +1250,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
         <div className="print-surface flex-1 overflow-auto p-8" style={{ background: "var(--background)" }}>
           <div className={`print-stack ${layout === "horizontal" ? "flex items-start gap-8" : "flex flex-col items-center gap-8"}`}>
             {pages.map((ids, p) => (
-              <div key={p} className={`print-page relative shrink-0 bg-surface text-foreground shadow-xl ring-1 ring-border ${ids.length === 0 ? "print-hide" : ""} ${p === lastContentPage ? "last-print-page" : ""}`} style={{ width: pageW, minHeight: pageH }}>
+              <div key={p} className={`print-page relative shrink-0 text-foreground shadow-xl ring-1 ring-border ${docStyle.background ? "" : "bg-surface"} ${ids.length === 0 ? "print-hide" : ""} ${p === lastContentPage ? "last-print-page" : ""}`} style={{ width: pageW, minHeight: pageH, background: docStyle.background || undefined, color: docStyle.foreground || undefined }}>
                 <div style={contentStyle}>
                   {blocks.length === 0 ? (
                     <button onClick={() => addBlock(paragraphFromSource(""))} className="w-full rounded-lg border border-dashed border-border p-8 text-center text-muted hover:border-accent">Empty note — click to start a paragraph, or use the toolbar.</button>
@@ -1269,10 +1298,19 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
         />
       )}
       {templatesOpen && (
-        <TemplatePicker
-          onApply={applyTemplate}
+        <DesignPicker
+          currentBackground={docStyle.background}
+          onApplyBackground={applyBackground}
+          onApply={requestApplyTemplate}
           onSaveCurrent={saveCurrentAsTemplate}
           onClose={() => setTemplatesOpen(false)}
+        />
+      )}
+      {confirmTemplate && (
+        <TemplateApplyDialog
+          onAdd={(dontAsk) => { if (dontAsk) setSettings({ templateApplyMode: "add" }); applyTemplate(confirmTemplate, "add"); }}
+          onReplace={(dontAsk) => { if (dontAsk) setSettings({ templateApplyMode: "replace" }); applyTemplate(confirmTemplate, "replace"); }}
+          onCancel={() => setConfirmTemplate(null)}
         />
       )}
     </main>

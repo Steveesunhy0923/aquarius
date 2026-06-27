@@ -1,6 +1,7 @@
 "use client";
 
 import { AccountMenu } from "@/components/auth/AccountMenu";
+import { SettingsDialog } from "@/components/SettingsDialog";
 import { downloadNote } from "@/components/ExportMenu";
 import { NoteCover } from "@/components/NoteCover";
 import { useAuth } from "@/lib/auth/AuthProvider";
@@ -56,6 +57,7 @@ export default function LibraryPage() {
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [trash, setTrash] = useState(false);
   const [deleted, setDeleted] = useState<NoteMeta[]>([]);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Initial load: seed on first run, purge expired trash, then list subjects.
   // Re-runs when the signed-in user changes (sign in/out swaps cloud ↔ local
@@ -145,6 +147,27 @@ export default function LibraryPage() {
     setNotebooks(await store.listNotebooks(subjectId));
     setNotebookId(nb.id);
   }, [subjectId]);
+
+  const removeSubject = useCallback(async (sid: string) => {
+    const s = subjects.find((x) => x.id === sid);
+    if (!confirm(`Delete subject “${s?.name ?? ""}” and all its notebooks and notes? This cannot be undone.`)) return;
+    const store = getStore();
+    await store.deleteSubject(sid);
+    const subs = await store.listSubjects();
+    setSubjects(subs);
+    if (subjectId === sid) setSubjectId(subs[0]?.id ?? null);
+  }, [subjects, subjectId]);
+
+  const removeNotebook = useCallback(async (nbId: string) => {
+    const nb = notebooks.find((x) => x.id === nbId);
+    if (!confirm(`Delete notebook “${nb?.name ?? ""}” and all its notes? This cannot be undone.`)) return;
+    const store = getStore();
+    await store.deleteNotebook(nbId);
+    if (!subjectId) return;
+    const nbs = await store.listNotebooks(subjectId);
+    setNotebooks(nbs);
+    if (notebookId === nbId) setNotebookId(nbs[0]?.id ?? null);
+  }, [notebooks, subjectId, notebookId]);
 
   const addNote = useCallback(async () => {
     if (!notebookId) return;
@@ -327,6 +350,14 @@ export default function LibraryPage() {
           >
             🗑 Recently Deleted
           </button>
+          <button
+            onClick={() => setSettingsOpen(true)}
+            title="Settings"
+            aria-label="Settings"
+            className="rounded-lg border border-border px-3 py-2 text-sm text-muted hover:border-accent"
+          >
+            ⚙
+          </button>
           <AccountMenu
             onUploadLocal={async () => {
               await migrateLocalToCloud();
@@ -341,9 +372,9 @@ export default function LibraryPage() {
         {/* Subjects */}
         <Pane title="Subjects" onAdd={addSubject} addLabel="Add subject">
           {subjects.map((s) => (
-            <Row key={s.id} active={!trash && s.id === subjectId} onClick={() => { setTrash(false); setSubjectId(s.id); }}>
-              <span className="inline-block h-3 w-3 rounded-full" style={{ background: s.color || "var(--accent)" }} />
-              {s.name}
+            <Row key={s.id} active={!trash && s.id === subjectId} onClick={() => { setTrash(false); setSubjectId(s.id); }} onDelete={() => removeSubject(s.id)}>
+              <span className="inline-block h-3 w-3 shrink-0 rounded-full" style={{ background: s.color || "var(--accent)" }} />
+              <span className="truncate">{s.name}</span>
             </Row>
           ))}
         </Pane>
@@ -351,8 +382,9 @@ export default function LibraryPage() {
         {/* Notebooks */}
         <Pane title="Notebooks" onAdd={subjectId ? addNotebook : undefined} addLabel="Add notebook">
           {notebooks.map((nb) => (
-            <Row key={nb.id} active={!trash && nb.id === notebookId} onClick={() => { setTrash(false); setNotebookId(nb.id); }}>
-              📓 {nb.name}
+            <Row key={nb.id} active={!trash && nb.id === notebookId} onClick={() => { setTrash(false); setNotebookId(nb.id); }} onDelete={() => removeNotebook(nb.id)}>
+              <span className="shrink-0">📓</span>
+              <span className="truncate">{nb.name}</span>
             </Row>
           ))}
           {subjectId && notebooks.length === 0 && <Empty>No notebooks yet</Empty>}
@@ -455,6 +487,8 @@ export default function LibraryPage() {
           )}
         </section>
       </div>
+
+      {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
     </main>
   );
 }
@@ -727,16 +761,25 @@ function Pane({
   );
 }
 
-function Row({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+function Row({ active, onClick, onDelete, children }: { active: boolean; onClick: () => void; onDelete?: () => void; children: React.ReactNode }) {
   return (
-    <button
-      onClick={onClick}
-      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm ${
-        active ? "bg-accent/10 text-accent" : "hover:bg-foreground/5"
-      }`}
-    >
-      {children}
-    </button>
+    <div className={`group flex items-center rounded-md ${active ? "bg-accent/10" : "hover:bg-foreground/5"}`}>
+      <button
+        onClick={onClick}
+        className={`flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left text-sm ${active ? "text-accent" : ""}`}
+      >
+        {children}
+      </button>
+      {onDelete && (
+        <button
+          onClick={onDelete}
+          title="Delete"
+          className="mr-1 shrink-0 px-1 text-muted opacity-0 transition hover:text-red-500 group-hover:opacity-100"
+        >
+          ✕
+        </button>
+      )}
+    </div>
   );
 }
 

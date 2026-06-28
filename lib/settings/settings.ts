@@ -15,11 +15,19 @@ export type TemplateApplyMode = "ask" | "add" | "replace";
 export interface AppSettings {
   theme: Theme;
   templateApplyMode: TemplateApplyMode;
+  /** Show the on-screen math keyboard when editing a formula. Default off — the
+   *  toolbar is the primary formula-input method. */
+  mathKeyboard: boolean;
+  /** Opt-in beta: edit new formulas with the structural block-tree editor
+   *  instead of MathLive. Default off. */
+  mathEditorBeta: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
   theme: "system",
   templateApplyMode: "ask",
+  mathKeyboard: false,
+  mathEditorBeta: false,
 };
 
 export const SETTINGS_KEY = "aquarius.settings.v1";
@@ -41,6 +49,7 @@ export function setSettings(patch: Partial<AppSettings>): AppSettings {
   if (typeof window !== "undefined") {
     window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
     if (patch.theme !== undefined) applyTheme(next.theme);
+    if (patch.mathKeyboard !== undefined) applyMathKeyboard(next.mathKeyboard);
   }
   return next;
 }
@@ -52,4 +61,11 @@ export function applyTheme(theme: Theme): void {
   cl.remove("theme-light", "theme-dark");
   if (theme === "light") cl.add("theme-light");
   else if (theme === "dark") cl.add("theme-dark");
+}
+
+/** Toggle the `aq-math-keyboard` class that reveals MathLive's on-screen-keyboard
+ *  toggle button (app/globals.css). Off by default, so the button stays hidden. */
+export function applyMathKeyboard(on: boolean): void {
+  if (typeof document === "undefined") return;
+  document.documentElement.classList.toggle("aq-math-keyboard", on);
 }

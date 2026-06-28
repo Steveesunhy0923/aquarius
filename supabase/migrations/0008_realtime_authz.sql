@@ -29,6 +29,9 @@ grant execute on function public.note_participant(uuid) to authenticated;
 -- matched here and fall through to Supabase's defaults.
 alter table realtime.messages enable row level security;
 
+-- Drop-then-create so this migration is safe to re-run (CREATE POLICY is not
+-- idempotent and would abort the whole script with "already exists").
+drop policy if exists "note channel: participants receive" on realtime.messages;
 create policy "note channel: participants receive"
   on realtime.messages
   for select
@@ -38,6 +41,7 @@ create policy "note channel: participants receive"
     and public.note_participant(substring(realtime.topic() from 6)::uuid)
   );
 
+drop policy if exists "note channel: participants send" on realtime.messages;
 create policy "note channel: participants send"
   on realtime.messages
   for insert

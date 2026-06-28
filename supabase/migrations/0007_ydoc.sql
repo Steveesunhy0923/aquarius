@@ -13,7 +13,7 @@
 -- INSERT/UPDATE policies (0006) are table-wide, so they already cover this
 -- column. The app's saveNote upsert never touches `owner_id`.
 
-alter table note_packages add column ydoc bytea;
+alter table note_packages add column if not exists ydoc bytea;
 
 comment on column note_packages.ydoc is
   'Yjs CRDT state (Y.encodeStateAsUpdate). Authoritative for co-edited notes; tree/latex_cache are a derived read model. Null until first co-edit.';

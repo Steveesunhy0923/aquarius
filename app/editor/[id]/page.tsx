@@ -11,6 +11,10 @@ import { TablePicker } from "@/components/TablePicker";
 import { TableRowEditor } from "@/components/TableRowEditor";
 import { DesignPicker } from "@/components/DesignPicker";
 import { ShareDialog } from "@/components/ShareDialog";
+import { MathField, activeMathField, activeTextInserter } from "@/components/MathField";
+import { MathEdit, activeMathEdit } from "@/components/MathEdit";
+import { math as makeMathBlock } from "@/lib/blocks/factory";
+import { insertSnippet } from "@/lib/matheditor";
 import { PresenceAvatars } from "@/components/PresenceAvatars";
 import { TemplateApplyDialog } from "@/components/TemplateApplyDialog";
 import { getMyAccess, listCollaborators, type Access } from "@/lib/sharing/sharing";
@@ -48,9 +52,11 @@ import {
   blockEditSource,
   displayFromSource,
   hasContent,
+  inlineMathSpans,
   isParagraph,
   paragraphFromSource,
   previewLatex,
+  replaceInlineMathSpan,
 } from "@/lib/blocks/source";
 import { graphModel, makeGraphBlock, withGraph, type GraphData } from "@/lib/blocks/graph";
 import { DEFAULT_HIGHLIGHT } from "@/lib/blocks/format";
@@ -79,6 +85,7 @@ import type { NotePackage, NoteMeta } from "@/lib/storage/types";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
+  forwardRef,
   useCallback,
   useEffect,
   useImperativeHandle,
@@ -266,6 +273,19 @@ function readLS(key: string, fallback: string[]): string[] {
 type Picker = { kind: "symbol"; index: number } | { kind: "insert" } | null;
 type Selected = { id: string; index: number; kind: "image" | "table" } | null;
 
+/** A structural (block-tree) formula — tagged so legacy rawMath formulas (no
+ *  marker) keep opening in MathLive. Only new equations made by the beta editor. */
+function isStructural(b: Block): boolean {
+  return b.type === "math" && b.attrs?.editor === "structural";
+}
+/** Build a new tagged structural math block, optionally seeded with a snippet. */
+function structuralEquation(latex?: string): Block {
+  const m = makeMathBlock();
+  const tagged: Block = { ...m, attrs: { ...(m.attrs ?? {}), editor: "structural" } };
+  if (!latex) return tagged;
+  return insertSnippet(tagged, { rowOwnerId: tagged.id, slot: "body", index: 0 }, latex).tree;
+}
+
 function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, onSaved, handleRef }: DocProps) {
   const { loading: authLoading, user } = useAuth();
   const [pkg, setPkg] = useState<NotePackage | null>(null);
@@ -324,6 +344,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   const blockEls = useRef<Map<string, HTMLElement>>(new Map());
   const lastEditedId = useRef<string | null>(null);
   const pkgRef = useRef<NotePackage | null>(null);
+  const editBoxRef = useRef<EditBoxHandle>(null); // open the inline-math box editor from the toolbar
   const rootRef = useRef<HTMLElement>(null);
   // Undo/redo: stacks of whole-document snapshots. Consecutive text edits within
   // COALESCE_MS collapse into one step so typing isn't undone character-by-char.
@@ -800,27 +821,34 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     setColor(c);
     commit(draft, c);
   }
-  function spliceAtCaret(snippet: string, caretInside = false) {
-    const cur = taRef.current?.value ?? draft;
-    const s = taRef.current?.selectionStart ?? caretRef.current ?? cur.length;
-    const e = taRef.current?.selectionEnd ?? s;
-    const next = cur.slice(0, s) + snippet + cur.slice(e);
-    const brace = snippet.indexOf("{}");
-    const pos = caretInside && brace >= 0 ? s + brace + 1 : s + snippet.length;
-    setDraft(next);
-    caretRef.current = pos;
-    commit(next, color);
-    requestAnimationFrame(() => {
-      const t = taRef.current;
-      if (!t) return;
-      t.focus();
-      try { t.setSelectionRange(pos, pos); } catch { /* noop */ }
-    });
-  }
   function onInsert(latex: string) {
-    if (editingId && editingPara) spliceAtCaret(`\\(${latex}\\)`, true);
-    else if (editingId) spliceAtCaret(latex, true);
-    else addBlock(displayFromSource(latex));
+    // A focused structural editor (beta) wins — insert the real block structure.
+    const me = activeMathEdit();
+    if (me) { me.insert(latex); return; }
+    // A focused MathField (standalone equation OR an open inline-math popover)
+    // wins: insert the snippet structurally. Empty `{}` groups become `#?`
+    // placeholder boxes so e.g. \frac{}{} is tabbable — the Desmos feel.
+    const field = activeMathField();
+    if (field) {
+      const snippet = latex.replace(/\{\}/g, "{#?}");
+      field.insert(snippet);
+      // ∫/∑/∏ etc.: MathLive selects the UPPER bound first. Nudge to the LOWER
+      // bound so it's the first field you fill. (Tab/Shift+Tab switch bounds;
+      // MathLive's arrow keys don't reliably move between sub/superscript.)
+      if (/_\{#\?\}/.test(snippet) && /\^\{#\?\}/.test(snippet)) field.command("moveToNextPlaceholder");
+      return;
+    }
+    // A focused plain textbox (e.g. a table cell) → splice the raw LaTeX there.
+    const textInsert = activeTextInserter();
+    if (textInsert) { textInsert(latex); return; }
+    // Editing prose: open the inline-math BOX editor seeded with the structure
+    // (empty `{}` → visible \placeholder{} boxes) instead of splicing raw LaTeX.
+    if (editingId && editingPara) {
+      editBoxRef.current?.openMath(latex.replace(/\{\}/g, "{\\placeholder{}}"));
+      return;
+    }
+    // Not editing: open a new equation (structural when the beta is on).
+    addBlock(getSettings().mathEditorBeta ? structuralEquation(latex) : displayFromSource(latex));
   }
   function wrapSelection(prefix: string, suffix: string = prefix) {
     if (!editingId || !editingPara) return;
@@ -921,7 +949,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     updateById(blockId, (b) => withList(b, listItems(b), ordered));
   }
   function insertEquation() {
-    addBlock(displayFromSource(""));
+    addBlock(getSettings().mathEditorBeta ? structuralEquation() : displayFromSource(""));
   }
 
   // ── graphs ────────────────────────────────────────────────────────────────
@@ -1169,7 +1197,10 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   const currentStyle: "text" | HeadingLevel =
     editingBlock && editingBlock.type === "heading" ? headingLevel(editingBlock) : "text";
   const keepFocus = (e: MouseEvent) => {
-    if (editingId) { e.preventDefault(); sticky.current = true; }
+    if (editingId) { e.preventDefault(); sticky.current = true; return; }
+    // Also hold focus for a focused MathField or a table-cell textbox (which
+    // aren't tracked by `editingId`) so a toolbar/symbol click inserts into them.
+    if (activeMathField() || activeTextInserter()) e.preventDefault();
   };
 
   // Print → "Save as PDF": show the WYSIWYG pages at 100% (so each A4 sheet maps
@@ -1556,7 +1587,13 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
               }]}
             />
           ) : b.id === editingId ? (
-            <EditBox taRef={taRef} para={editingPara} draft={draft} color={color} previewBlock={editingPara ? withCalloutColor(paragraphFromSource(draft, b.id), color) : displayFromSource(draft, b.id)} onChange={onDraftChange} onColor={pickColor} onExit={() => endEdit(b.id)} sticky={sticky} />
+            editingPara ? (
+              <EditBox ref={editBoxRef} taRef={taRef} para={editingPara} draft={draft} color={color} previewBlock={withCalloutColor(paragraphFromSource(draft, b.id), color)} onChange={onDraftChange} onColor={pickColor} onExit={() => endEdit(b.id)} sticky={sticky} />
+            ) : getSettings().mathEditorBeta && isStructural(b) ? (
+              <StructuralFormulaBox block={b} onChange={(next) => setBlocks((bs) => bs.map((x) => (x.id === b.id ? next : x)), true)} onExit={() => endEdit(b.id)} sticky={sticky} />
+            ) : (
+              <FormulaEditBox draft={draft} onChange={onDraftChange} onExit={() => endEdit(b.id)} sticky={sticky} />
+            )
           ) : (
             <button onClick={() => startEdit(b)} className="w-full rounded-md px-2 py-1 text-left">
               {hasContent(b) ? <BlockView block={b} /> : <span className="text-muted">{isParagraph(b) ? "Empty paragraph" : "Empty formula"} — click to edit</span>}
@@ -1819,9 +1856,11 @@ function HeadingDisplay({ block, number }: { block: Block; number?: string }) {
 }
 
 // ─── Edit box (paragraph/formula) ────────────────────────────────────────────
-function EditBox({
-  taRef, para, draft, color, previewBlock, onChange, onColor, onExit, sticky,
-}: {
+export interface EditBoxHandle {
+  /** Open the inline-math box editor, optionally seeded with a structure. */
+  openMath: (seed: string) => void;
+}
+const EditBox = forwardRef<EditBoxHandle, {
   taRef: RefObject<HTMLTextAreaElement | null>;
   para: boolean;
   draft: string;
@@ -1831,12 +1870,53 @@ function EditBox({
   onColor: (c: string | null) => void;
   onExit: () => void;
   sticky: MutableRefObject<boolean>;
-}) {
+}>(function EditBox(
+  { taRef, para, draft, color, previewBlock, onChange, onColor, onExit, sticky },
+  ref,
+) {
   const boxRef = useRef<HTMLDivElement>(null);
   const [hexDraft, setHexDraft] = useState(color ?? "");
   useEffect(() => setHexDraft(color ?? ""), [color]);
 
+  // Inline-math: a small MathLive popover for building/editing a formula inside
+  // prose without typing \(…\). Edits go through the SOURCE STRING (the nth
+  // \(…\) span) so the existing commit→paragraphFromSource round-trip is the one
+  // source of truth. `initial` seeds the box (a structure picked from the
+  // toolbar, or the existing formula being edited); `caret` is where a new
+  // formula will be spliced.
+  const [mathPopover, setMathPopover] = useState<
+    { mode: "insert"; caret: number; initial: string } | { mode: "edit"; index: number; initial: string } | null
+  >(null);
+  const spans = para ? inlineMathSpans(draft) : [];
+
+  // Open the box editor. `seed` (empty for a blank formula, or a structure like
+  // \frac{\placeholder{}}{\placeholder{}} from a toolbar button) pre-fills it.
+  const openMath = useCallback((seed: string) => {
+    const ta = taRef.current;
+    const caret = ta?.selectionStart ?? ta?.value.length ?? 0;
+    setMathPopover({ mode: "insert", caret, initial: seed });
+  }, [taRef]);
+  useImperativeHandle(ref, () => ({ openMath }), [openMath]);
+
+  function commitMath(latex: string) {
+    const cur = taRef.current?.value ?? draft; // live source (popover doesn't touch the textarea)
+    setMathPopover((pop) => {
+      if (!pop) return null;
+      if (pop.mode === "insert") {
+        if (latex.trim()) {
+          const c = Math.min(pop.caret, cur.length);
+          const ins = `\\(${latex}\\)`;
+          onChange(cur.slice(0, c) + ins + cur.slice(c), c + ins.length);
+        }
+      } else {
+        onChange(replaceInlineMathSpan(cur, pop.index, latex), cur.length);
+      }
+      return null;
+    });
+  }
+
   function onFocusOut(e: FocusEvent<HTMLDivElement>) {
+    if (mathPopover) return; // editing an inline formula in the popover — never exit
     if (boxRef.current && e.relatedTarget && boxRef.current.contains(e.relatedTarget as Node)) return;
     if (sticky.current) { sticky.current = false; return; }
     onExit();
@@ -1898,7 +1978,7 @@ function EditBox({
   }
 
   return (
-    <div ref={boxRef} onBlur={onFocusOut} className="rounded-md border border-accent/40 bg-surface p-2">
+    <div ref={boxRef} onBlur={onFocusOut} className="relative rounded-md border border-accent/40 bg-surface p-2">
       {para && (
         <div className="mb-2 flex flex-wrap items-center gap-1.5">
           <span className="mr-1 text-xs text-muted">Box:</span>
@@ -1911,10 +1991,94 @@ function EditBox({
           <input type="text" value={hexDraft} onChange={(e) => { const v = e.target.value; setHexDraft(v); if (isHexColor(v)) onColor(v); }} placeholder="#RRGGBB" spellCheck={false} className="w-24 rounded border border-border bg-background px-2 py-0.5 font-mono text-xs outline-none focus:border-accent" />
         </div>
       )}
-      <textarea ref={taRef} value={draft} spellCheck={para} onKeyDown={onKeyDown} onChange={(e) => onChange(e.target.value, e.target.selectionStart ?? 0)} rows={para ? Math.max(2, draft.split("\n").length) : 2} placeholder={para ? "Type text… **bold**, *italic*, toolbar for formulas" : "LaTeX, e.g. \\frac{a}{b}"} className="w-full resize-none bg-transparent font-mono text-sm outline-none" />
+      {para && (
+        <div className="mb-2 flex flex-wrap items-center gap-1.5">
+          <button onClick={() => openMath("")} title="Insert an inline formula (fill in the boxes)" className="rounded border border-border px-2 py-0.5 text-xs hover:border-accent"><span className="italic">ƒ</span> Insert math</button>
+          {spans.length > 0 && <span className="ml-1 text-xs text-muted">Formulas (click to edit):</span>}
+          {spans.map((s, i) => (
+            <button key={i} onClick={() => setMathPopover({ mode: "edit", index: i, initial: s.latex })} title="Edit this formula" className="rounded border border-border px-1.5 py-0.5 hover:border-accent">
+              <Katex latex={s.latex.trim() || "\\square"} />
+            </button>
+          ))}
+        </div>
+      )}
+      <textarea ref={taRef} value={draft} spellCheck={para} onKeyDown={onKeyDown} onChange={(e) => onChange(e.target.value, e.target.selectionStart ?? 0)} rows={para ? Math.max(2, draft.split("\n").length) : 2} placeholder={para ? "Type text… **bold**, *italic*, ƒ to insert a formula" : "LaTeX, e.g. \\frac{a}{b}"} className="w-full resize-none bg-transparent font-mono text-sm outline-none" />
       <div className="mt-2 border-t border-border pt-2">
         {draft.trim() ? <BlockView block={previewBlock} /> : <span className="text-xs text-muted">preview</span>}
       </div>
+      {mathPopover && (
+        <InlineMathPopover
+          initial={mathPopover.initial}
+          onCommit={commitMath}
+          onCancel={() => setMathPopover(null)}
+        />
+      )}
+    </div>
+  );
+});
+
+// ─── Inline-math popover (Desmos-style editor for a formula inside prose) ─────
+function InlineMathPopover({ initial, onCommit, onCancel }: {
+  initial: string;
+  onCommit: (latex: string) => void;
+  onCancel: () => void;
+}) {
+  const latest = useRef(initial);
+  return (
+    <div className="absolute left-2 right-2 top-full z-30 mt-1 rounded-md border border-accent bg-surface p-2 shadow-lg">
+      <div className="mb-1 text-xs text-muted">Build the formula — type to fill the boxes; the toolbar &amp; Σ symbols insert here too.</div>
+      <MathField value={initial} inline autoFocus onChange={(l) => { latest.current = l; }} onExit={onCancel} className="block min-h-[2.25rem] rounded border border-border bg-background px-2 py-1 text-base" />
+      <div className="mt-2 flex justify-end gap-2">
+        <button onMouseDown={(e) => e.preventDefault()} onClick={onCancel} className="rounded border border-border px-2.5 py-1 text-xs text-muted hover:border-accent">Cancel</button>
+        <button onMouseDown={(e) => e.preventDefault()} onClick={() => onCommit(latest.current)} className="rounded bg-accent px-3 py-1 text-xs font-medium text-white">Done</button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Formula edit box (Desmos-style structural editor via MathLive) ──────────
+// Wraps <MathField> in the same chrome + sticky/click-out behavior as EditBox so
+// toolbar/symbol clicks (which set `sticky`) don't blur-exit the field. The field
+// is the WYSIWYG view, so no separate KaTeX preview is needed.
+function FormulaEditBox({
+  draft, onChange, onExit, sticky,
+}: {
+  draft: string;
+  onChange: (text: string, caret: number) => void;
+  onExit: () => void;
+  sticky: MutableRefObject<boolean>;
+}) {
+  const boxRef = useRef<HTMLDivElement>(null);
+  function onFocusOut(e: FocusEvent<HTMLDivElement>) {
+    if (boxRef.current && e.relatedTarget && boxRef.current.contains(e.relatedTarget as Node)) return;
+    if (sticky.current) { sticky.current = false; return; }
+    onExit();
+  }
+  return (
+    <div ref={boxRef} onBlur={onFocusOut} className="rounded-md border border-accent/40 bg-surface p-2">
+      <MathField value={draft} onChange={(latex) => onChange(latex, 0)} onExit={onExit} autoFocus className="block text-lg" />
+    </div>
+  );
+}
+
+// ─── Structural formula editor (beta) — the block-tree editor in the same chrome.
+function StructuralFormulaBox({
+  block, onChange, onExit, sticky,
+}: {
+  block: Block;
+  onChange: (b: Block) => void;
+  onExit: () => void;
+  sticky: MutableRefObject<boolean>;
+}) {
+  const boxRef = useRef<HTMLDivElement>(null);
+  function onFocusOut(e: FocusEvent<HTMLDivElement>) {
+    if (boxRef.current && e.relatedTarget && boxRef.current.contains(e.relatedTarget as Node)) return;
+    if (sticky.current) { sticky.current = false; return; }
+    onExit();
+  }
+  return (
+    <div ref={boxRef} onBlur={onFocusOut} className="rounded-md border border-accent/40 bg-surface p-2">
+      <MathEdit block={block} onChange={onChange} onExit={onExit} autoFocus />
     </div>
   );
 }

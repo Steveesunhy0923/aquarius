@@ -4,8 +4,9 @@
   "private": true,
   "description": "Aquarius — a WYSIWYG math note editor. LaTeX is the output format, not the input format.",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "prepare-mathlive": "rm -rf public/mathlive/fonts && mkdir -p public/mathlive && cp -r node_modules/mathlive/fonts public/mathlive/",
+    "dev": "npm run prepare-mathlive && next dev",
+    "build": "npm run prepare-mathlive && next build",
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
@@ -17,6 +18,7 @@
     "@supabase/supabase-js": "^2.45.0",
     "idb": "^8.0.0",
     "katex": "^0.16.11",
+    "mathlive": "^0.110.0",
     "next": "^15.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
@@ -29,6 +31,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "postcss": "^8.4.0",
+    "puppeteer-core": "^25.2.1",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.6.0",
     "vitest": "^4.1.9"

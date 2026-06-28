@@ -50,6 +50,25 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           </div>
         </section>
 
+        {/* Math input */}
+        <section className="mb-5">
+          <p className="mb-2 text-sm font-medium">Math input</p>
+          <label className="flex cursor-pointer items-start gap-2 rounded-md border border-border px-3 py-2 hover:border-accent">
+            <input type="checkbox" className="mt-0.5" checked={s.mathKeyboard} onChange={(e) => update({ mathKeyboard: e.target.checked })} />
+            <span>
+              <span className="block text-sm font-medium">On-screen math keyboard</span>
+              <span className="block text-xs text-muted">Pop up a math keyboard when editing a formula. Off by default — use the toolbar to insert symbols and structures.</span>
+            </span>
+          </label>
+          <label className="mt-1.5 flex cursor-pointer items-start gap-2 rounded-md border border-border px-3 py-2 hover:border-accent">
+            <input type="checkbox" className="mt-0.5" checked={s.mathEditorBeta} onChange={(e) => update({ mathEditorBeta: e.target.checked })} />
+            <span>
+              <span className="block text-sm font-medium">Structural formula editor <span className="rounded bg-accent/15 px-1 text-[10px] font-semibold uppercase text-accent">beta</span></span>
+              <span className="block text-xs text-muted">Edit new equations by filling in boxes you navigate with arrow keys (better integral/bound handling). Existing formulas keep the current editor.</span>
+            </span>
+          </label>
+        </section>
+
         {/* Template behavior */}
         <section>
           <p className="mb-1 text-sm font-medium">Applying a template</p>

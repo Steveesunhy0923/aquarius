@@ -151,7 +151,7 @@ export function FigureBox({
 
   function onDown(e: ReactPointerEvent, i: number) {
     const t = e.target as HTMLElement;
-    if (t.closest("input,textarea,select,button,a,[contenteditable=true]")) return;
+    if (t.closest("input,textarea,select,button,a,math-field,[contenteditable=true]")) return;
     e.preventDefault();
     e.stopPropagation();
     const base = resolved(i);

@@ -67,6 +67,36 @@ export function runsFromSource(src: string): InlineRun[] {
   return runs;
 }
 
+/**
+ * Locate every inline-math `\(…\)` span in the source, in order. The i-th span
+ * corresponds 1:1 to the i-th math run from `runsFromSource` (same regex), so the
+ * structural inline-math editor can map a clicked formula chip back to its
+ * source span. Returns the char range and the inner LaTeX of each.
+ */
+export function inlineMathSpans(src: string): { start: number; end: number; latex: string }[] {
+  const spans: { start: number; end: number; latex: string }[] = [];
+  const re = /\\\(([\s\S]*?)\\\)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(src))) {
+    spans.push({ start: m.index, end: m.index + m[0].length, latex: m[1] });
+  }
+  return spans;
+}
+
+/**
+ * Replace the inner LaTeX of the index-th inline-math span (empty `latex`
+ * removes the whole span). Editing the SOURCE STRING — never `attrs.runs`
+ * directly — is required: `commit` rebuilds the block from the source via
+ * `paragraphFromSource` every keystroke, so a direct runs mutation wouldn't survive.
+ */
+export function replaceInlineMathSpan(src: string, index: number, latex: string): string {
+  const spans = inlineMathSpans(src);
+  const s = spans[index];
+  if (!s) return src;
+  const replacement = latex.trim() ? `\\(${latex}\\)` : "";
+  return src.slice(0, s.start) + replacement + src.slice(s.end);
+}
+
 /** Inverse of runsFromSource: render runs back to editable source text. */
 export function runsToSource(runs: InlineRun[]): string {
   return runs

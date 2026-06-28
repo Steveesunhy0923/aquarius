@@ -124,3 +124,106 @@ body {
     page-break-after: auto;
   }
 }
+
+/* MathLive structural math editor — match the Aquarius theme (light + dark).
+   The field inherits text color; we recolor caret/selection/placeholder/accent
+   to the app's tokens and drop its default chrome so it sits in our own boxes. */
+math-field {
+  background: transparent;
+  color: var(--foreground);
+  border: none;
+  font-size: 1.05rem;
+  --caret-color: var(--accent);
+  --primary-color: var(--accent);
+  --selection-background-color: color-mix(in srgb, var(--accent) 22%, transparent);
+  --contains-highlight-background-color: color-mix(in srgb, var(--accent) 14%, transparent);
+  --placeholder-color: var(--foreground);
+  --placeholder-opacity: 0.4;
+  --smart-fence-color: var(--foreground);
+}
+math-field:focus,
+math-field:focus-within {
+  outline: none;
+}
+/* MathLive field chrome. The hamburger context menu is never useful here, so
+   hide it always. The on-screen keyboard toggle is hidden by default and only
+   revealed when the user opts in (Settings → On-screen math keyboard, which puts
+   `.aq-math-keyboard` on <html>). These `::part` rules reach the field's shadow
+   DOM from this global sheet. */
+math-field::part(menu-toggle) { display: none; }
+math-field::part(virtual-keyboard-toggle) { display: none; }
+html.aq-math-keyboard math-field::part(virtual-keyboard-toggle) { display: inline-flex; }
+
+/* ── Structural math editor (lib/matheditor / components/MathEdit) ───────────── */
+.me-field {
+  font-family: "KaTeX_Main", "Latin Modern Math", "Cambria Math", "Times New Roman", serif;
+  font-size: 1.5rem;
+  line-height: 1.1;
+  cursor: text;
+  -webkit-user-select: none;
+  user-select: none;
+  white-space: nowrap;
+}
+.me-slot, .me-cell { display: inline-flex; align-items: baseline; }
+.me-id { font-style: italic; padding: 0 0.02em; }
+.me-op { padding: 0 0.18em; }
+.me-glyph { display: inline-flex; }
+
+.me-caret {
+  display: inline-block;
+  width: 1.5px;
+  align-self: stretch;
+  min-height: 1em;
+  margin: 0 -0.75px;
+  background: var(--accent);
+  animation: me-blink 1.05s steps(1) infinite;
+}
+@keyframes me-blink { 0%, 50% { opacity: 1; } 50.01%, 100% { opacity: 0; } }
+
+.me-empty { display: inline-flex; align-items: center; min-width: 0.5em; justify-content: center; }
+.me-empty .me-box {
+  display: inline-block; width: 0.55em; height: 0.9em;
+  border: 1px dashed color-mix(in srgb, var(--accent) 50%, transparent);
+  border-radius: 2px;
+}
+.me-empty-hidden { display: inline-block; width: 2px; }
+
+/* fraction */
+.me-frac { display: inline-flex; flex-direction: column; align-items: center; vertical-align: middle; margin: 0 0.12em; }
+.me-frac-num, .me-frac-den { display: inline-flex; padding: 0.04em 0.25em; font-size: 0.92em; }
+.me-frac-bar { align-self: stretch; height: 1px; background: currentColor; margin: 0.06em 0; }
+
+/* scripts (sup/sub), shared by `script` and `integral` */
+.me-script { display: inline-flex; align-items: baseline; }
+.me-base { display: inline-flex; }
+.me-scripts { display: inline-flex; flex-direction: column; font-size: 0.7em; line-height: 1; margin-left: 1px; align-self: center; }
+.me-sup, .me-sub { display: inline-flex; min-height: 0.7em; }
+.me-sup { margin-bottom: 0.35em; }
+.me-sub { margin-top: 0.35em; }
+
+/* root */
+.me-root { display: inline-flex; align-items: baseline; margin: 0 0.06em; }
+.me-root-index { font-size: 0.6em; align-self: flex-start; }
+.me-radical { font-size: 1.15em; }
+.me-radicand { display: inline-flex; border-top: 1px solid currentColor; padding: 0.06em 0.18em 0; }
+
+/* integral / bigop */
+.me-bigop { display: inline-flex; align-items: center; margin: 0 0.1em; }
+.me-int-glyph .me-glyph { font-size: 1.8em; }
+.me-stack { display: inline-flex; flex-direction: column; align-items: center; }
+.me-stack .me-glyph { font-size: 1.5em; }
+.me-over, .me-under { font-size: 0.6em; display: inline-flex; }
+.me-operand { display: inline-flex; margin-left: 0.14em; }
+
+/* group / matrix */
+.me-group { display: inline-flex; align-items: center; }
+.me-delim { font-size: 1.1em; padding: 0 0.06em; }
+.me-matrix { display: inline-flex; align-items: center; }
+.me-grid { display: inline-grid; gap: 0.1em 0.6em; align-items: center; justify-items: center; }
+.me-mcell { display: inline-flex; }
+.me-field { position: relative; }
+.me-hidden-input {
+  position: absolute; top: 0; left: 0; width: 1px; height: 1.2em;
+  opacity: 0; border: 0; padding: 0; margin: 0; background: transparent;
+  color: transparent; caret-color: transparent; outline: none;
+}

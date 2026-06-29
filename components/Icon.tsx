@@ -60,6 +60,10 @@ const PATHS = {
   code: '<polyline points="8.5,8 4.5,12 8.5,16"/><polyline points="15.5,8 19.5,12 15.5,16"/><line x1="13.6" y1="6" x2="10.4" y2="18"/>',
   // Tray with an outgoing arrow — export/download (.tex / .aqnote / PDF).
   export: '<path d="M5 13.5v3.5A1.5 1.5 0 0 0 6.5 18.5h11a1.5 1.5 0 0 0 1.5-1.5v-3.5"/><line x1="12" y1="4" x2="12" y2="14"/><polyline points="8.2,7.4 12,3.7 15.8,7.4"/>',
+  plus: '<line x1="12" y1="6.5" x2="12" y2="17.5"/><line x1="6.5" y1="12" x2="17.5" y2="12"/>',
+  minus: '<line x1="6.5" y1="12" x2="17.5" y2="12"/>',
+  // Padlock — read-only / restricted access badge.
+  lock: '<rect x="5.5" y="10.5" width="13" height="9" rx="2"/><path d="M8.2 10.5V8a3.8 3.8 0 0 1 7.6 0v2.5"/><circle cx="12" cy="14.3" r="1.05" style="fill:currentColor"/><line x1="12" y1="15.1" x2="12" y2="16.7"/>',
 } as const;
 
 const GLYPHS: Record<string, { ch: string; style?: CSSProperties }> = {

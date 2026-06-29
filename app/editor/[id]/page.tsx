@@ -1298,7 +1298,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
         <button onClick={() => setShowSource((s) => !s)} title={showSource ? "Back to the visual editor" : "Show the LaTeX source"} aria-label={showSource ? "Show visual editor" : "Show LaTeX source"} aria-pressed={showSource} className={`${HEAD_BTN_BASE} ${showSource ? "bg-accent-soft text-accent" : HEAD_BTN_HOVER}`}><Icon name="code" size={18} /></button>
         <ExportMenu noteId={id} title={title} beforeExport={save} onPdf={printPdf} label={<Icon name="export" size={18} />} className={HEAD_BTN} />
         {readOnly
-          ? <span className="rounded-md border border-border px-3 py-1.5 text-sm text-muted">🔒 {access === "commenter" ? "Comment only" : "View only"}</span>
+          ? <span className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm text-muted"><Icon name="lock" size={15} />{access === "commenter" ? "Comment only" : "View only"}</span>
           : <button onClick={save} title={saving ? "Saving…" : saved ? "Saved — up to date" : "Unsaved changes — click to save now"} aria-label={saving ? "Saving" : saved ? "Saved" : "Save now"} className={`grid h-9 w-9 place-items-center rounded-md transition ${saving ? "animate-pulse text-accent" : saved ? `${HEAD_BTN_HOVER}` : "text-accent hover:bg-accent-soft"}`}><Icon name="save" size={18} /></button>}
         {onClose && <button onClick={onClose} title="Close this pane" aria-label="Close pane" className="grid h-9 w-9 place-items-center rounded-md text-muted transition hover:bg-red-500/10 hover:text-red-500"><Icon name="close" size={17} /></button>}
       </header>
@@ -1397,8 +1397,8 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
       )}
 
       {readOnly && (
-        <div className="print-hide border-b border-border bg-amber-500/10 px-6 py-2 text-center text-sm text-amber-700 dark:text-amber-400">
-          🔒 You have {access === "commenter" ? "comment-only" : "view-only"} access to this shared document — your changes won’t be saved.
+        <div className="print-hide flex items-center justify-center gap-1.5 border-b border-border bg-amber-500/10 px-6 py-2 text-center text-sm text-amber-700 dark:text-amber-400">
+          <Icon name="lock" size={14} /> You have {access === "commenter" ? "comment-only" : "view-only"} access to this shared document — your changes won’t be saved.
         </div>
       )}
 
@@ -1519,10 +1519,10 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     };
     return (
       <div className="group relative flex items-start gap-1 rounded-lg px-1 py-0.5 hover:bg-foreground/[0.03]" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); moveBlock(dragFrom.current, i); dragFrom.current = null; }}>
-        <div className="print-hide flex flex-col items-center pt-1 text-muted opacity-0 transition group-hover:opacity-100">
-          <button onClick={() => moveVisible(-1)} disabled={!canUp} title="Move up" className="leading-none hover:text-accent disabled:opacity-30">▲</button>
-          <span draggable onDragStart={() => (dragFrom.current = i)} title="Drag to reorder block" className="cursor-grab select-none leading-none active:cursor-grabbing">⠿</span>
-          <button onClick={() => moveVisible(1)} disabled={!canDown} title="Move down" className="leading-none hover:text-accent disabled:opacity-30">▼</button>
+        <div className="print-hide flex flex-col items-center gap-0.5 pt-1 text-faint opacity-0 transition group-hover:opacity-100">
+          <button onClick={() => moveVisible(-1)} disabled={!canUp} title="Move up" aria-label="Move block up" className="grid place-items-center rounded hover:text-accent disabled:opacity-30"><Icon name="moveup" size={14} /></button>
+          <span draggable onDragStart={() => (dragFrom.current = i)} title="Drag to reorder block" aria-label="Drag to reorder block" className="grid cursor-grab place-items-center select-none hover:text-accent active:cursor-grabbing"><Icon name="drag" size={14} /></span>
+          <button onClick={() => moveVisible(1)} disabled={!canDown} title="Move down" aria-label="Move block down" className="grid place-items-center rounded hover:text-accent disabled:opacity-30"><Icon name="movedown" size={14} /></button>
         </div>
 
         <div className="min-w-0 flex-1">
@@ -1548,7 +1548,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
               </div>
             ) : (
               <div className="flex items-center gap-1">
-                <button onMouseDown={(e) => e.preventDefault()} onClick={() => toggleSection(b.id)} title={isHeadingCollapsed(b) ? "Expand section" : "Collapse section"} className="print-hide shrink-0 text-muted hover:text-accent">{isHeadingCollapsed(b) ? "▸" : "▾"}</button>
+                <button onMouseDown={(e) => e.preventDefault()} onClick={() => toggleSection(b.id)} title={isHeadingCollapsed(b) ? "Expand section" : "Collapse section"} aria-label={isHeadingCollapsed(b) ? "Expand section" : "Collapse section"} aria-expanded={!isHeadingCollapsed(b)} className="print-hide grid shrink-0 place-items-center text-muted hover:text-accent"><Icon name="chevron" size={16} style={{ transform: isHeadingCollapsed(b) ? "rotate(-90deg)" : "none", transition: "transform .12s" }} /></button>
                 <button onClick={() => startEditHeading(b)} className="block flex-1 text-left">
                   <HeadingDisplay block={b} number={headingNumbers.get(b.id)} />
                 </button>
@@ -1632,7 +1632,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
           )}
         </div>
 
-        <button onClick={() => deleteBlock(b.id)} title="Delete block" className="mt-1 px-1 text-muted opacity-0 transition hover:text-red-500 group-hover:opacity-100">✕</button>
+        <button onClick={() => deleteBlock(b.id)} title="Delete block" aria-label="Delete block" className="mt-1 grid place-items-center px-1 text-faint opacity-0 transition hover:text-red-500 group-hover:opacity-100"><Icon name="trash" size={16} /></button>
       </div>
     );
   }
@@ -1672,10 +1672,10 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
               <select value={t.style} onChange={(e) => tblStyle(e.target.value as TableStyle)} className="rounded border border-border bg-background px-1 py-0.5">
                 {TABLE_STYLES.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
-              <button onClick={tblAddRow} className="rounded border border-border px-1.5 py-0.5 hover:border-accent">＋Row</button>
-              <button onClick={tblRemoveRow} className="rounded border border-border px-1.5 py-0.5 hover:border-accent">－Row</button>
-              <button onClick={tblAddCol} className="rounded border border-border px-1.5 py-0.5 hover:border-accent">＋Col</button>
-              <button onClick={tblRemoveCol} className="rounded border border-border px-1.5 py-0.5 hover:border-accent">－Col</button>
+              <button onClick={tblAddRow} title="Add row" aria-label="Add row" className="flex items-center gap-1 rounded border border-border px-1.5 py-0.5 hover:border-accent"><Icon name="plus" size={13} />Row</button>
+              <button onClick={tblRemoveRow} title="Remove row" aria-label="Remove row" className="flex items-center gap-1 rounded border border-border px-1.5 py-0.5 hover:border-accent"><Icon name="minus" size={13} />Row</button>
+              <button onClick={tblAddCol} title="Add column" aria-label="Add column" className="flex items-center gap-1 rounded border border-border px-1.5 py-0.5 hover:border-accent"><Icon name="plus" size={13} />Col</button>
+              <button onClick={tblRemoveCol} title="Remove column" aria-label="Remove column" className="flex items-center gap-1 rounded border border-border px-1.5 py-0.5 hover:border-accent"><Icon name="minus" size={13} />Col</button>
               <span className="mx-1 h-5 w-px bg-border" />
             </>
           );
@@ -1687,11 +1687,11 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
         ))}
         <span className="mx-1 h-5 w-px bg-border" />
 
-        <button onClick={() => moveSelected(-1)} disabled={selected.index === 0} title="Move left" className="rounded border border-border px-1.5 py-0.5 disabled:opacity-30">◀</button>
-        <button onClick={() => moveSelected(1)} disabled={selected.index >= count - 1} title="Move right" className="rounded border border-border px-1.5 py-0.5 disabled:opacity-30">▶</button>
-        <button onClick={() => (selected.kind === "image" ? addImageToRow(block.id) : addTableToRow(block.id))} className="rounded border border-border px-2 py-0.5 hover:border-accent">＋ Add</button>
-        <button onClick={() => (selected.kind === "image" ? deleteImage(block.id, selected.index) : deleteTable(block.id, selected.index))} className="rounded border border-border px-2 py-0.5 text-red-500 hover:border-red-400">🗑 Delete</button>
-        <button onClick={() => setSelected(null)} className="ml-auto rounded border border-border px-2 py-0.5">✕ Done</button>
+        <button onClick={() => moveSelected(-1)} disabled={selected.index === 0} title="Move left" aria-label="Move left" className="grid place-items-center rounded border border-border px-1.5 py-0.5 hover:border-accent disabled:opacity-30"><Icon name="moveleft" size={14} /></button>
+        <button onClick={() => moveSelected(1)} disabled={selected.index >= count - 1} title="Move right" aria-label="Move right" className="grid place-items-center rounded border border-border px-1.5 py-0.5 hover:border-accent disabled:opacity-30"><Icon name="moveright" size={14} /></button>
+        <button onClick={() => (selected.kind === "image" ? addImageToRow(block.id) : addTableToRow(block.id))} title="Add another" aria-label="Add another" className="flex items-center gap-1 rounded border border-border px-2 py-0.5 hover:border-accent"><Icon name="plus" size={13} />Add</button>
+        <button onClick={() => (selected.kind === "image" ? deleteImage(block.id, selected.index) : deleteTable(block.id, selected.index))} title="Delete" aria-label="Delete" className="flex items-center gap-1 rounded border border-border px-2 py-0.5 text-red-500 hover:border-red-400"><Icon name="trash" size={14} />Delete</button>
+        <button onClick={() => setSelected(null)} title="Done" aria-label="Done" className="ml-auto flex items-center gap-1 rounded border border-border px-2 py-0.5 hover:border-accent"><Icon name="close" size={13} />Done</button>
       </div>
     );
   }
@@ -2168,7 +2168,7 @@ function ListToolButton({ ordered, open, onToggle, onInsert }: {
       <button onClick={() => onInsert()} title={ordered ? "Numbered list" : "Bulleted list"} aria-label={ordered ? "Numbered list" : "Bulleted list"} className="relative z-30 grid h-9 w-9 place-items-center rounded-l-md border border-border hover:border-accent">
         {ordered ? <NumberedListIcon /> : <BulletedListIcon />}
       </button>
-      <button onClick={onToggle} title="List style" aria-label="List style" className={`relative z-30 grid h-9 w-5 place-items-center rounded-r-md border border-l-0 text-[9px] hover:border-accent ${open ? "border-accent text-accent" : "border-border text-muted"}`}>▾</button>
+      <button onClick={onToggle} title="List style" aria-label="List style" aria-expanded={open} className={`relative z-30 grid h-9 w-5 place-items-center rounded-r-md border border-l-0 hover:border-accent ${open ? "border-accent text-accent" : "border-border text-muted"}`}><Icon name="chevron" size={11} /></button>
       {open && (
         <>
           <button className="fixed inset-0 z-20 cursor-default" aria-hidden tabIndex={-1} onClick={onToggle} />
@@ -2199,7 +2199,7 @@ function HighlightButton({ color, open, onToggle, onApply, onColor, keepFocus, o
   return (
     <span className="relative inline-flex">
       <button onMouseDown={keepFocus} onClick={onApply} title="Highlight selection" aria-label="Highlight selection" className={`${ICON_BTN} relative z-30 rounded-r-none`} style={{ background: color, color: "#1f2937" }}>H</button>
-      <button onMouseDown={keepFocus} onClick={onToggle} title="Highlight color" aria-label="Highlight color" className={`relative z-30 grid h-9 w-5 place-items-center rounded-r-md border border-l-0 text-[9px] hover:border-accent ${open ? "border-accent text-accent" : "border-border text-muted"}`}>▾</button>
+      <button onMouseDown={keepFocus} onClick={onToggle} title="Highlight color" aria-label="Highlight color" aria-expanded={open} className={`relative z-30 grid h-9 w-5 place-items-center rounded-r-md border border-l-0 hover:border-accent ${open ? "border-accent text-accent" : "border-border text-muted"}`}><Icon name="chevron" size={11} /></button>
       {open && (
         <>
           <button className="fixed inset-0 z-20 cursor-default" aria-hidden tabIndex={-1} onClick={onToggle} />

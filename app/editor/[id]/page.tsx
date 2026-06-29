@@ -7,6 +7,7 @@ import { GraphEditor } from "@/components/GraphEditor";
 import { ImageRowEditor } from "@/components/ImageRowEditor";
 import { Katex } from "@/components/Katex";
 import { SymbolPicker } from "@/components/SymbolPicker";
+import { Icon, type IconName } from "@/components/Icon";
 import { TablePicker } from "@/components/TablePicker";
 import { TableRowEditor } from "@/components/TableRowEditor";
 import { DesignPicker } from "@/components/DesignPicker";
@@ -133,6 +134,23 @@ interface DocProps {
 
 const SYM_KEY = "aquarius.symbols";
 const DEFAULT_TB1 = ["\\frac{}{}", "\\sqrt{}", "^{}", "\\sum_{}^{}", "\\int_{}^{}", "\\sin", "\\cos", "\\neq", "\\pi", "\\alpha"];
+/** Structure inserts that get a drawn icon instead of a KaTeX preview. */
+const STRUCT_ICON: Record<string, IconName> = {
+  "\\frac{}{}": "fraction",
+  "\\sqrt{}": "sqrt",
+  "^{}": "power",
+  "\\sum_{}^{}": "sum",
+  "\\int_{}^{}": "integral",
+};
+// Human-readable names for the structure buttons, used as their accessible label
+// (the raw LaTeX makes a poor screen-reader announcement).
+const STRUCT_LABEL: Record<string, string> = {
+  "\\frac{}{}": "fraction",
+  "\\sqrt{}": "square root",
+  "^{}": "exponent",
+  "\\sum_{}^{}": "summation",
+  "\\int_{}^{}": "integral",
+};
 // Eight editable symbol slots; the "Edit" button lets users change any of them.
 const DEFAULT_SYMBOLS = ["\\infty", "\\rightarrow", "\\in", "\\leq", "\\geq", "\\neq", "\\pm", "\\times"];
 const SYMBOL_COUNT = DEFAULT_SYMBOLS.length;
@@ -140,6 +158,16 @@ const SYMBOL_COUNT = DEFAULT_SYMBOLS.length;
 /** Shared sizing so every toolbar icon button is about the same size. */
 const ICON_BTN =
   "grid h-9 min-w-9 place-items-center rounded-md border border-border px-2 text-sm hover:border-accent";
+
+/** Borderless icon button for the top bar (drawn glyphs, not word labels).
+ *  `_BASE` is layout + resting/disabled color only; `HEAD_BTN` adds the hover
+ *  state. A toggle that has its own active style composes from `_BASE` so it
+ *  never carries two competing `hover:` utilities (Tailwind picks the winner by
+ *  emission order, which would be fragile). */
+const HEAD_BTN_BASE =
+  "grid h-9 w-9 place-items-center rounded-md transition disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-muted";
+const HEAD_BTN_HOVER = "text-muted hover:bg-foreground/[0.06] hover:text-foreground";
+const HEAD_BTN = `${HEAD_BTN_BASE} ${HEAD_BTN_HOVER}`;
 
 /** Preset highlight colors offered in the H-button dropdown. */
 const HIGHLIGHT_COLORS = ["#fde047", "#bbf7d0", "#bfdbfe", "#fbcfe8", "#fed7aa", "#e9d5ff", "#fecaca", "#a7f3d0"];
@@ -1259,20 +1287,20 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
         {split && <span className="rounded bg-foreground/5 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted">{primary ? "A" : "B"}</span>}
         <input value={title} readOnly={readOnly} onChange={(e) => { setTitle(e.target.value); setSaved(false); }} className="flex-1 bg-transparent text-lg font-semibold outline-none" />
         {!readOnly && (
-          <div className="flex items-center gap-1">
-            <button onMouseDown={(e) => e.preventDefault()} onClick={undo} disabled={undoStack.current.length === 0} title="Undo (⌘/Ctrl+Z)" aria-label="Undo" className="flex items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-sm hover:border-accent disabled:opacity-40"><span className="text-base leading-none">↶</span>Undo</button>
-            <button onMouseDown={(e) => e.preventDefault()} onClick={redo} disabled={redoStack.current.length === 0} title="Redo (⌘/Ctrl+Shift+Z)" aria-label="Redo" className="flex items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-sm hover:border-accent disabled:opacity-40"><span className="text-base leading-none">↷</span>Redo</button>
+          <div className="flex items-center">
+            <button onMouseDown={(e) => e.preventDefault()} onClick={undo} disabled={undoStack.current.length === 0} title="Undo (⌘/Ctrl+Z)" aria-label="Undo" className={HEAD_BTN}><Icon name="undo" size={18} /></button>
+            <button onMouseDown={(e) => e.preventDefault()} onClick={redo} disabled={redoStack.current.length === 0} title="Redo (⌘/Ctrl+Shift+Z)" aria-label="Redo" className={HEAD_BTN}><Icon name="redo" size={18} /></button>
           </div>
         )}
-        {!readOnly && <button onClick={() => setTemplatesOpen(true)} title="Templates & backgrounds" className="rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent">Design</button>}
+        {!readOnly && <button onClick={() => setTemplatesOpen(true)} title="Design — templates & backgrounds" aria-label="Design — templates and backgrounds" className={HEAD_BTN}><Icon name="templates" size={18} /></button>}
         {collab.active && <PresenceAvatars peers={collab.peers} selfId={user?.id ?? null} connected={collab.connected} />}
-        {isCloudActive() && <button onClick={() => setShareOpen(true)} title="Share this document" className="rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent">🔗 Share</button>}
-        <button onClick={() => setShowSource((s) => !s)} className="rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent">{showSource ? "Editor" : "LaTeX"}</button>
-        <ExportMenu noteId={id} title={title} beforeExport={save} onPdf={printPdf} label="Export ▾" className="rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent" />
+        {isCloudActive() && <button onClick={() => setShareOpen(true)} title="Share this document" aria-label="Share" className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent"><Icon name="share" size={16} />Share</button>}
+        <button onClick={() => setShowSource((s) => !s)} title={showSource ? "Back to the visual editor" : "Show the LaTeX source"} aria-label={showSource ? "Show visual editor" : "Show LaTeX source"} aria-pressed={showSource} className={`${HEAD_BTN_BASE} ${showSource ? "bg-accent-soft text-accent" : HEAD_BTN_HOVER}`}><Icon name="code" size={18} /></button>
+        <ExportMenu noteId={id} title={title} beforeExport={save} onPdf={printPdf} label={<Icon name="export" size={18} />} className={HEAD_BTN} />
         {readOnly
           ? <span className="rounded-md border border-border px-3 py-1.5 text-sm text-muted">🔒 {access === "commenter" ? "Comment only" : "View only"}</span>
-          : <button onClick={save} title="Saves automatically; click to save now" className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white">{saving ? "Saving…" : saved ? "Saved" : "Save"}</button>}
-        {onClose && <button onClick={onClose} title="Close this pane" className="rounded-md border border-border px-2 py-1.5 text-sm text-muted hover:border-red-500 hover:text-red-500">✕</button>}
+          : <button onClick={save} title={saving ? "Saving…" : saved ? "Saved — up to date" : "Unsaved changes — click to save now"} aria-label={saving ? "Saving" : saved ? "Saved" : "Save now"} className={`grid h-9 w-9 place-items-center rounded-md transition ${saving ? "animate-pulse text-accent" : saved ? `${HEAD_BTN_HOVER}` : "text-accent hover:bg-accent-soft"}`}><Icon name="save" size={18} /></button>}
+        {onClose && <button onClick={onClose} title="Close this pane" aria-label="Close pane" className="grid h-9 w-9 place-items-center rounded-md text-muted transition hover:bg-red-500/10 hover:text-red-500"><Icon name="close" size={17} /></button>}
       </header>
 
       {/* Block tools — hidden in read-only (viewer/commenter) mode */}
@@ -1287,21 +1315,21 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
         </select>
         <span className="mx-1 h-7 w-px bg-border" />
         {/* Text · Equation */}
-        <ToolButton onClick={() => addBlock(paragraphFromSource(""))} title="New paragraph (normal text)">T</ToolButton>
-        <ToolButton onClick={insertEquation} title="Insert centered equation ($$…$$)">Σ</ToolButton>
-        <ToolButton onClick={() => setGraphEdit({ id: null })} title="Insert interactive graph"><GraphIcon /></ToolButton>
+        <ToolButton onClick={() => addBlock(paragraphFromSource(""))} title="New paragraph (normal text)"><Icon name="paragraph" size={17} /></ToolButton>
+        <ToolButton onClick={insertEquation} title="Insert centered equation ($$…$$)"><Icon name="displayeq" size={19} /></ToolButton>
+        <ToolButton onClick={() => setGraphEdit({ id: null })} title="Insert interactive graph"><Icon name="graph" size={19} /></ToolButton>
         <span className="mx-1 h-7 w-px bg-border" />
         {/* Bold · Italic · Underline · Strike · Highlight */}
-        <button onMouseDown={keepFocus} onClick={() => wrapSelection("**")} title="Bold (**…**)" className={`${ICON_BTN} font-bold`}>B</button>
-        <button onMouseDown={keepFocus} onClick={() => wrapSelection("*")} title="Italic (*…*)" className={`${ICON_BTN} italic`}>I</button>
-        <button onMouseDown={keepFocus} onClick={() => wrapSelection("__")} title="Underline (__…__)" className={`${ICON_BTN} underline`}>U</button>
-        <button onMouseDown={keepFocus} onClick={() => wrapSelection("~~")} title="Strikethrough (~~…~~)" className={`${ICON_BTN} line-through`}>S</button>
+        <button onMouseDown={keepFocus} onClick={() => wrapSelection("**")} title="Bold (**…**)" aria-label="Bold" className={ICON_BTN}><Icon name="bold" size={16} /></button>
+        <button onMouseDown={keepFocus} onClick={() => wrapSelection("*")} title="Italic (*…*)" aria-label="Italic" className={ICON_BTN}><Icon name="italic" size={16} /></button>
+        <button onMouseDown={keepFocus} onClick={() => wrapSelection("__")} title="Underline (__…__)" aria-label="Underline" className={ICON_BTN}><Icon name="underline" size={16} /></button>
+        <button onMouseDown={keepFocus} onClick={() => wrapSelection("~~")} title="Strikethrough (~~…~~)" aria-label="Strikethrough" className={ICON_BTN}><Icon name="strike" size={16} /></button>
         <HighlightButton color={hlColor} open={hlMenu} onToggle={() => setHlMenu((o) => !o)} onApply={() => wrapSelection(`==#${hlColor.replace("#", "")}:`, "==")} onColor={setHlColor} keepFocus={keepFocus} onColorMouseDown={() => { if (editingId) sticky.current = true; }} />
         <span className="mx-1 h-7 w-px bg-border" />
         {/* Picture · Table · Link */}
-        <ToolButton onClick={newImageRow} title="Insert image">🖼</ToolButton>
-        <ToolButton onClick={() => setTablePicker(true)} title="Insert table">▤</ToolButton>
-        <button onMouseDown={keepFocus} onClick={insertLink} title="Insert link" className={ICON_BTN}>🔗</button>
+        <ToolButton onClick={newImageRow} title="Insert image"><Icon name="image" size={18} /></ToolButton>
+        <ToolButton onClick={() => setTablePicker(true)} title="Insert table"><Icon name="table" size={18} /></ToolButton>
+        <button onMouseDown={keepFocus} onClick={insertLink} title="Insert link" aria-label="Insert link" className={ICON_BTN}><Icon name="link" size={18} /></button>
         <span className="mx-1 h-7 w-px bg-border" />
         {/* Unnumbered · Numbered list */}
         <ListToolButton ordered={false} open={listMenu === "bullet"} onToggle={() => setListMenu((m) => (m === "bullet" ? null : "bullet"))} onInsert={(marker) => insertList(false, marker)} />
@@ -1311,21 +1339,24 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
       {/* Functions & symbols */}
       <div className="print-hide flex flex-wrap items-center justify-center gap-1.5 border-b border-border px-6 py-2">
         {/* Structures — fixed defaults (not user-editable) */}
-        {toolbar1.map((latex, i) => (
-          <button key={i} onMouseDown={keepFocus} onClick={() => onInsert(latex)} title={`Insert ${latex}`} className={ICON_BTN}>
-            <Katex latex={previewLatex(latex)} />
-          </button>
-        ))}
+        {toolbar1.map((latex, i) => {
+          const sIcon = STRUCT_ICON[latex];
+          return (
+            <button key={i} onMouseDown={keepFocus} onClick={() => onInsert(latex)} title={`Insert ${latex}`} aria-label={`Insert ${STRUCT_LABEL[latex] ?? latex}`} className={ICON_BTN}>
+              {sIcon ? <Icon name={sIcon} size={20} /> : <Katex latex={previewLatex(latex)} />}
+            </button>
+          );
+        })}
         <span className="mx-2 h-7 w-px bg-border" />
         {/* Symbols — eight editable slots; "Edit" lets the user change any of them */}
         {symbols.map((latex, i) => (
-          <button key={i} onMouseDown={(e) => { if (!editSyms) keepFocus(e); else if (editingId) sticky.current = true; }} onClick={() => (editSyms ? setPicker({ kind: "symbol", index: i }) : onInsert(latex))} title={editSyms ? "Click to change this symbol" : `Insert ${latex}`} className={`${ICON_BTN} ${editSyms ? "border-dashed border-accent/60" : ""}`}>
+          <button key={i} onMouseDown={(e) => { if (!editSyms) keepFocus(e); else if (editingId) sticky.current = true; }} onClick={() => (editSyms ? setPicker({ kind: "symbol", index: i }) : onInsert(latex))} title={editSyms ? "Click to change this symbol" : `Insert ${latex}`} aria-label={editSyms ? `Change symbol ${i + 1}` : `Insert ${latex}`} className={`${ICON_BTN} ${editSyms ? "border-dashed border-accent/60" : ""}`}>
             <Katex latex={previewLatex(latex)} />
           </button>
         ))}
-        <button onMouseDown={keepFocus} onClick={() => setEditSyms((s) => !s)} title="Change the symbols" className={`rounded-md border px-2 py-1 text-xs ${editSyms ? "border-accent text-accent" : "border-border text-muted"}`}>{editSyms ? "Done" : "Edit"}</button>
+        <button onMouseDown={keepFocus} onClick={() => setEditSyms((s) => !s)} title={editSyms ? "Done — finish changing symbols" : "Change the symbols"} aria-label={editSyms ? "Done changing symbols" : "Change the symbols"} aria-pressed={editSyms} className={`grid h-9 min-w-9 place-items-center rounded-md border px-2 ${editSyms ? "border-accent bg-accent-soft text-accent" : "border-border text-muted hover:border-accent"}`}><Icon name="editformula" size={17} /></button>
         <span className="mx-2 h-7 w-px bg-border" />
-        <button onMouseDown={keepFocus} onClick={() => setPicker({ kind: "insert" })} title="Browse all functions & symbols" className="flex h-9 items-center rounded-md border border-border px-3 text-sm hover:border-accent">Functions and Symbols</button>
+        <button onMouseDown={keepFocus} onClick={() => setPicker({ kind: "insert" })} title="Browse all functions & symbols" aria-label="Browse all functions and symbols" className={ICON_BTN}><Icon name="functions" size={20} /></button>
       </div>
 
       {/* Document settings */}
@@ -2083,18 +2114,10 @@ function StructuralFormulaBox({
   );
 }
 
-function ToolButton({ onClick, title, children }: { onClick: () => void; title: string; children: ReactNode }) {
-  return <button onClick={onClick} title={title} className={ICON_BTN}>{children}</button>;
-}
-
-/** Small axes-with-a-curve glyph for the "insert graph" toolbar button. */
-function GraphIcon() {
-  return (
-    <svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M2.5 1.5 V13.5 H14.5" />
-      <path d="M3 11 C6 11 6.5 4 9 4 C11 4 12 8 14 8" stroke="var(--accent)" />
-    </svg>
-  );
+function ToolButton({ onClick, title, label, children }: { onClick: () => void; title: string; label?: string; children: ReactNode }) {
+  // The glyph is aria-hidden, so an icon-only button needs its own name; default
+  // it to the tooltip text rather than leaning on the weak title-as-name fallback.
+  return <button onClick={onClick} title={title} aria-label={label ?? title} className={ICON_BTN}>{children}</button>;
 }
 
 // ─── List buttons (icon + style-dropdown) ────────────────────────────────────
@@ -2142,7 +2165,7 @@ function ListToolButton({ ordered, open, onToggle, onInsert }: {
   const markers = ordered ? NUMBER_MARKERS : BULLET_MARKERS;
   return (
     <span className="relative inline-flex">
-      <button onClick={() => onInsert()} title={ordered ? "Numbered list" : "Bulleted list"} className="relative z-30 grid h-9 w-9 place-items-center rounded-l-md border border-border hover:border-accent">
+      <button onClick={() => onInsert()} title={ordered ? "Numbered list" : "Bulleted list"} aria-label={ordered ? "Numbered list" : "Bulleted list"} className="relative z-30 grid h-9 w-9 place-items-center rounded-l-md border border-border hover:border-accent">
         {ordered ? <NumberedListIcon /> : <BulletedListIcon />}
       </button>
       <button onClick={onToggle} title="List style" aria-label="List style" className={`relative z-30 grid h-9 w-5 place-items-center rounded-r-md border border-l-0 text-[9px] hover:border-accent ${open ? "border-accent text-accent" : "border-border text-muted"}`}>▾</button>
@@ -2175,7 +2198,7 @@ function HighlightButton({ color, open, onToggle, onApply, onColor, keepFocus, o
 }) {
   return (
     <span className="relative inline-flex">
-      <button onMouseDown={keepFocus} onClick={onApply} title="Highlight selection" className={`${ICON_BTN} relative z-30 rounded-r-none`} style={{ background: color, color: "#1f2937" }}>H</button>
+      <button onMouseDown={keepFocus} onClick={onApply} title="Highlight selection" aria-label="Highlight selection" className={`${ICON_BTN} relative z-30 rounded-r-none`} style={{ background: color, color: "#1f2937" }}>H</button>
       <button onMouseDown={keepFocus} onClick={onToggle} title="Highlight color" aria-label="Highlight color" className={`relative z-30 grid h-9 w-5 place-items-center rounded-r-md border border-l-0 text-[9px] hover:border-accent ${open ? "border-accent text-accent" : "border-border text-muted"}`}>▾</button>
       {open && (
         <>

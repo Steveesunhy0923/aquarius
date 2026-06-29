@@ -4,6 +4,7 @@ import { AccountMenu } from "@/components/auth/AccountMenu";
 import { SettingsDialog } from "@/components/SettingsDialog";
 import { downloadNote } from "@/components/ExportMenu";
 import { NoteCover } from "@/components/NoteCover";
+import { Icon } from "@/components/Icon";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { listSharedWithMe, type Role } from "@/lib/sharing/sharing";
 import { getStore, migrateLocalToCloud, seedDemoLibrary } from "@/lib/storage";
@@ -342,92 +343,84 @@ export default function LibraryPage() {
 
   return (
     <main className="flex min-h-screen flex-col">
-      <header className="flex items-center justify-between gap-6 border-b border-border px-6 py-4">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">Aquarius</h1>
-          <p className="text-sm text-muted">
-            WYSIWYG math notes · LaTeX is the output, not the input
-          </p>
+      <header className="flex items-center gap-3 border-b border-border bg-surface px-5 py-3">
+        <div className="mr-1 shrink-0">
+          <h1 className="text-[17px] font-bold leading-none tracking-tight">Aquarius</h1>
+          <p className="mt-1 text-[11px] text-muted">WYSIWYG math notes</p>
         </div>
-        <div className="flex items-center gap-3">
-          <div className="relative w-72">
-            <input
-              value={query}
-              onChange={(e) => { setQuery(e.target.value); if (e.target.value.trim()) setTrash(false); }}
-              placeholder="Search title, tag, or content…"
-              className="w-full rounded-lg border border-border bg-surface px-3 py-2 pr-8 text-sm outline-none focus:border-accent"
-            />
-            {searching && (
-              <button
-                onClick={() => setQuery("")}
-                title="Clear search"
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-foreground"
-              >
-                ✕
-              </button>
-            )}
-          </div>
-          {user && (
+        <div className="relative ml-2 w-full max-w-[420px]">
+          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted">
+            <Icon name="search" size={16} />
+          </span>
+          <input
+            value={query}
+            onChange={(e) => { setQuery(e.target.value); if (e.target.value.trim()) setTrash(false); }}
+            placeholder="Search title, tag, or content…"
+            className="w-full rounded-lg border border-border bg-surface py-2 pl-9 pr-8 text-sm outline-none focus:border-accent"
+          />
+          {searching && (
             <button
-              onClick={() => { setShared((s) => !s); setTrash(false); setQuery(""); }}
-              className={`whitespace-nowrap rounded-lg border px-3 py-2 text-sm ${
-                shared ? "border-accent text-accent" : "border-border text-muted hover:border-accent"
-              }`}
+              onClick={() => setQuery("")}
+              title="Clear search"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-foreground"
             >
-              🔗 Shared with me
+              <Icon name="clearsearch" size={16} />
             </button>
           )}
-          <button
-            onClick={() => { setTrash((t) => !t); setShared(false); }}
-            className={`whitespace-nowrap rounded-lg border px-3 py-2 text-sm ${
-              trash ? "border-accent text-accent" : "border-border text-muted hover:border-accent"
-            }`}
-          >
-            🗑 Recently Deleted
-          </button>
-          {user && (
-            <button
-              onClick={uploadToCloud}
-              disabled={uploading}
-              title="Copy your local notes into your cloud library"
-              className="whitespace-nowrap rounded-lg border border-border px-3 py-2 text-sm text-muted hover:border-accent disabled:opacity-50"
-            >
-              {uploading ? "Uploading…" : "⤴ Upload to cloud"}
-            </button>
-          )}
+        </div>
+        <div className="ml-auto flex shrink-0 items-center gap-2">
           <button
             onClick={() => setSettingsOpen(true)}
             title="Settings"
             aria-label="Settings"
-            className="rounded-lg border border-border px-3 py-2 text-sm text-muted hover:border-accent"
+            className="grid h-[34px] w-[34px] place-items-center rounded-lg border border-border text-muted hover:border-accent"
           >
-            ⚙
+            <Icon name="settings" size={18} />
           </button>
           <AccountMenu />
         </div>
       </header>
 
-      <div className="grid flex-1 grid-cols-[220px_240px_1fr]">
-        {/* Subjects */}
-        <Pane title="Subjects" onAdd={addSubject} addLabel="Add subject">
+      <div className="grid flex-1 grid-cols-[248px_1fr]">
+        <aside className="overflow-auto border-r border-border bg-surface px-3 py-4">
+          <SideHead onAdd={addSubject} addLabel="Add subject">Subjects</SideHead>
           {subjects.map((s) => (
-            <Row key={s.id} active={!trash && !shared && s.id === subjectId} onClick={() => { setTrash(false); setShared(false); setSubjectId(s.id); }} onDelete={() => removeSubject(s.id)}>
-              <span className="inline-block h-3 w-3 shrink-0 rounded-full" style={{ background: s.color || "var(--accent)" }} />
+            <SideItem key={s.id} active={!trash && !shared && s.id === subjectId} onClick={() => { setTrash(false); setShared(false); setSubjectId(s.id); }} onDelete={() => removeSubject(s.id)}>
+              <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: s.color || "var(--accent)" }} />
               <span className="truncate">{s.name}</span>
-            </Row>
+            </SideItem>
           ))}
-        </Pane>
 
-        {/* Notebooks */}
-        <Pane title="Notebooks" onAdd={subjectId ? addNotebook : undefined} addLabel="Add notebook">
-          {notebooks.map((nb) => (
-            <Row key={nb.id} active={!trash && !shared && nb.id === notebookId} onClick={() => { setTrash(false); setShared(false); setNotebookId(nb.id); }} onDelete={() => removeNotebook(nb.id)}>
-              <span className="shrink-0">📓</span>
-              <span className="truncate">{nb.name}</span>
-            </Row>
-          ))}
-          {subjectId && notebooks.length === 0 && <Empty>No notebooks yet</Empty>}
-        </Pane>
+          <SideHead onAdd={subjectId ? addNotebook : undefined} addLabel="Add notebook">Notebooks</SideHead>
+          {subjectId && notebooks.length === 0 && <p className="px-2.5 py-1.5 text-[13px] text-muted">No notebooks yet</p>}
+          {notebooks.map((nb) => {
+            const on = !trash && !shared && nb.id === notebookId;
+            return (
+              <SideItem key={nb.id} active={on} onClick={() => { setTrash(false); setShared(false); setNotebookId(nb.id); }} onDelete={() => removeNotebook(nb.id)}>
+                <Icon name="notebooks" size={16} className={`shrink-0 ${on ? "text-accent" : "text-muted"}`} />
+                <span className="truncate">{nb.name}</span>
+              </SideItem>
+            );
+          })}
+
+          <SideHead>Library</SideHead>
+          {user && (
+            <SideItem active={shared} onClick={() => { setShared(true); setTrash(false); setQuery(""); }}>
+              <Icon name="share" size={16} className={`shrink-0 ${shared ? "text-accent" : "text-muted"}`} />
+              <span className="truncate">Shared with me</span>
+            </SideItem>
+          )}
+          <SideItem active={trash} onClick={() => { setTrash(true); setShared(false); }}>
+            <Icon name="trash" size={16} className={`shrink-0 ${trash ? "text-accent" : "text-muted"}`} />
+            <span className="truncate">Recently Deleted</span>
+          </SideItem>
+          {user && (
+            <SideItem onClick={() => { if (!uploading) uploadToCloud(); }}>
+              <Icon name="uploadcloud" size={16} className="shrink-0 text-muted" />
+              <span className="truncate">{uploading ? "Uploading…" : "Upload to cloud"}</span>
+            </SideItem>
+          )}
+        </aside>
 
         {/* Notes / Search / Trash */}
         <section className="p-6">
@@ -618,9 +611,9 @@ function ImportMenu({
         onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen((o) => !o); }}
         disabled={disabled}
         title="Import a note"
-        className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-muted hover:border-accent hover:text-accent disabled:opacity-40 disabled:hover:border-border disabled:hover:text-muted"
+        className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm font-medium text-muted hover:border-accent hover:text-accent disabled:opacity-40 disabled:hover:border-border disabled:hover:text-muted"
       >
-        ↧ Import
+        <Icon name="import" size={14} /> Import
       </button>
       {open && (
         <>
@@ -685,9 +678,9 @@ function NoteCardMenu({
       <button
         onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen((o) => !o); }}
         title="More"
-        className="grid h-6 w-6 place-items-center rounded-full bg-surface text-base leading-none shadow ring-1 ring-border hover:ring-accent"
+        className="grid h-6 w-6 place-items-center rounded-full bg-surface text-muted shadow ring-1 ring-border hover:text-foreground hover:ring-accent"
       >
-        ⋯
+        <Icon name="more" size={16} />
       </button>
       {open && (
         <>
@@ -719,7 +712,7 @@ function NoteCardMenu({
 
 function NoteCard({ note, onDelete, onCopy, onPdf, onAddTag, onRemoveTag }: { note: NoteMeta } & CardHandlers) {
   return (
-    <div className="group relative flex flex-col rounded-xl border border-border bg-surface p-3 transition hover:border-accent">
+    <div className="group relative flex flex-col rounded-xl border border-border bg-surface p-3 transition hover:-translate-y-0.5 hover:border-accent hover:shadow-[0_10px_26px_rgba(40,40,80,0.09)]">
       <div className="absolute right-2 top-2 z-10 opacity-60 transition group-hover:opacity-100">
         <NoteCardMenu note={note} onCopy={onCopy} onDelete={onDelete} onPdf={onPdf} />
       </div>
@@ -734,8 +727,8 @@ function NoteCard({ note, onDelete, onCopy, onPdf, onAddTag, onRemoveTag }: { no
         {note.tags.map((tag) => (
           <span key={tag} className="group/tag inline-flex items-center gap-0.5 rounded-full bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent">
             {tag}
-            <button onClick={() => onRemoveTag(note, tag)} title="Remove tag" className="hidden leading-none hover:text-foreground group-hover/tag:inline">
-              ✕
+            <button onClick={() => onRemoveTag(note, tag)} title="Remove tag" className="hidden leading-none hover:text-foreground group-hover/tag:inline-flex">
+              <Icon name="close" size={10} />
             </button>
           </span>
         ))}
@@ -797,38 +790,43 @@ function TagChip({ active, onClick, children }: { active: boolean; onClick: () =
   );
 }
 
-function Pane({
-  title,
+function SideHead({
+  children,
   onAdd,
   addLabel,
-  children,
 }: {
-  title: string;
-  onAdd?: () => void;
-  addLabel: string;
   children: React.ReactNode;
+  onAdd?: () => void;
+  addLabel?: string;
 }) {
   return (
-    <aside className="flex flex-col border-r border-border">
-      <div className="flex items-center justify-between px-4 py-3">
-        <h2 className="text-sm font-medium uppercase tracking-wide text-muted">{title}</h2>
-        {onAdd && (
-          <button onClick={onAdd} title={addLabel} className="rounded px-1.5 text-lg leading-none text-muted hover:text-accent">
-            +
-          </button>
-        )}
-      </div>
-      <div className="flex-1 space-y-0.5 px-2">{children}</div>
-    </aside>
+    <div className="mb-1.5 mt-5 flex items-center px-2.5 first:mt-1">
+      <span className="text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted">{children}</span>
+      {onAdd && (
+        <button onClick={onAdd} title={addLabel} className="ml-auto grid h-5 w-5 place-items-center rounded text-base leading-none text-muted hover:text-accent">
+          +
+        </button>
+      )}
+    </div>
   );
 }
 
-function Row({ active, onClick, onDelete, children }: { active: boolean; onClick: () => void; onDelete?: () => void; children: React.ReactNode }) {
+function SideItem({
+  active,
+  onClick,
+  onDelete,
+  children,
+}: {
+  active?: boolean;
+  onClick: () => void;
+  onDelete?: () => void;
+  children: React.ReactNode;
+}) {
   return (
-    <div className={`group flex items-center rounded-md ${active ? "bg-accent/10" : "hover:bg-foreground/5"}`}>
+    <div className={`group flex items-center rounded-[7px] ${active ? "bg-accent-soft" : "hover:bg-foreground/[0.04]"}`}>
       <button
         onClick={onClick}
-        className={`flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left text-sm ${active ? "text-accent" : ""}`}
+        className={`flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-2 text-left text-[13px] ${active ? "text-accent" : "text-foreground"}`}
       >
         {children}
       </button>
@@ -836,9 +834,9 @@ function Row({ active, onClick, onDelete, children }: { active: boolean; onClick
         <button
           onClick={onDelete}
           title="Delete"
-          className="mr-1 shrink-0 px-1 text-muted opacity-0 transition hover:text-red-500 group-hover:opacity-100"
+          className="mr-1 grid h-6 w-6 shrink-0 place-items-center text-muted opacity-0 transition hover:text-red-500 group-hover:opacity-100"
         >
-          ✕
+          <Icon name="close" size={13} />
         </button>
       )}
     </div>

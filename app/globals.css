@@ -4,11 +4,14 @@
 
 :root {
   --background: #fbfbfd;
-  --foreground: #1a1a1f;
+  --foreground: #17171c;
   --surface: #ffffff;
-  --border: #e6e6ee;
-  --accent: #4f46e5;
-  --muted: #6b7280;
+  --border: #ebebf0;
+  --border-soft: #f2f2f6;
+  --accent: #5b5bd6;
+  --accent-soft: #eeeefb;
+  --muted: #8a8a93;
+  --faint: #b9b9c2;
 }
 
 /* Dark palette. Applied by the system preference UNLESS the user forced a theme
@@ -19,8 +22,11 @@
     --foreground: #ededf2;
     --surface: #17171d;
     --border: #2a2a35;
+    --border-soft: #20202a;
     --accent: #818cf8;
+    --accent-soft: #23233a;
     --muted: #9ca3af;
+    --faint: #6b7280;
   }
 }
 :root.theme-dark {
@@ -28,8 +34,11 @@
   --foreground: #ededf2;
   --surface: #17171d;
   --border: #2a2a35;
+  --border-soft: #20202a;
   --accent: #818cf8;
+  --accent-soft: #23233a;
   --muted: #9ca3af;
+  --faint: #6b7280;
 }
 
 @theme inline {
@@ -37,8 +46,11 @@
   --color-foreground: var(--foreground);
   --color-surface: var(--surface);
   --color-border: var(--border);
+  --color-border-soft: var(--border-soft);
   --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
   --color-muted: var(--muted);
+  --color-faint: var(--faint);
 }
 
 html,

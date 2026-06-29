@@ -2,7 +2,7 @@
 
 import { documentToLatex } from "@/lib/blocks";
 import { getStore } from "@/lib/storage";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 
 function download(filename: string, content: string, mime: string) {
   const url = URL.createObjectURL(new Blob([content], { type: mime }));
@@ -60,7 +60,7 @@ export function ExportMenu({
   onPdf?: () => void;
   className?: string;
   menuClassName?: string;
-  label?: string;
+  label?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -79,6 +79,9 @@ export function ExportMenu({
       <button
         onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen((o) => !o); }}
         title="Export / download"
+        aria-label="Export / download"
+        aria-haspopup="menu"
+        aria-expanded={open}
         className={className}
       >
         {label}

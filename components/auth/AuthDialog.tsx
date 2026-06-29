@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Icon } from "@/components/Icon";
 import { useAuth } from "@/lib/auth/AuthProvider";
 
 /** Sign-in / sign-up modal: Google OAuth + email & password. */
@@ -40,14 +41,16 @@ export function AuthDialog({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 grid place-items-center bg-foreground/25 p-4" onClick={onClose}>
       <div
-        className="w-full max-w-sm rounded-xl border border-border bg-surface p-6 shadow-xl"
+        className="w-full max-w-sm rounded-xl border border-border bg-surface p-6 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">{mode === "in" ? "Sign in" : "Create account"}</h2>
-          <button onClick={onClose} className="text-muted hover:text-foreground" aria-label="Close">✕</button>
+          <h2 className="text-base font-semibold">{mode === "in" ? "Sign in" : "Create account"}</h2>
+          <button onClick={onClose} aria-label="Close" className="grid h-8 w-8 place-items-center rounded-md text-muted hover:bg-foreground/[0.05] hover:text-foreground">
+            <Icon name="close" size={16} />
+          </button>
         </div>
 
         <button

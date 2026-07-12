@@ -1,13 +1,14 @@
 "use client";
 
-import { renderItem, renderLabel, renderPoint } from "@/components/GraphView";
+import { Icon } from "@/components/Icon";
+import { renderItem, renderPoint, SceneBase } from "@/components/GraphView";
+import { uiConfirm } from "@/components/ui/dialogs";
 import {
   buildScene,
   defaultGraph,
   findSnap,
   makeProj,
   newGraphId,
-  parabolaPolyline,
   resolveGeometry,
   resolvePoint,
   SHAPE_PALETTE,
@@ -18,41 +19,39 @@ import {
   type SceneItem,
   type SnapTarget,
 } from "@/lib/blocks/graph";
+import {
+  buildShape,
+  deletePoint,
+  HINTS,
+  HIT_PX,
+  hitTest,
+  nextName,
+  previewPrims,
+  rotatable,
+  rotatablePointIds,
+  rotateShapeData,
+  samePair,
+  shapeCentroid,
+  STICKY_TOOLS,
+  TOOLS,
+  type Selection,
+  type ToolId,
+} from "@/lib/blocks/graph-edit";
 import { isValidExpr } from "@/lib/blocks/expr";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const SNAP_PX = 12; // magnet radius
-const HIT_PX = 9; // selection hit-test radius
 
-type ToolId =
-  | "select"
-  | "point"
-  | "segment"
-  | "line"
-  | "triangle"
-  | "rectangle"
-  | "circle"
-  | "ellipse"
-  | "parabola"
-  | "function";
-
-const TOOLS: Array<{ id: ToolId; glyph: string; label: string; needs: number }> = [
-  { id: "select", glyph: "↖", label: "Select / move", needs: 0 },
-  { id: "point", glyph: "•", label: "Point", needs: 1 },
-  { id: "segment", glyph: "／", label: "Segment", needs: 2 },
-  { id: "line", glyph: "⟋", label: "Line (infinite)", needs: 2 },
-  { id: "triangle", glyph: "△", label: "Triangle", needs: 3 },
-  { id: "rectangle", glyph: "▭", label: "Rectangle", needs: 2 },
-  { id: "circle", glyph: "◯", label: "Circle", needs: 2 },
-  { id: "ellipse", glyph: "⬭", label: "Ellipse", needs: 2 },
-  { id: "parabola", glyph: "∪", label: "Parabola", needs: 2 },
-  { id: "function", glyph: "ƒ", label: "Function", needs: 0 },
-];
-
-/** Tools that stay active after one use; all others revert to Select. */
-const STICKY_TOOLS: ReadonlySet<ToolId> = new Set<ToolId>(["point", "segment", "line", "triangle"]);
-
-type Selection = { kind: "point" | "shape"; id: string } | null;
+const HEAD_BTN_BASE =
+  "grid h-9 w-9 place-items-center rounded-md transition disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-muted";
+const HEAD_BTN_HOVER = "text-muted hover:bg-foreground/[0.06] hover:text-foreground";
+const HEAD_BTN = `${HEAD_BTN_BASE} ${HEAD_BTN_HOVER}`;
+const TOOL_BTN_BASE = "flex h-9 items-center gap-1.5 rounded-md px-2.5 text-sm transition";
+const SEG = "inline-flex rounded-lg border border-border p-0.5 text-xs";
+const segBtn = (on: boolean) =>
+  `rounded-md px-2 py-1 transition ${on ? "bg-foreground text-background" : "text-muted hover:text-foreground"}`;
+const SECTION = "mb-1.5 text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted";
+const DANGER_BTN = "w-full rounded-md border border-border px-3 py-1.5 text-sm text-red-500 hover:border-red-500";
 
 type DragState =
   | { mode: "point"; id: string }
@@ -77,6 +76,7 @@ export function GraphEditor({
   const [cursor, setCursor] = useState<{ px: number; py: number; mx: number; my: number; snap: SnapTarget | null } | null>(null);
   const [funcExpr, setFuncExpr] = useState("sin(x)");
   const [funcDomain, setFuncDomain] = useState<[string, string]>(["", ""]);
+  const [histLen, setHistLen] = useState(0); // mirrors history.current.length for render
 
   const drag = useRef<DragState | null>(null);
   const dragSnapshot = useRef<GraphData | null>(null); // pre-drag snapshot (undo + rotate base)
@@ -98,6 +98,7 @@ export function GraphEditor({
   const pushHistory = (snapshot: GraphData) => {
     history.current.push(snapshot);
     if (history.current.length > 80) history.current.shift();
+    setHistLen(history.current.length);
   };
 
   /** Commit a single-step change, recording history for undo. */
@@ -123,6 +124,7 @@ export function GraphEditor({
   const undo = useCallback(() => {
     const prev = history.current.pop();
     if (prev) {
+      setHistLen(history.current.length);
       setData(prev);
       setPending([]);
       setSelected(null);
@@ -132,7 +134,13 @@ export function GraphEditor({
 
   const isDirty = useCallback(() => JSON.stringify(data) !== JSON.stringify(baseline.current), [data]);
   const requestClose = useCallback(() => {
-    if (!isDirty() || window.confirm("Discard unsaved changes to this graph?")) onClose();
+    if (!isDirty()) { onClose(); return; }
+    void uiConfirm({
+      title: "Discard changes",
+      message: "Discard unsaved changes to this graph?",
+      confirmLabel: "Discard",
+      danger: true,
+    }).then((ok) => { if (ok) onClose(); });
   }, [isDirty, onClose]);
 
   // ── keyboard: Esc cancels pending/closes, Del removes selection, Cmd/Ctrl+Z undo
@@ -419,9 +427,12 @@ export function GraphEditor({
     setTool("select"); // function is not a sticky tool
   }
 
-  function setView(patch: Partial<GraphData["view"]>) {
+  /** Returns false (rejecting the edit) when the patch would invert the view. */
+  function setView(patch: Partial<GraphData["view"]>): boolean {
     const v = { ...data.view, ...patch };
-    if (v.xmax > v.xmin && v.ymax > v.ymin) apply({ ...data, view: v });
+    if (!(v.xmax > v.xmin && v.ymax > v.ymin)) return false;
+    apply({ ...data, view: v });
+    return true;
   }
 
   function setCoords(c: CoordSystem) {
@@ -456,17 +467,21 @@ export function GraphEditor({
   const hint = HINTS[tool];
 
   return (
-    <div className="print-hide fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4" onClick={requestClose}>
+    <div className="print-hide fixed inset-0 z-50 flex items-start justify-center bg-foreground/25 p-4" onClick={requestClose}>
       <div
         className="mt-6 flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* header */}
-        <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
-          <h2 className="text-sm font-medium">{initial ? "Edit graph" : "Insert a graph"}</h2>
-          <div className="flex items-center gap-2">
-            <button onClick={undo} title="Undo (⌘Z)" className="rounded-md border border-border px-2 py-1 text-sm text-muted hover:border-accent disabled:opacity-40" disabled={history.current.length === 0}>↶ Undo</button>
-            <button onClick={requestClose} className="px-1 text-muted hover:text-foreground" title="Cancel (Esc)">✕</button>
+        <div className="flex items-center justify-between border-b border-border-soft px-5 py-4">
+          <h2 className="text-base font-semibold">{initial ? "Edit graph" : "Insert a graph"}</h2>
+          <div className="flex items-center gap-1">
+            <button onClick={undo} title="Undo (⌘Z)" aria-label="Undo" className={HEAD_BTN} disabled={histLen === 0}>
+              <Icon name="undo" size={18} />
+            </button>
+            <button onClick={requestClose} title="Cancel (Esc)" aria-label="Close" className={HEAD_BTN}>
+              <Icon name="close" size={16} />
+            </button>
           </div>
         </div>
 
@@ -477,20 +492,20 @@ export function GraphEditor({
               key={t.id}
               onClick={() => { cancelConstruction(); setTool(t.id); }}
               title={t.label}
-              className={`flex h-9 items-center gap-1.5 rounded-md border px-2.5 text-sm ${
-                tool === t.id ? "border-accent bg-accent/10 text-accent" : "border-border hover:border-accent"
-              }`}
+              aria-label={t.label}
+              aria-pressed={tool === t.id}
+              className={`${TOOL_BTN_BASE} ${tool === t.id ? "bg-accent-soft text-accent" : HEAD_BTN_HOVER}`}
             >
-              <span className="text-base leading-none">{t.glyph}</span>
+              <Icon name={t.icon} size={18} />
               <span className="hidden sm:inline">{t.label.split(" ")[0]}</span>
             </button>
           ))}
-          <span className="mx-1 h-6 w-px bg-border" />
+          <span className="mx-1 h-7 w-px bg-border" />
           <span className="text-xs text-muted">Line</span>
           {SHAPE_PALETTE.map((c) => (
             <button key={c} onClick={() => applyLine(c)} title={c} className={`h-6 w-6 rounded-full border-2 ${drawColor === c ? "border-foreground" : "border-transparent"}`} style={{ background: c }} />
           ))}
-          <input type="color" value={drawColor} onChange={(e) => applyLine(e.target.value)} title="Custom line color" className="h-7 w-7 cursor-pointer rounded border border-border bg-transparent p-0" />
+          <input type="color" value={drawColor} onChange={(e) => applyLine(e.target.value)} title="Custom line color" className="h-7 w-7 cursor-pointer rounded-md border border-border bg-transparent p-0" />
         </div>
 
         <div className="flex min-h-0 flex-1">
@@ -509,9 +524,7 @@ export function GraphEditor({
                 className="mx-auto block touch-none rounded-md border border-border bg-surface text-foreground"
                 style={{ cursor: tool === "select" ? "default" : "crosshair" }}
               >
-                <g>{scene.grid.map((g, i) => renderItem(g, `g${i}`))}</g>
-                <g>{scene.axes.map((a, i) => renderItem(a, `a${i}`))}</g>
-                <g>{scene.labels.map((l, i) => renderLabel(l, `l${i}`))}</g>
+                <SceneBase scene={scene} />
                 <g>
                   {scene.shapes.map((s, i) => (
                     <g key={`s${i}`}>
@@ -555,10 +568,10 @@ export function GraphEditor({
           <div className="w-64 shrink-0 space-y-4 overflow-y-auto border-l border-border p-3 text-sm">
             {/* coordinate system + view */}
             <section>
-              <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted">Coordinates</h3>
-              <div className="mb-2 inline-flex overflow-hidden rounded border border-border text-xs">
+              <h3 className={SECTION}>Coordinates</h3>
+              <div className={`mb-2 ${SEG}`}>
                 {([["none", "No coordinate"], ["rect", "Rectangular"], ["polar", "Polar"]] as Array<[CoordSystem, string]>).map(([c, lbl]) => (
-                  <button key={c} onClick={() => setCoords(c)} className={`px-2 py-1 ${data.coords === c ? "bg-accent text-white" : "hover:bg-foreground/5"}`}>
+                  <button key={c} onClick={() => setCoords(c)} className={segBtn(data.coords === c)}>
                     {lbl}
                   </button>
                 ))}
@@ -569,14 +582,16 @@ export function GraphEditor({
                     <NumField label="horiz" value={data.gridCols} onCommit={(v) => v >= 1 && apply({ ...data, gridCols: Math.round(v) })} />
                     <NumField label="vert" value={data.gridRows} onCommit={(v) => v >= 1 && apply({ ...data, gridRows: Math.round(v) })} />
                   </div>
-                  <div className="mt-2 inline-flex overflow-hidden rounded border border-border text-xs">
+                  <div className={`mt-2 ${SEG}`}>
                     {([["complete", "Complete grid"], ["open", "Open edges"]] as Array<[GraphData["gridFill"], string]>).map(([f, lbl]) => (
-                      <button key={f} onClick={() => apply({ ...data, gridFill: f })} className={`px-2 py-1 ${data.gridFill === f ? "bg-accent text-white" : "hover:bg-foreground/5"}`}>
+                      <button key={f} onClick={() => apply({ ...data, gridFill: f })} className={segBtn(data.gridFill === f)}>
                         {lbl}
                       </button>
                     ))}
                   </div>
-                  <label className="mt-2 flex items-center gap-1 text-xs"><input type="checkbox" checked={data.showGrid} onChange={(e) => apply({ ...data, showGrid: e.target.checked })} /> show grid</label>
+                  <label className="mt-2 flex items-center gap-1.5 text-xs">
+                    <Toggle on={data.showGrid} onClick={() => apply({ ...data, showGrid: !data.showGrid })} /> show grid
+                  </label>
                   <p className="mt-1.5 text-[11px] leading-snug text-muted">A blank cols × rows grid (no axes). “Open edges” adds partial outer cells that aren’t counted; turn the grid off for a fully blank canvas.</p>
                 </>
               ) : (
@@ -588,10 +603,16 @@ export function GraphEditor({
                     <NumField label="y max" value={data.view.ymax} onCommit={(v) => setView({ ymax: v })} />
                     <NumField label="grid" value={data.gridStep} onCommit={(v) => v > 0 && apply({ ...data, gridStep: v })} />
                   </div>
-                  <div className="mt-2 grid grid-cols-2 gap-1 text-xs">
-                    <label className="flex items-center gap-1"><input type="checkbox" checked={data.showGrid} onChange={(e) => apply({ ...data, showGrid: e.target.checked })} /> grid</label>
-                    <label className="flex items-center gap-1"><input type="checkbox" checked={data.showNumbers} onChange={(e) => apply({ ...data, showNumbers: e.target.checked })} /> numbers</label>
-                    <label className="flex items-center gap-1"><input type="checkbox" checked={data.axisArrows} onChange={(e) => apply({ ...data, axisArrows: e.target.checked })} /> arrows</label>
+                  <div className="mt-2 grid grid-cols-2 gap-1.5 text-xs">
+                    <label className="flex items-center gap-1.5">
+                      <Toggle on={data.showGrid} onClick={() => apply({ ...data, showGrid: !data.showGrid })} /> grid
+                    </label>
+                    <label className="flex items-center gap-1.5">
+                      <Toggle on={data.showNumbers} onClick={() => apply({ ...data, showNumbers: !data.showNumbers })} /> numbers
+                    </label>
+                    <label className="flex items-center gap-1.5">
+                      <Toggle on={data.axisArrows} onClick={() => apply({ ...data, axisArrows: !data.axisArrows })} /> arrows
+                    </label>
                   </div>
                 </>
               )}
@@ -600,24 +621,24 @@ export function GraphEditor({
             {/* function entry */}
             {tool === "function" && (
               <section>
-                <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted">
+                <h3 className={SECTION}>
                   {data.coords === "polar" ? "r(θ) =" : "y = f(x)"}
                 </h3>
                 <input
                   value={funcExpr}
                   onChange={(e) => setFuncExpr(e.target.value)}
                   placeholder={data.coords === "polar" ? "1 + cos(theta)" : "sin(x)"}
-                  className={`w-full rounded border bg-background px-2 py-1 font-mono text-sm outline-none ${
+                  className={`w-full rounded-md border bg-background px-2 py-1 font-mono text-sm outline-none ${
                     isValidExpr(funcExpr, ["x", "theta", "t"]) ? "border-border focus:border-accent" : "border-red-500"
                   }`}
                 />
                 <div className="mt-1.5 flex items-center gap-1 text-xs">
                   <span className="text-muted">domain</span>
-                  <input value={funcDomain[0]} onChange={(e) => setFuncDomain([e.target.value, funcDomain[1]])} placeholder="auto" className="w-14 rounded border border-border bg-background px-1 text-center" />
-                  <span className="text-muted">→</span>
-                  <input value={funcDomain[1]} onChange={(e) => setFuncDomain([funcDomain[0], e.target.value])} placeholder="auto" className="w-14 rounded border border-border bg-background px-1 text-center" />
+                  <input value={funcDomain[0]} onChange={(e) => setFuncDomain([e.target.value, funcDomain[1]])} placeholder="auto" className="w-14 rounded-md border border-border bg-background px-1 text-center outline-none focus:border-accent" />
+                  <Icon name="moveright" size={13} className="shrink-0 text-muted" />
+                  <input value={funcDomain[1]} onChange={(e) => setFuncDomain([funcDomain[0], e.target.value])} placeholder="auto" className="w-14 rounded-md border border-border bg-background px-1 text-center outline-none focus:border-accent" />
                 </div>
-                <button onClick={addFunction} className="mt-2 w-full rounded-md bg-accent px-2 py-1 text-sm font-medium text-white disabled:opacity-40" disabled={!isValidExpr(funcExpr, ["x", "theta", "t"])}>Plot</button>
+                <button onClick={addFunction} className="mt-2 w-full rounded-md bg-accent px-2 py-1 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50" disabled={!isValidExpr(funcExpr, ["x", "theta", "t"])}>Plot</button>
                 <p className="mt-1 text-[11px] leading-snug text-muted">Use x{data.coords === "polar" ? " or theta" : ""}, +−×÷, ^, sin, cos, sqrt, ln, pi…</p>
               </section>
             )}
@@ -625,12 +646,14 @@ export function GraphEditor({
             {/* selected point */}
             {selPoint && (
               <section>
-                <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted">Point</h3>
+                <h3 className={SECTION}>Point</h3>
                 <label className="mb-1.5 flex items-center gap-2">
                   <span className="text-muted">Name</span>
-                  <input value={selPoint.name ?? ""} onChange={(e) => updatePoint(selPoint.id, { name: e.target.value || undefined })} className="w-full rounded border border-border bg-background px-2 py-0.5" />
+                  <input value={selPoint.name ?? ""} onChange={(e) => updatePoint(selPoint.id, { name: e.target.value || undefined })} className="w-full rounded-md border border-border bg-background px-2 py-0.5 outline-none focus:border-accent" />
                 </label>
-                <label className="mb-2 flex items-center gap-1 text-xs"><input type="checkbox" checked={selPoint.showName ?? !!selPoint.name} onChange={(e) => updatePoint(selPoint.id, { showName: e.target.checked })} /> show label</label>
+                <label className="mb-2 flex items-center gap-1.5 text-xs">
+                  <Toggle on={selPoint.showName ?? !!selPoint.name} onClick={() => updatePoint(selPoint.id, { showName: !(selPoint.showName ?? !!selPoint.name) })} /> show label
+                </label>
                 {selPoint.mid ? (
                   <p className="text-xs text-muted">Midpoint (auto-updates).</p>
                 ) : (
@@ -639,16 +662,16 @@ export function GraphEditor({
                     <NumField label="y" value={selPoint.y ?? 0} onCommit={(v) => updatePoint(selPoint.id, { y: v })} />
                   </div>
                 )}
-                <button onClick={removeSelected} className="mt-2 w-full rounded-md border border-border px-2 py-1 text-xs text-red-500 hover:border-red-500">Delete point</button>
+                <button onClick={removeSelected} className={`mt-2 ${DANGER_BTN}`}>Delete point</button>
               </section>
             )}
 
             {/* selected shape */}
             {selShape && (
               <section>
-                <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted capitalize">{selShape.kind}</h3>
+                <h3 className={SECTION}>{selShape.kind}</h3>
                 {selShape.kind === "function" && (
-                  <input value={selShape.expr} onChange={(e) => updateShape(selShape.id, { expr: e.target.value } as Partial<GShape>)} className="mb-2 w-full rounded border border-border bg-background px-2 py-1 font-mono text-sm" />
+                  <input value={selShape.expr} onChange={(e) => updateShape(selShape.id, { expr: e.target.value } as Partial<GShape>)} className="mb-2 w-full rounded-md border border-border bg-background px-2 py-1 font-mono text-sm outline-none focus:border-accent" />
                 )}
                 {selShape.kind === "ellipse" && (
                   <div className="mb-2 grid grid-cols-2 gap-1.5">
@@ -665,7 +688,7 @@ export function GraphEditor({
                     onClear={() => updateShape(selShape.id, { fillColor: undefined } as Partial<GShape>)}
                   />
                 )}
-                <button onClick={removeSelected} className="w-full rounded-md border border-border px-2 py-1 text-xs text-red-500 hover:border-red-500">Delete shape</button>
+                <button onClick={removeSelected} className={DANGER_BTN}>Delete shape</button>
               </section>
             )}
           </div>
@@ -684,12 +707,12 @@ export function GraphEditor({
               if (snap && snap.caption !== data.caption) pushHistory(snap);
             }}
             placeholder="Caption (optional)…"
-            className="w-56 rounded border border-border bg-background px-2 py-1 text-sm outline-none focus:border-accent"
+            className="w-56 rounded-md border border-border bg-background px-2 py-1 text-sm outline-none focus:border-accent"
           />
           <span className="hidden text-xs text-muted sm:inline">{data.points.length} pt · {data.shapes.length} shape</span>
           <div className="ml-auto flex gap-2">
             <button onClick={requestClose} className="rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent">Cancel</button>
-            <button onClick={() => onPick(data)} className="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white">{initial ? "Save" : "Insert"}</button>
+            <button onClick={() => onPick(data)} className="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white hover:opacity-90">{initial ? "Save" : "Insert"}</button>
           </div>
         </div>
       </div>
@@ -697,28 +720,31 @@ export function GraphEditor({
   );
 }
 
-const HINTS: Record<ToolId, string> = {
-  select: "Click a point or shape to select. Drag a point to reshape; drag the round handle above a shape to rotate it. Vertices snap to the grid and other points.",
-  point: "Click to drop a point. It snaps to the grid, existing points, and side midpoints.",
-  segment: "Click two points. Endpoints snap to existing points and midpoints (draw medians exactly).",
-  line: "Click two points to define an infinite line (clipped to the view).",
-  triangle: "Click three vertices.",
-  rectangle: "Drag from one corner to the opposite corner and release. Axis-aligned by default — rotate it later with the Select tool.",
-  circle: "Click the center, then a point on the circle.",
-  ellipse: "Click the center, then a point setting the x- and y-radii.",
-  parabola: "Click the vertex, then a point the parabola passes through.",
-  function: "Type an equation in the panel and press Plot.",
-};
-
 // ─── small components ─────────────────────────────────────────────────────────
 
-function NumField({ label, value, onCommit }: { label: string; value: number; onCommit: (v: number) => void }) {
+/** A Graphite toggle switch (same markup as SettingsDialog's). */
+function Toggle({ on, onClick }: { on: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      onClick={onClick}
+      className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${on ? "bg-accent" : "bg-border"}`}
+    >
+      <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-all ${on ? "left-[18px]" : "left-0.5"}`} />
+    </button>
+  );
+}
+
+/** Numeric field committed on blur/Enter. `onCommit` may return false to reject
+ *  the value, which resets the text back to the model's current value. */
+function NumField({ label, value, onCommit }: { label: string; value: number; onCommit: (v: number) => boolean | void }) {
   const [text, setText] = useState(String(value));
   useEffect(() => setText(String(value)), [value]);
   const commit = () => {
     const v = parseFloat(text);
-    if (Number.isFinite(v)) onCommit(v);
-    else setText(String(value));
+    if (!Number.isFinite(v) || onCommit(v) === false) setText(String(value));
   };
   return (
     <label className="flex items-center gap-1 text-xs">
@@ -728,7 +754,7 @@ function NumField({ label, value, onCommit }: { label: string; value: number; on
         onChange={(e) => setText(e.target.value)}
         onBlur={commit}
         onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-        className="w-full rounded border border-border bg-background px-1 py-0.5 text-center outline-none focus:border-accent"
+        className="w-full rounded-md border border-border bg-background px-1 py-0.5 text-center outline-none focus:border-accent"
       />
     </label>
   );
@@ -745,7 +771,7 @@ function ColorField({ label, value, onChange, onClear }: { label: string; value?
           {onClear && (
             <button onClick={onClear} className={`rounded border px-1 text-[10px] ${value ? "border-border text-muted hover:border-accent" : "border-accent text-accent"}`}>none</button>
           )}
-          <input type="color" value={hex} onChange={(e) => onChange(e.target.value)} title={`Custom ${label.toLowerCase()} color`} className="h-6 w-6 cursor-pointer rounded border border-border bg-transparent p-0" />
+          <input type="color" value={hex} onChange={(e) => onChange(e.target.value)} title={`Custom ${label.toLowerCase()} color`} className="h-6 w-6 cursor-pointer rounded-md border border-border bg-transparent p-0" />
         </span>
       </div>
       <div className="flex flex-wrap gap-1.5">
@@ -758,7 +784,7 @@ function ColorField({ label, value, onChange, onClear }: { label: string; value?
 }
 
 /** A translucent accent underlay marking the selected shape. */
-function Highlight({ item }: { item: ReturnType<typeof buildScene>["shapes"][number] }) {
+function Highlight({ item }: { item: SceneItem }) {
   if (item.t === "ellipse") {
     return <ellipse cx={item.cx} cy={item.cy} rx={item.rx} ry={item.ry} fill="none" stroke="var(--accent)" strokeWidth={6} opacity={0.25} />;
   }
@@ -768,223 +794,4 @@ function Highlight({ item }: { item: ReturnType<typeof buildScene>["shapes"][num
   ) : (
     <polyline points={d} fill="none" stroke="var(--accent)" strokeWidth={6} opacity={0.25} />
   );
-}
-
-// ─── pure helpers ─────────────────────────────────────────────────────────────
-
-function samePair(a: [string, string], b: [string, string]): boolean {
-  return (a[0] === b[0] && a[1] === b[1]) || (a[0] === b[1] && a[1] === b[0]);
-}
-
-/** Which shapes can be rotated (point-based shapes + the ellipse via its rot field). */
-function rotatable(s: GShape): boolean {
-  return s.kind === "segment" || s.kind === "line" || s.kind === "polygon" || s.kind === "ellipse";
-}
-
-/** The free-point ids a rotation should transform (ellipse rotates via its rot field). */
-function rotatablePointIds(s: GShape): string[] {
-  switch (s.kind) {
-    case "segment":
-    case "line":
-      return [s.a, s.b];
-    case "polygon":
-      return s.pts;
-    default:
-      return [];
-  }
-}
-
-/** The pivot a shape rotates about (centroid of its defining points / its center). */
-function shapeCentroid(data: GraphData, s: GShape): [number, number] | null {
-  let pts: Array<[number, number]> = [];
-  switch (s.kind) {
-    case "segment":
-    case "line": {
-      const a = resolvePoint(data, s.a);
-      const b = resolvePoint(data, s.b);
-      if (a && b) pts = [a, b];
-      break;
-    }
-    case "polygon":
-      pts = s.pts.map((id) => resolvePoint(data, id)).filter((p): p is [number, number] => !!p);
-      break;
-    case "circle":
-    case "ellipse":
-      return resolvePoint(data, s.c);
-    default:
-      return null;
-  }
-  if (pts.length === 0) return null;
-  return [pts.reduce((a, p) => a + p[0], 0) / pts.length, pts.reduce((a, p) => a + p[1], 0) / pts.length];
-}
-
-/** Rotate a shape's free points about `c` by `delta` rad (ellipse: bump its rot). */
-function rotateShapeData(base: GraphData, ids: string[], ellipseId: string | null, c: [number, number], delta: number): GraphData {
-  const cos = Math.cos(delta);
-  const sin = Math.sin(delta);
-  const points = base.points.map((p) => {
-    if (ids.includes(p.id) && p.mid == null && typeof p.x === "number" && typeof p.y === "number") {
-      const dx = p.x - c[0];
-      const dy = p.y - c[1];
-      return { ...p, x: c[0] + dx * cos - dy * sin, y: c[1] + dx * sin + dy * cos };
-    }
-    return p;
-  });
-  const shapes = ellipseId
-    ? base.shapes.map((s) => (s.id === ellipseId && s.kind === "ellipse" ? { ...s, rot: (s.rot ?? 0) + delta } : s))
-    : base.shapes;
-  return { ...base, points, shapes };
-}
-
-function nextName(points: GPoint[]): string {
-  const used = new Set(points.map((p) => p.name).filter(Boolean));
-  for (let i = 0; i < 26; i++) {
-    const n = String.fromCharCode(65 + i);
-    if (!used.has(n)) return n;
-  }
-  for (let k = 1; ; k++) {
-    for (let i = 0; i < 26; i++) {
-      const n = String.fromCharCode(65 + i) + k;
-      if (!used.has(n)) return n;
-    }
-  }
-}
-
-function buildShape(tool: ToolId, ids: string[], color: string): GShape | null {
-  const id = newGraphId();
-  switch (tool) {
-    case "segment":
-      return { id, kind: "segment", a: ids[0], b: ids[1], color };
-    case "line":
-      return { id, kind: "line", a: ids[0], b: ids[1], color };
-    case "triangle":
-      return { id, kind: "polygon", pts: [ids[0], ids[1], ids[2]], color };
-    case "circle":
-      return { id, kind: "circle", c: ids[0], through: ids[1], color };
-    case "parabola":
-      return { id, kind: "parabola", vertex: ids[0], through: ids[1], color };
-    default:
-      return null;
-  }
-}
-
-/** Remove a point and everything that depends on it (derived points + shapes). */
-function deletePoint(data: GraphData, id: string): GraphData {
-  // Transitively collect derived points that reference the removed point(s).
-  const dead = new Set<string>([id]);
-  let grew = true;
-  while (grew) {
-    grew = false;
-    for (const p of data.points) {
-      if (!dead.has(p.id) && p.mid && (dead.has(p.mid[0]) || dead.has(p.mid[1]))) {
-        dead.add(p.id);
-        grew = true;
-      }
-    }
-  }
-  const points = data.points.filter((p) => !dead.has(p.id));
-  const shapes = data.shapes.filter((s) => !shapeUsesAny(s, dead));
-  return { ...data, points, shapes };
-}
-
-function shapeUsesAny(s: GShape, ids: Set<string>): boolean {
-  switch (s.kind) {
-    case "segment":
-    case "line":
-      return ids.has(s.a) || ids.has(s.b);
-    case "polygon":
-      return s.pts.some((p) => ids.has(p));
-    case "circle":
-      return ids.has(s.c) || ids.has(s.through);
-    case "ellipse":
-      return ids.has(s.c);
-    case "parabola":
-      return ids.has(s.vertex) || ids.has(s.through);
-    case "function":
-      return false;
-  }
-}
-
-/** Hit-test a click against points (first) then shapes, using the rendered scene. */
-function hitTest(scene: ReturnType<typeof buildScene>, px: number, py: number): Selection {
-  for (const p of scene.points) {
-    if (Math.hypot(p.px - px, p.py - py) <= HIT_PX) return { kind: "point", id: p.id };
-  }
-  let best: { id: string; d: number } | null = null;
-  for (const s of scene.shapes) {
-    if (!s.shapeId) continue;
-    const d = distToItem(s, px, py);
-    if (d <= HIT_PX && (!best || d < best.d)) best = { id: s.shapeId, d };
-  }
-  return best ? { kind: "shape", id: best.id } : null;
-}
-
-function distToItem(item: ReturnType<typeof buildScene>["shapes"][number], px: number, py: number): number {
-  if (item.t === "ellipse") {
-    const nx = (px - item.cx) / (item.rx || 1);
-    const ny = (py - item.cy) / (item.ry || 1);
-    const t = Math.hypot(nx, ny);
-    return Math.abs(t - 1) * Math.min(item.rx, item.ry);
-  }
-  let min = Infinity;
-  const pts = item.pts;
-  const n = item.closed ? pts.length : pts.length - 1;
-  for (let i = 0; i < n; i++) {
-    const a = pts[i];
-    const b = pts[(i + 1) % pts.length];
-    min = Math.min(min, distToSegment(px, py, a[0], a[1], b[0], b[1]));
-  }
-  return min;
-}
-
-function distToSegment(px: number, py: number, x1: number, y1: number, x2: number, y2: number): number {
-  const dx = x2 - x1;
-  const dy = y2 - y1;
-  const len2 = dx * dx + dy * dy;
-  if (len2 === 0) return Math.hypot(px - x1, py - y1);
-  let t = ((px - x1) * dx + (py - y1) * dy) / len2;
-  t = Math.max(0, Math.min(1, t));
-  return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
-}
-
-/** Build dashed rubber-band primitives from the in-progress points + cursor. */
-function previewPrims(
-  data: GraphData,
-  proj: ReturnType<typeof makeProj>,
-  tool: ToolId,
-  pending: string[],
-  cursor: { mx: number; my: number; snap: SnapTarget | null },
-): ReturnType<typeof buildScene>["shapes"] {
-  const cx = cursor.snap ? cursor.snap.x : cursor.mx;
-  const cy = cursor.snap ? cursor.snap.y : cursor.my;
-  const cpt = proj.toPx(cx, cy);
-  const anchors = pending.map((id) => resolvePoint(data, id)).filter((p): p is [number, number] => !!p);
-  const out: ReturnType<typeof buildScene>["shapes"] = [];
-  const stroke = "var(--accent)";
-  const line = (a: [number, number], b: [number, number]) => out.push({ t: "polyline", pts: [a, b], stroke, dash: true, width: 1.5 });
-
-  if (anchors.length === 0) return out;
-  const a0 = proj.toPx(...anchors[0]);
-
-  if (tool === "rectangle") {
-    const [ax, ay] = anchors[0];
-    const corners: Array<[number, number]> = [[ax, ay], [cx, ay], [cx, cy], [ax, cy]];
-    out.push({ t: "polyline", pts: corners.map((p) => proj.toPx(...p)), closed: true, stroke, dash: true, width: 1.5 });
-  } else if (tool === "circle") {
-    const r = Math.hypot(cx - anchors[0][0], cy - anchors[0][1]);
-    out.push({ t: "ellipse", cx: a0[0], cy: a0[1], rx: r * proj.sx, ry: r * proj.sy, stroke, width: 1.5 });
-  } else if (tool === "ellipse") {
-    const rx = Math.abs(cx - anchors[0][0]);
-    const ry = Math.abs(cy - anchors[0][1]);
-    out.push({ t: "ellipse", cx: a0[0], cy: a0[1], rx: rx * proj.sx, ry: ry * proj.sy, stroke, width: 1.5 });
-  } else if (tool === "parabola") {
-    for (const poly of parabolaPolyline(data.view, anchors[0], [cx, cy])) {
-      out.push({ t: "polyline", pts: poly.map((p) => proj.toPx(...p)), stroke, dash: true, width: 1.5 });
-    }
-  } else {
-    // segment / line / triangle: chain anchors then to the cursor
-    for (let i = 0; i < anchors.length - 1; i++) line(proj.toPx(...anchors[i]), proj.toPx(...anchors[i + 1]));
-    line(proj.toPx(...anchors[anchors.length - 1]), cpt);
-  }
-  return out;
 }

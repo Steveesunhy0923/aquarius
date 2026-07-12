@@ -1,9 +1,12 @@
 "use client";
 
+import { Icon } from "@/components/Icon";
 import { Katex } from "@/components/Katex";
 import { previewLatex } from "@/lib/blocks/source";
 import { SYMBOLS, type SymbolEntry } from "@/lib/symbols";
 import { useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
+
+const CLOSE_BTN = "grid h-8 w-8 place-items-center rounded-md text-muted hover:bg-foreground/[0.05] hover:text-foreground";
 
 /**
  * Modal that browses the symbol/function library, grouped by category, and
@@ -86,44 +89,55 @@ export function SymbolPicker({
 
   return (
     <div
-      className="print-hide fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-6"
+      className="print-hide fixed inset-0 z-50 flex items-start justify-center bg-foreground/25 p-6"
       onClick={onClose}
     >
       <div
         className="mt-12 flex max-h-[78vh] w-full max-w-2xl flex-col rounded-xl border border-border bg-surface shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center gap-3 border-b border-border p-3">
-          <span className="text-sm font-medium">{title}</span>
-          <input
-            autoFocus={autoFocusSearch}
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            onMouseDown={onNavMouseDown}
-            placeholder="Search… (e.g. alpha, leq, arrow, integral)"
-            className="flex-1 rounded-md border border-border bg-background px-2 py-1 text-sm outline-none focus:border-accent"
-          />
+        <div className="flex items-center gap-3 border-b border-border-soft px-5 py-4">
+          <h2 className="shrink-0 text-base font-semibold">{title}</h2>
+          <div className="relative min-w-0 flex-1">
+            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted">
+              <Icon name="search" size={16} />
+            </span>
+            <input
+              autoFocus={autoFocusSearch}
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              onMouseDown={onNavMouseDown}
+              placeholder="Search… (e.g. alpha, leq, arrow, integral)"
+              className="w-full rounded-lg border border-border bg-background py-2 pl-9 pr-8 text-sm outline-none focus:border-accent"
+            />
+            {q && (
+              <button
+                onMouseDown={keepFocus}
+                onClick={() => setQ("")}
+                aria-label="Clear search"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-foreground"
+              >
+                <Icon name="clearsearch" size={16} />
+              </button>
+            )}
+          </div>
           <span className="text-xs text-muted">{total}</span>
-          <button
-            onClick={onClose}
-            className="px-1 text-muted hover:text-foreground"
-            title="Close (Esc)"
-          >
-            ✕
+          <button onClick={onClose} className={CLOSE_BTN} title="Close (Esc)" aria-label="Close">
+            <Icon name="close" size={16} />
           </button>
         </div>
 
         {/* Category chips */}
-        <div className="flex flex-wrap gap-1 border-b border-border px-3 py-2">
+        <div className="flex flex-wrap gap-1 border-b border-border-soft px-3 py-2">
           {["All", ...categories].map((c) => (
             <button
               key={c}
               onMouseDown={keepFocus}
               onClick={() => setCat(c)}
-              className={`rounded-full px-2.5 py-0.5 text-xs transition ${
+              className={`rounded-full border px-2.5 py-0.5 text-xs transition ${
                 cat === c
-                  ? "bg-accent text-white"
-                  : "border border-border text-muted hover:border-accent"
+                  ? "border-transparent bg-accent-soft text-accent"
+                  : "border-border text-muted hover:border-accent"
               }`}
             >
               {c}
@@ -134,7 +148,7 @@ export function SymbolPicker({
         <div className="overflow-y-auto p-3">
           {groups.map((g) => (
             <section key={g.category} className="mb-4 last:mb-0">
-              <h3 className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted">
+              <h3 className="mb-1.5 text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted">
                 {g.category}
               </h3>
               <div className="grid grid-cols-[repeat(auto-fill,minmax(118px,1fr))] gap-1">

@@ -1,0 +1,7 @@
+torch
+numpy
+pillow
+fastapi
+uvicorn[standard]
+tqdm
+requests

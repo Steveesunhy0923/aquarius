@@ -19,14 +19,14 @@ export function TemplateApplyDialog({
 }) {
   const [dontAsk, setDontAsk] = useState(false);
   return (
-    <div className="fixed inset-0 z-[60] grid place-items-center bg-black/40 p-4" onClick={onCancel}>
-      <div className="w-full max-w-sm rounded-xl border border-border bg-surface p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-[60] grid place-items-center bg-foreground/25 p-4" onClick={onCancel}>
+      <div className="w-full max-w-sm rounded-xl border border-border bg-surface p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <h2 className="text-base font-semibold">Add the template to your document?</h2>
         <p className="mt-2 text-sm text-muted">
           This note already has content. Choose <b>Yes</b> to add the template to it, or <b>No</b> to discard everything and start fresh from the template.
         </p>
         <label className="mt-3 flex items-center gap-2 text-sm text-muted">
-          <input type="checkbox" checked={dontAsk} onChange={(e) => setDontAsk(e.target.checked)} />
+          <input type="checkbox" checked={dontAsk} onChange={(e) => setDontAsk(e.target.checked)} className="h-4 w-4 accent-accent" />
           Don’t show this again
         </label>
         <div className="mt-4 flex items-center justify-end gap-2">

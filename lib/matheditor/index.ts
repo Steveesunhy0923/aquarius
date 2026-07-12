@@ -6,3 +6,4 @@
 export * from "./model";
 export * from "./nav";
 export * from "./ops";
+export * from "./structural";

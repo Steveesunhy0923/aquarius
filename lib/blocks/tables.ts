@@ -6,7 +6,7 @@
 
 import { escapeLatex } from "./captions";
 import type { ImageAlign } from "./images";
-import { hasPlacement, placedRowToLatex } from "./placement";
+import { hasPlacement, linewidthLen, placedRowToLatex } from "./placement";
 import type { Block, Placement } from "@/lib/blocks/types";
 
 export type TableStyle =
@@ -173,7 +173,7 @@ export function tableRowToLatex(tables: TableData[], align: ImageAlign, offset?:
 
   // Legacy free horizontal position for a single uncaptioned table (in-flow shift).
   if (typeof offset === "number" && offset > 0.001 && tables.length === 1 && !anyCaption) {
-    return `\\noindent\\hspace*{${parseFloat(Math.min(0.99, offset).toFixed(4))}\\linewidth}${tabularOf(tables[0])}`;
+    return `\\noindent\\hspace*{${linewidthLen(Math.min(0.99, offset))}}${tabularOf(tables[0])}`;
   }
 
   if (tables.length > 1 || anyCaption) {

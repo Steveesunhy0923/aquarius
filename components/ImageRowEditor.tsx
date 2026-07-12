@@ -2,8 +2,9 @@
 
 import type { ImageAlign, ImageItem } from "@/lib/blocks/images";
 import type { Placement } from "@/lib/blocks/types";
+import { AsyncImage, ImageEmpty } from "./AsyncImage";
+import { CaptionInput } from "./CaptionInput";
 import { FigureBox } from "./FigureBox";
-import { useAssetUrl } from "./useAssetUrl";
 
 /**
  * Editable image row: each picture is freely positioned within the block's box
@@ -31,13 +32,7 @@ export function ImageRowEditor({
   onMoveAcross: (fromIndex: number, toBlockId: string) => void;
   onCaption: (index: number, text: string) => void;
 }) {
-  if (items.length === 0) {
-    return (
-      <div className="rounded-lg border border-dashed border-border p-4 text-sm text-muted">
-        🖼 image (no source)
-      </div>
-    );
-  }
+  if (items.length === 0) return <ImageEmpty />;
   return (
     <FigureBox
       blockId={blockId}
@@ -54,37 +49,11 @@ export function ImageRowEditor({
         selected: selectedIndex === i,
         content: (
           <figure className={`m-0 flex flex-col items-center ${it.width ? "w-full" : ""}`}>
-            <Img item={it} />
-            <input
-              value={it.caption ?? ""}
-              placeholder="caption…"
-              onChange={(e) => onCaption(i, e.target.value)}
-              onPointerDown={(e) => e.stopPropagation()}
-              className="mt-1 w-full rounded border border-border bg-background px-2 py-0.5 text-center text-xs italic outline-none focus:border-accent"
-            />
+            <AsyncImage item={it} draggable={false} />
+            <CaptionInput value={it.caption ?? ""} onChange={(text) => onCaption(i, text)} />
           </figure>
         ),
       }))}
-    />
-  );
-}
-
-function Img({ item }: { item: ImageItem }) {
-  const url = useAssetUrl(item.assetId);
-  if (!url) {
-    return (
-      <div className="rounded-lg border border-dashed border-border p-4 text-sm text-muted">
-        Loading image…
-      </div>
-    );
-  }
-  // eslint-disable-next-line @next/next/no-img-element -- local object-URL blob
-  return (
-    <img
-      src={url}
-      alt={item.alt ?? ""}
-      draggable={false}
-      className={`block max-h-[480px] rounded-md ${item.width ? "w-full" : "max-w-full"}`}
     />
   );
 }

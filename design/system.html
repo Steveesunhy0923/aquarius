@@ -1,0 +1,245 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+:root{
+  --bg:#fbfbfd; --surface:#ffffff; --ink:#17171c; --muted:#8a8a93; --line:#ebebf0; --accent:#5b5bd6; --on-accent:#fff;
+  --radius:7px; --radius-sm:5px; --radius-lg:11px; --sw:1.6;
+  font-family: ui-sans-serif,-apple-system,"Segoe UI",Roboto,Inter,sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);padding:40px 44px;-webkit-font-smoothing:antialiased}
+h1{font-size:24px;font-weight:680;letter-spacing:-.02em;margin:0 0 3px}
+.lead{color:var(--muted);font-size:13.5px;margin:0 0 30px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-lg);padding:24px 26px;margin-bottom:22px}
+.lbl{font-size:10.5px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);font-weight:600;margin:0 0 14px}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.row + .lbl{margin-top:22px}
+
+/* tokens */
+.tok{display:flex;gap:14px;flex-wrap:wrap}
+.tok .s{display:flex;flex-direction:column;gap:7px;align-items:center}
+.tok .chip{width:50px;height:50px;border-radius:9px;border:1px solid rgba(0,0,0,.06)}
+.tok small{font-size:10px;color:var(--muted)}
+.tok b{font-size:10.5px;font-weight:600}
+
+/* type */
+.type div{margin:0}
+.t-d{font-size:30px;font-weight:700;letter-spacing:-.025em}
+.t-1{font-size:21px;font-weight:670;letter-spacing:-.02em;margin-top:8px}
+.t-2{font-size:16px;font-weight:640;margin-top:8px}
+.t-b{font-size:14px;line-height:1.55;margin-top:8px;max-width:60ch}
+.t-c{font-size:11.5px;color:var(--muted);margin-top:8px}
+.t-m{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:12.5px;margin-top:8px;color:var(--ink)}
+
+/* buttons */
+.btn{font-size:13px;font-weight:560;border-radius:var(--radius);padding:8px 15px;border:1px solid transparent;display:inline-flex;gap:8px;align-items:center;cursor:default;line-height:1}
+.btn.primary{background:var(--accent);color:var(--on-accent)}
+.btn.primary.hover{background:#4d49c4}
+.btn.secondary{background:transparent;border-color:var(--line);color:var(--ink)}
+.btn.secondary.hover{border-color:var(--ink)}
+.btn.ghost{color:var(--muted)}
+.btn.ghost.hover{background:rgba(0,0,0,.04);color:var(--ink)}
+.btn.danger{background:transparent;border-color:#e9d2d2;color:#c0392b}
+.btn.disabled{opacity:.4}
+.btn .ic{width:15px;height:15px}
+.iconbtn{width:34px;height:34px;border-radius:var(--radius);border:1px solid var(--line);display:inline-grid;place-items:center;color:var(--ink);background:var(--surface)}
+.iconbtn.hover{background:rgba(0,0,0,.04);border-color:transparent}
+.iconbtn.fill{background:var(--accent);color:var(--on-accent);border-color:transparent}
+.iconbtn .ic{width:18px;height:18px}
+
+/* inputs */
+.input{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:var(--radius);padding:8px 11px;background:var(--surface);font-size:13px;color:var(--ink);min-width:180px}
+.input.focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 14%,transparent)}
+.input .ic{width:16px;height:16px;color:var(--muted)}
+.input .ph{color:var(--muted)}
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;border:1px solid var(--line);border-radius:999px;padding:4px 10px;color:var(--ink)}
+.chip.accent{background:color-mix(in srgb,var(--accent) 12%,transparent);border-color:transparent;color:var(--accent)}
+.chip .x{width:11px;height:11px;color:var(--muted)}
+
+/* menu */
+.menu{width:210px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);padding:6px;box-shadow:0 8px 28px rgba(20,20,40,.10)}
+.mi{display:flex;align-items:center;gap:11px;padding:8px 9px;border-radius:var(--radius-sm);font-size:13px}
+.mi.on{background:rgba(0,0,0,.04)}
+.mi .ic{width:17px;height:17px;color:var(--ink)}
+.mi small{margin-left:auto;color:var(--muted);font-size:11px}
+.mdiv{height:1px;background:var(--line);margin:5px 4px}
+
+/* toolbar */
+.toolbar{display:inline-flex;gap:3px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:5px}
+.toolbar .iconbtn{width:31px;height:31px;border-color:transparent;background:transparent}
+.toolbar .iconbtn.act{background:color-mix(in srgb,var(--accent) 13%,transparent);color:var(--accent)}
+.toolbar .sep{width:1px;height:18px;background:var(--line);margin:0 4px}
+.toolbar .ic{width:18px;height:18px}
+
+/* note card */
+.card{width:230px;border:1px solid var(--line);border-radius:var(--radius-lg);background:var(--surface);overflow:hidden}
+.card .cover{height:96px;background:linear-gradient(135deg,#eef0fb,#f6f3fb);border-bottom:1px solid var(--line);position:relative}
+.card .cover .pin{position:absolute;left:14px;top:14px;font-size:11px;color:var(--accent);font-weight:600}
+.card .body{padding:13px 14px}
+.card .ct{font-size:14px;font-weight:620;letter-spacing:-.01em}
+.card .cm{font-size:11px;color:var(--muted);margin-top:3px}
+.card .tags{display:flex;gap:5px;margin-top:10px}
+
+/* icon grid */
+.cat{margin-top:6px}
+.cat .ch{font-size:10.5px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);font-weight:600;margin:18px 0 8px}
+.grid{display:grid;grid-template-columns:repeat(10,1fr);gap:4px}
+.cell{display:flex;flex-direction:column;align-items:center;gap:7px;padding:11px 4px;border-radius:var(--radius)}
+.cell:hover{background:rgba(0,0,0,.025)}
+.cell .ic,.cell .glyph{width:24px;height:24px;display:grid;place-items:center;color:var(--ink)}
+.cell .glyph{font-size:18px;font-weight:700;line-height:1}
+.glyph.ital{font-style:italic;font-weight:600;font-family:Georgia,serif}
+.glyph.ul{text-decoration:underline;text-underline-offset:2px}
+.glyph.strike{text-decoration:line-through}
+.cell small{font-size:9px;color:var(--muted);text-align:center;line-height:1.2}
+
+.ic svg{width:100%;height:100%}
+.ic svg :is(path,circle,rect,line,polyline,polygon){fill:none;stroke:currentColor;stroke-width:var(--sw);stroke-linecap:round;stroke-linejoin:round}
+.ic svg text{fill:currentColor;stroke:none;font-family:Georgia,"Times New Roman",serif}
+
+/* dark strip */
+.dark{--surface:#17171d;--ink:#ededf2;--muted:#9ca3af;--line:#2a2a35;--accent:#818cf8;--on-accent:#0e0e12;background:#0e0e12;border-color:#2a2a35}
+.dark .lbl{color:#9ca3af}
+</style></head>
+<body>
+<h1>Aquarius — Graphite design system</h1>
+<p class="lead">Direction A developed: tokens, type, components, and the full icon set (~40 actions, recognizable by shape). Light + dark.</p>
+
+<div class="panel">
+  <p class="lbl">Color tokens — light / dark</p>
+  <div class="tok" id="tok"></div>
+</div>
+
+<div class="panel">
+  <p class="lbl">Type scale</p>
+  <div class="type">
+    <div class="t-d">Aquarius</div>
+    <div class="t-1">The Mean Value Theorem</div>
+    <div class="t-2">Section heading</div>
+    <div class="t-b">If f is continuous on [a, b] and differentiable on (a, b), there exists a point c in (a, b) where f′(c) equals the average rate of change over the interval.</div>
+    <div class="t-c">Calculus · 4 notes · edited 2h ago</div>
+    <div class="t-m">f'(c) = ( f(b) − f(a) ) / ( b − a )</div>
+  </div>
+</div>
+
+<div class="panel">
+  <p class="lbl">Buttons — default · hover · disabled</p>
+  <div class="row" id="btns"></div>
+  <p class="lbl">Inputs · chips</p>
+  <div class="row">
+    <span class="input"><span class="ic" id="i-search"></span><span class="ph">Search title, tag, or content…</span></span>
+    <span class="input focus" style="min-width:150px"><span>Untitled note</span></span>
+    <span class="chip">Calculus <span class="x" id="i-x"></span></span>
+    <span class="chip accent">∫ integrals</span>
+  </div>
+  <p class="lbl">Menu · toolbar</p>
+  <div class="row" style="align-items:flex-start;gap:26px">
+    <div class="menu" id="menu"></div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div class="toolbar" id="toolbar"></div>
+      <div class="card"><div class="cover"><span class="pin">∑</span></div><div class="body"><div class="ct">Taylor series</div><div class="cm">edited 2h ago · 3 figures</div><div class="tags"><span class="chip">series</span><span class="chip">exam</span></div></div></div>
+    </div>
+  </div>
+</div>
+
+<div class="panel">
+  <p class="lbl">Full icon set — recognizable by shape</p>
+  <div id="icons"></div>
+</div>
+
+<div class="panel dark">
+  <p class="lbl">Dark mode — toolbar & buttons</p>
+  <div class="row" id="darkrow"></div>
+</div>
+
+<script>
+const TOK=[["bg","#fbfbfd","#0e0e12"],["surface","#ffffff","#17171d"],["ink","#17171c","#ededf2"],["muted","#8a8a93","#9ca3af"],["line","#ebebf0","#2a2a35"],["accent","#5b5bd6","#818cf8"]];
+const GLYPH={bold:['B',''],italic:['I','ital'],underline:['U','ul'],strike:['S','strike'],paragraph:['T',''],heading:['H','']};
+const I={
+ search:'<circle cx="11" cy="11" r="6"/><line x1="20" y1="20" x2="15.6" y2="15.6"/>',
+ clearsearch:'<circle cx="12" cy="12" r="8"/><line x1="9.5" y1="9.5" x2="14.5" y2="14.5"/><line x1="14.5" y1="9.5" x2="9.5" y2="14.5"/>',
+ settings:'<line x1="4" y1="8.5" x2="20" y2="8.5"/><line x1="4" y1="15.5" x2="20" y2="15.5"/><circle cx="9" cy="8.5" r="2.3"/><circle cx="15" cy="15.5" r="2.3"/>',
+ more:'<circle cx="5.5" cy="12" r="1.25" style="fill:currentColor"/><circle cx="12" cy="12" r="1.25" style="fill:currentColor"/><circle cx="18.5" cy="12" r="1.25" style="fill:currentColor"/>',
+ newnote:'<path d="M14 3.5H7.5A2 2 0 0 0 5.5 5.5v13A2 2 0 0 0 7.5 20.5h9a2 2 0 0 0 2-2V8z"/><path d="M14 3.5V8h4.5"/><line x1="12" y1="11.5" x2="12" y2="16.5"/><line x1="9.5" y1="14" x2="14.5" y2="14"/>',
+ import:'<line x1="12" y1="4" x2="12" y2="14.5"/><polyline points="8,11 12,15 16,11"/><line x1="5" y1="19" x2="19" y2="19"/>',
+ uploadcloud:'<path d="M7 17.5a3.6 3.6 0 0 1-.3-7.2 5 5 0 0 1 9.7-1.3A3.7 3.7 0 0 1 17 17.5"/><polyline points="9.6,12 12,9.5 14.4,12"/><line x1="12" y1="9.6" x2="12" y2="16"/>',
+ subjects:'<rect x="4" y="4" width="7" height="7" rx="1.6"/><rect x="13" y="4" width="7" height="7" rx="1.6"/><rect x="4" y="13" width="7" height="7" rx="1.6"/><rect x="13" y="13" width="7" height="7" rx="1.6"/>',
+ notebooks:'<rect x="6" y="4" width="13" height="16" rx="1.6"/><line x1="9.3" y1="4" x2="9.3" y2="20"/><line x1="11.6" y1="8.2" x2="16" y2="8.2"/><line x1="11.6" y1="11.6" x2="16" y2="11.6"/>',
+ tag:'<path d="M4.5 12.4l7.4-7.4h4.6a2 2 0 0 1 2 2v4.6l-7.4 7.4z"/><circle cx="15" cy="9" r="1.15" style="fill:currentColor"/>',
+ trash:'<line x1="5" y1="7" x2="19" y2="7"/><path d="M9 7V5.4a1.2 1.2 0 0 1 1.2-1.2h3.6A1.2 1.2 0 0 1 15 5.4V7"/><path d="M7.3 7l.9 11.4a1.4 1.4 0 0 0 1.4 1.3h4.8a1.4 1.4 0 0 0 1.4-1.3L16.7 7"/><line x1="10.6" y1="10.5" x2="10.7" y2="16.5"/><line x1="13.4" y1="10.5" x2="13.3" y2="16.5"/>',
+ highlight:'<path d="M5 19.5h5"/><path d="M13.6 4.9l4.6 4.6-7 7-4.6.7.7-4.6z"/><line x1="12.1" y1="6.4" x2="16.7" y2="11"/>',
+ textcolor:'<path d="M7.5 14l4-9 4 9"/><line x1="8.7" y1="11" x2="14.3" y2="11"/><rect x="6" y="17.5" width="12" height="2.6" rx="1.2" style="fill:currentColor;stroke:none"/>',
+ colorwheel:'<circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="2"/><line x1="12" y1="4.5" x2="12" y2="9.5"/><line x1="19.5" y1="12" x2="14.5" y2="12"/><line x1="12" y1="19.5" x2="12" y2="14.5"/><line x1="4.5" y1="12" x2="9.5" y2="12"/>',
+ list:'<line x1="9" y1="7" x2="20" y2="7"/><line x1="9" y1="12" x2="20" y2="12"/><line x1="9" y1="17" x2="20" y2="17"/><circle cx="5" cy="7" r="1.1" style="fill:currentColor"/><circle cx="5" cy="12" r="1.1" style="fill:currentColor"/><circle cx="5" cy="17" r="1.1" style="fill:currentColor"/>',
+ inlineformula:'<path d="M8.6 5.6c-1.9 1.9-1.9 11 0 12.8"/><path d="M15.4 5.6c1.9 1.9 1.9 11 0 12.8"/><line x1="10.4" y1="12" x2="13.6" y2="12"/><circle cx="12" cy="9.4" r="1" style="fill:currentColor"/><circle cx="12" cy="14.6" r="1" style="fill:currentColor"/>',
+ displayeq:'<line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="18" x2="20" y2="18"/><line x1="9" y1="12" x2="15" y2="12"/><circle cx="12" cy="9.4" r="1.05" style="fill:currentColor"/><circle cx="12" cy="14.6" r="1.05" style="fill:currentColor"/>',
+ functions:'<rect x="3.5" y="3.5" width="17" height="17" rx="4"/><circle cx="8.4" cy="8.4" r="1.15" style="fill:currentColor"/><path d="M13.2 7.2l2.7 2.7M15.9 7.2l-2.7 2.7"/><path d="M6.8 15.4c1.1-1.9 2.2 1.9 3.3 0"/><path d="M13.5 15.3h3.2M15.1 13.7v3.2"/>',
+ choosesymbol:'<rect x="4.5" y="4.5" width="15" height="15" rx="4"/><path d="M12 7.8l1.1 3.1 3.1 1.1-3.1 1.1L12 16.2l-1.1-3.1L7.8 12l3.1-1.1z" style="fill:currentColor;stroke:none"/>',
+ editformula:'<path d="M5 19l.6-3.3 8.8-8.8 2.7 2.7-8.8 8.8z"/><line x1="13.6" y1="7.4" x2="16.3" y2="10.1"/>',
+ image:'<rect x="4" y="5" width="16" height="14" rx="1.8"/><circle cx="9" cy="10" r="1.7"/><path d="M5 17.6l4-3.8 3 2.9 3-2.9 4 3.8"/>',
+ graph:'<polyline points="5,4 5,19 20,19"/><path d="M6.2 16c3.4 0 3.9-9 7.8-9 2.6 0 3 6 5.5 6"/>',
+ link:'<path d="M10 14l4-4"/><path d="M11.5 7.4l1.4-1.4a3.6 3.6 0 0 1 5.1 5.1l-1.9 1.9"/><path d="M12.5 16.6l-1.4 1.4a3.6 3.6 0 0 1-5.1-5.1l1.9-1.9"/>',
+ table:'<rect x="4" y="5" width="16" height="14" rx="1.6"/><line x1="4" y1="10" x2="20" y2="10"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="12" y1="5" x2="12" y2="19"/>',
+ moveup:'<line x1="12" y1="19" x2="12" y2="6.5"/><polyline points="7,11 12,6 17,11"/>',
+ movedown:'<line x1="12" y1="5" x2="12" y2="17.5"/><polyline points="7,13 12,18 17,13"/>',
+ moveleft:'<line x1="19" y1="12" x2="6.5" y2="12"/><polyline points="11,7 6,12 11,17"/>',
+ moveright:'<line x1="5" y1="12" x2="17.5" y2="12"/><polyline points="13,7 18,12 13,17"/>',
+ drag:'<circle cx="9.5" cy="6" r="1.2" style="fill:currentColor"/><circle cx="14.5" cy="6" r="1.2" style="fill:currentColor"/><circle cx="9.5" cy="12" r="1.2" style="fill:currentColor"/><circle cx="14.5" cy="12" r="1.2" style="fill:currentColor"/><circle cx="9.5" cy="18" r="1.2" style="fill:currentColor"/><circle cx="14.5" cy="18" r="1.2" style="fill:currentColor"/>',
+ undo:'<polyline points="9,7 5,11 9,15"/><path d="M5 11h8.5a5 5 0 0 1 0 10H10"/>',
+ redo:'<polyline points="15,7 19,11 15,15"/><path d="M19 11h-8.5a5 5 0 0 0 0 10H14"/>',
+ save:'<path d="M7.4 17.5a3.5 3.5 0 0 1-.5-7 5 5 0 0 1 9.5-1.4 3.6 3.6 0 0 1 1.1 7"/><polyline points="9.5,13.3 11.2,15.1 14.7,11.1"/>',
+ share:'<circle cx="6" cy="12" r="2.4"/><circle cx="17.5" cy="6" r="2.4"/><circle cx="17.5" cy="18" r="2.4"/><line x1="8.1" y1="11" x2="15.4" y2="7"/><line x1="8.1" y1="13" x2="15.4" y2="17"/>',
+ templates:'<path d="M12 4l7.5 3.6-7.5 3.6-7.5-3.6z"/><polyline points="4.5,12 12,15.6 19.5,12"/><polyline points="4.5,15.8 12,19.4 19.5,15.8"/>',
+ pagesize:'<rect x="6" y="3.5" width="12" height="17" rx="1.6"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="9" y1="11" x2="15" y2="11"/><line x1="9" y1="14" x2="13" y2="14"/>',
+ close:'<line x1="7" y1="7" x2="17" y2="17"/><line x1="17" y1="7" x2="7" y2="17"/>',
+};
+const CATS=[
+ ["Text & color",[['gl','bold','Bold'],['gl','italic','Italic'],['gl','underline','Underline'],['gl','strike','Strikethr.'],['ic','highlight','Highlight'],['ic','textcolor','Text color'],['ic','colorwheel','Custom color']]],
+ ["Structure",[['gl','paragraph','Paragraph'],['gl','heading','Heading'],['ic','list','List']]],
+ ["Math",[['ic','inlineformula','Inline ƒ'],['ic','displayeq','Display eq'],['ic','functions','Functions'],['ic','choosesymbol','Choose sym'],['ic','editformula','Edit ƒ']]],
+ ["Insert",[['ic','image','Image'],['ic','graph','Graph'],['ic','link','Link'],['ic','table','Table']]],
+ ["Block ops",[['ic','moveup','Move up'],['ic','movedown','Move down'],['ic','moveleft','Move left'],['ic','moveright','Move right'],['ic','drag','Drag'],['ic','trash','Delete']]],
+ ["History & doc",[['ic','undo','Undo'],['ic','redo','Redo'],['ic','save','Saved'],['ic','share','Share'],['ic','templates','Templates'],['ic','pagesize','Page size'],['ic','close','Close pane']]],
+ ["Library",[['ic','settings','Settings'],['ic','search','Search'],['ic','clearsearch','Clear'],['ic','newnote','New note'],['ic','tag','Tag'],['ic','import','Import'],['ic','more','More'],['ic','subjects','Subjects'],['ic','notebooks','Notebooks'],['ic','uploadcloud','To cloud']]],
+];
+const svg=i=>'<svg viewBox="0 0 24 24">'+i+'</svg>';
+const icSpan=(k,s)=>`<span class="ic"${s?` style="width:${s}px;height:${s}px"`:''}>${svg(I[k])}</span>`;
+const glSpan=(k,s)=>{const[c,cl]=GLYPH[k];return `<span class="glyph ${cl}"${s?` style="font-size:${s}px"`:''}>${c}</span>`;};
+
+// tokens
+document.getElementById('tok').innerHTML=TOK.map(t=>`<div class="s"><div class="chip" style="background:${t[1]}"></div><b>${t[0]}</b><small>${t[1]}</small><div class="chip" style="background:${t[2]};border-color:#333"></div><small>${t[2]}</small></div>`).join('');
+// buttons
+document.getElementById('btns').innerHTML=`
+ <span class="btn primary">${icSpan('newnote',15)}New note</span>
+ <span class="btn primary hover">New note</span>
+ <span class="btn secondary">Share</span>
+ <span class="btn secondary hover">Share</span>
+ <span class="btn ghost">Cancel</span>
+ <span class="btn ghost hover">Cancel</span>
+ <span class="btn danger">Delete</span>
+ <span class="btn primary disabled">Disabled</span>
+ <span class="iconbtn fill">${icSpan('search',18)}</span>
+ <span class="iconbtn">${icSpan('settings',18)}</span>
+ <span class="iconbtn hover">${icSpan('more',18)}</span>`;
+document.getElementById('i-search').innerHTML=svg(I.search);
+document.getElementById('i-x').innerHTML=svg(I.close);
+// menu
+const MENU=[['newnote','New note','⌘N'],['share','Share',''],['templates','Templates',''],['sep'],['import','Import',''],['trash','Delete','']];
+document.getElementById('menu').innerHTML=MENU.map(m=>m[0]==='sep'?'<div class="mdiv"></div>':`<div class="mi${m[1]==='Share'?' on':''}">${icSpan(m[0],17)}<span>${m[1]}</span>${m[2]?`<small>${m[2]}</small>`:''}</div>`).join('');
+// toolbar
+const TB=[['gl','bold'],['gl','italic'],['gl','underline'],['ic','heading','gl'],['sep'],['ic','inlineformula'],['ic','displayeq','act'],['ic','functions'],['sep'],['ic','image'],['ic','graph'],['ic','table'],['ic','link'],['sep'],['ic','undo'],['ic','redo']];
+document.getElementById('toolbar').innerHTML=TB.map(t=>{
+ if(t[0]==='sep')return '<div class="sep"></div>';
+ if(t[0]==='gl')return `<div class="iconbtn">${glSpan(t[1],15)}</div>`;
+ if(t[1]==='heading')return `<div class="iconbtn">${glSpan('heading',15)}</div>`;
+ return `<div class="iconbtn ${t[2]==='act'?'act':''}">${icSpan(t[1],18)}</div>`;
+}).join('');
+// icon grid
+document.getElementById('icons').innerHTML=CATS.map(c=>`<div class="cat"><div class="ch">${c[0]}</div><div class="grid">${c[1].map(it=>`<div class="cell">${it[0]==='gl'?glSpan(it[1]):icSpan(it[1])}<small>${it[2]}</small></div>`).join('')}</div></div>`).join('');
+// dark
+document.getElementById('darkrow').innerHTML=`
+ <div class="toolbar">${['bold|gl','italic|gl','sep','displayeq|act','functions|ic','table|ic','sep','undo|ic','redo|ic'].map(t=>{if(t==='sep')return '<div class="sep"></div>';const[k,kind]=t.split('|');if(kind==='gl')return `<div class="iconbtn">${glSpan(k,15)}</div>`;return `<div class="iconbtn ${k==='displayeq'?'act':''}">${icSpan(k,18)}</div>`;}).join('')}</div>
+ <span class="btn primary">${icSpan('newnote',15)}New note</span>
+ <span class="btn secondary">Share</span>
+ <span class="iconbtn">${icSpan('settings',18)}</span>`;
+</script>
+</body></html>

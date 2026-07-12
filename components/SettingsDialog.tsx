@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Icon } from "@/components/Icon";
+import { ChevronSelect, Dialog, DialogSection } from "@/components/ui/Dialog";
 import {
   getSettings,
   setSettings,
@@ -37,7 +37,6 @@ function Toggle({ on, onClick }: { on: boolean; onClick: () => void }) {
   );
 }
 
-const SECTION = "mb-2 mt-5 text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted first:mt-0";
 const ROW = "flex items-center gap-3 border-t border-border-soft py-3";
 
 /** Fundamental app preferences (browser-local): theme + math input + templates. */
@@ -46,75 +45,59 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const update = (patch: Partial<AppSettings>) => setS(setSettings(patch));
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-foreground/25 p-4" onClick={onClose}>
-      <div className="w-full max-w-md overflow-hidden rounded-xl border border-border bg-surface shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between border-b border-border-soft px-5 py-4">
-          <h2 className="text-base font-semibold">Settings</h2>
-          <button onClick={onClose} aria-label="Close" className="grid h-8 w-8 place-items-center rounded-md text-muted hover:bg-foreground/[0.05] hover:text-foreground">
-            <Icon name="close" size={16} />
-          </button>
+    <Dialog title="Settings" onClose={onClose}>
+      <div className="px-5 py-4">
+        {/* Appearance */}
+        <DialogSection>Appearance</DialogSection>
+        <div className="flex items-center justify-between py-1.5">
+          <span className="text-sm">Theme</span>
+          <div className="inline-flex rounded-lg border border-border p-0.5 text-xs">
+            {THEMES.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => update({ theme: t.id })}
+                className={`rounded-md px-3 py-1.5 transition ${s.theme === t.id ? "bg-foreground text-background" : "text-muted hover:text-foreground"}`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
         </div>
 
-        <div className="px-5 py-4">
-          {/* Appearance */}
-          <p className={SECTION}>Appearance</p>
-          <div className="flex items-center justify-between py-1.5">
-            <span className="text-sm">Theme</span>
-            <div className="inline-flex rounded-lg border border-border p-0.5 text-xs">
-              {THEMES.map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() => update({ theme: t.id })}
-                  className={`rounded-md px-3 py-1.5 transition ${s.theme === t.id ? "bg-foreground text-background" : "text-muted hover:text-foreground"}`}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
-          </div>
+        {/* Math input */}
+        <DialogSection>Math input</DialogSection>
+        <div className={ROW}>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm">On-screen math keyboard</span>
+            <span className="block text-xs text-muted">Pop up a math keyboard when editing a formula. Off by default — the toolbar inserts symbols and structures.</span>
+          </span>
+          <Toggle on={s.mathKeyboard} onClick={() => update({ mathKeyboard: !s.mathKeyboard })} />
+        </div>
+        <div className={ROW}>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm">
+              Structural formula editor
+              <span className="ml-1.5 rounded bg-accent-soft px-1.5 py-0.5 text-[10px] font-semibold uppercase text-accent">beta</span>
+            </span>
+            <span className="block text-xs text-muted">Fill-in-the-boxes editor with better integral/bound handling. Existing formulas keep the current editor.</span>
+          </span>
+          <Toggle on={s.mathEditorBeta} onClick={() => update({ mathEditorBeta: !s.mathEditorBeta })} />
+        </div>
 
-          {/* Math input */}
-          <p className={SECTION}>Math input</p>
-          <div className={ROW}>
-            <span className="min-w-0 flex-1">
-              <span className="block text-sm">On-screen math keyboard</span>
-              <span className="block text-xs text-muted">Pop up a math keyboard when editing a formula. Off by default — the toolbar inserts symbols and structures.</span>
-            </span>
-            <Toggle on={s.mathKeyboard} onClick={() => update({ mathKeyboard: !s.mathKeyboard })} />
-          </div>
-          <div className={ROW}>
-            <span className="min-w-0 flex-1">
-              <span className="block text-sm">
-                Structural formula editor
-                <span className="ml-1.5 rounded bg-accent-soft px-1.5 py-0.5 text-[10px] font-semibold uppercase text-accent">beta</span>
-              </span>
-              <span className="block text-xs text-muted">Fill-in-the-boxes editor with better integral/bound handling. Existing formulas keep the current editor.</span>
-            </span>
-            <Toggle on={s.mathEditorBeta} onClick={() => update({ mathEditorBeta: !s.mathEditorBeta })} />
-          </div>
-
-          {/* Templates */}
-          <p className={SECTION}>Templates</p>
-          <div className={ROW}>
-            <span className="min-w-0 flex-1">
-              <span className="block text-sm">Applying to a non-empty note</span>
-              <span className="block text-xs text-muted">When you use a template on a note that already has content.</span>
-            </span>
-            <div className="relative shrink-0">
-              <select
-                value={s.templateApplyMode}
-                onChange={(e) => update({ templateApplyMode: e.target.value as TemplateApplyMode })}
-                className="appearance-none rounded-md border border-border bg-surface py-1.5 pl-3 pr-8 text-sm outline-none hover:border-accent focus:border-accent"
-              >
-                {TEMPLATE_MODES.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-              </select>
-              <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-muted">
-                <Icon name="chevron" size={13} />
-              </span>
-            </div>
-          </div>
+        {/* Templates */}
+        <DialogSection>Templates</DialogSection>
+        <div className={ROW}>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm">Applying to a non-empty note</span>
+            <span className="block text-xs text-muted">When you use a template on a note that already has content.</span>
+          </span>
+          <ChevronSelect
+            value={s.templateApplyMode}
+            onChange={(v) => update({ templateApplyMode: v })}
+            options={TEMPLATE_MODES}
+          />
         </div>
       </div>
-    </div>
+    </Dialog>
   );
 }

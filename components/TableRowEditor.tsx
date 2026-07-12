@@ -3,6 +3,7 @@
 import type { ImageAlign } from "@/lib/blocks/images";
 import type { TableData } from "@/lib/blocks/tables";
 import type { Placement } from "@/lib/blocks/types";
+import { CaptionInput } from "./CaptionInput";
 import { FigureBox } from "./FigureBox";
 import { TableView } from "./TableView";
 
@@ -57,13 +58,7 @@ export function TableRowEditor({
                 onCell={(r, c, v) => onCell(i, r, c, v)}
               />
             </div>
-            <input
-              value={t.caption ?? ""}
-              placeholder="caption…"
-              onChange={(e) => onCaption(i, e.target.value)}
-              onPointerDown={(e) => e.stopPropagation()}
-              className="mt-1 w-full rounded border border-border bg-background px-2 py-0.5 text-center text-xs italic outline-none focus:border-accent"
-            />
+            <CaptionInput value={t.caption ?? ""} onChange={(text) => onCaption(i, text)} />
           </figure>
         ),
       }))}

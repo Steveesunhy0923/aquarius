@@ -1,0 +1,3 @@
+# Optional: only needed for ml/export/export_coreml.py (CoreML conversion).
+# Installed separately because coremltools pins can conflict with newer torch.
+coremltools

@@ -6,6 +6,7 @@ import {
   makeProj,
   resolveGeometry,
   type GraphData,
+  type Scene,
   type SceneItem,
   type SceneLabel,
   type ScenePoint,
@@ -40,14 +41,23 @@ export function GraphView({ block, data }: { block?: Block; data?: GraphData }) 
         role="img"
         aria-label="graph figure"
       >
-        <g>{scene.grid.map((g, i) => renderItem(g, `g${i}`))}</g>
-        <g>{scene.axes.map((a, i) => renderItem(a, `a${i}`))}</g>
-        <g>{scene.labels.map((l, i) => renderLabel(l, `l${i}`))}</g>
+        <SceneBase scene={scene} />
         <g>{scene.shapes.map((s, i) => renderItem(s, `s${i}`))}</g>
         <g>{scene.points.map((p) => renderPoint(p))}</g>
       </svg>
       {caption && <figcaption className="mt-1 text-center text-sm italic text-muted">{caption}</figcaption>}
     </figure>
+  );
+}
+
+/** The static grid/axes/tick-label layers — shared by the viewer and the editor. */
+export function SceneBase({ scene }: { scene: Scene }) {
+  return (
+    <>
+      <g>{scene.grid.map((g, i) => renderItem(g, `g${i}`))}</g>
+      <g>{scene.axes.map((a, i) => renderItem(a, `a${i}`))}</g>
+      <g>{scene.labels.map((l, i) => renderLabel(l, `l${i}`))}</g>
+    </>
   );
 }
 

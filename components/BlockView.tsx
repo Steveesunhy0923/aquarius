@@ -1,11 +1,13 @@
 "use client";
 
+import { AsyncImage, ImageEmpty } from "@/components/AsyncImage";
 import { GraphView } from "@/components/GraphView";
+import { NoteLink } from "@/components/NoteLink";
 import { TableView } from "@/components/TableView";
-import { useAssetUrl } from "@/components/useAssetUrl";
 import { blockToKatex } from "@/lib/blocks";
 import { boxStyle, calloutColorOf } from "@/lib/blocks/callouts";
 import { parseFormat } from "@/lib/blocks/format";
+import { isNoteHref } from "@/lib/blocks/notelink";
 import { headingAlign, headingLevel } from "@/lib/blocks/headings";
 import { listItems, listMarker, listOrdered } from "@/lib/blocks/lists";
 import {
@@ -18,6 +20,8 @@ import { tableAlign, tableItems } from "@/lib/blocks/tables";
 import type { Block, InlineRun } from "@/lib/blocks/types";
 import type { ReactNode } from "react";
 import { Katex } from "./Katex";
+
+const CAPTION = "mt-1 text-center text-sm italic text-muted";
 
 /** Renders a single block from the tree into the WYSIWYG surface. */
 export function BlockView({ block }: { block: Block }) {
@@ -95,9 +99,7 @@ export function BlockView({ block }: { block: Block }) {
             <figure key={i} className="m-0 overflow-x-auto">
               <TableView data={t} />
               {(t.caption ?? "").trim() && (
-                <figcaption className="mt-1 text-center text-sm italic text-muted">
-                  {t.caption}
-                </figcaption>
+                <figcaption className={CAPTION}>{t.caption}</figcaption>
               )}
             </figure>
           ))}
@@ -139,13 +141,7 @@ export function ImageRow({
   items: ImageItem[];
   align: ImageAlign;
 }) {
-  if (items.length === 0) {
-    return (
-      <div className="rounded-lg border border-dashed border-border p-4 text-sm text-muted">
-        🖼 image (no source)
-      </div>
-    );
-  }
+  if (items.length === 0) return <ImageEmpty />;
   const justify =
     align === "left" ? "flex-start" : align === "right" ? "flex-end" : "center";
   return (
@@ -154,37 +150,21 @@ export function ImageRow({
       style={{ justifyContent: justify }}
     >
       {items.map((it, i) => (
-        <AsyncImage key={`${it.assetId}:${i}`} item={it} />
+        <ImageFigure key={`${it.assetId}:${i}`} item={it} />
       ))}
     </div>
   );
 }
 
-function AsyncImage({ item }: { item: ImageItem }) {
-  const url = useAssetUrl(item.assetId);
+function ImageFigure({ item }: { item: ImageItem }) {
   const cap = (item.caption ?? "").trim();
   return (
     <figure
       className="m-0 flex flex-col items-center"
       style={{ width: item.width ? `${item.width}%` : undefined }}
     >
-      {url ? (
-        // eslint-disable-next-line @next/next/no-img-element -- local object-URL blob
-        <img
-          src={url}
-          alt={item.alt ?? ""}
-          className={`block max-h-[480px] rounded-md ${item.width ? "w-full" : "max-w-full"}`}
-        />
-      ) : (
-        <div className="rounded-lg border border-dashed border-border p-4 text-sm text-muted">
-          Loading image…
-        </div>
-      )}
-      {cap && (
-        <figcaption className="mt-1 text-center text-sm italic text-muted">
-          {cap}
-        </figcaption>
-      )}
+      <AsyncImage item={item} />
+      {cap && <figcaption className={CAPTION}>{cap}</figcaption>}
     </figure>
   );
 }
@@ -204,6 +184,7 @@ function renderRuns(block: Block): ReactNode {
 
 function renderFormatted(text: string): ReactNode {
   return parseFormat(text).map((s, i) => {
+    if (s.href && isNoteHref(s.href)) return <NoteLink key={i} href={s.href} text={s.text} />;
     if (s.href)
       return (
         <a

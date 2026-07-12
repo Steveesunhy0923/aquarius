@@ -23,7 +23,7 @@ import { graphModel, graphToTikz } from "./graph";
 import { headingToLatex } from "./headings";
 import { imageAlign, imageItems } from "./images";
 import { listItems, listMarker, listOrdered } from "./lists";
-import { hasPlacement, placedRowToLatex } from "./placement";
+import { hasPlacement, linewidthLen, placedRowToLatex } from "./placement";
 import { tableAlign, tableItems, tableRowToLatex } from "./tables";
 
 /** A serializer turns one block subtree into a LaTeX fragment. */
@@ -300,13 +300,10 @@ function serializeCode(b: Block): string {
   return `\\begin{lstlisting}[language=${lang}]\n${source}\n\\end{lstlisting}`;
 }
 
-/** Format a horizontal-offset fraction (0..1) for \hspace*{x\linewidth}. */
+/** Read the legacy horizontal-offset fraction (0..1) for \hspace*{x\linewidth}. */
 function offsetOf(b: Block): number | null {
   const o = attrs(b).offset;
   return typeof o === "number" && o > 0.001 ? Math.min(0.99, o) : null;
-}
-function hoffLen(off: number): string {
-  return `${parseFloat(off.toFixed(4))}\\linewidth`;
 }
 
 function imgBody(it: { assetId: string; width?: number }): string {
@@ -334,7 +331,7 @@ function serializeImage(b: Block): string {
   // Legacy single-offset fallback (pre-placement notes).
   const off = offsetOf(b);
   if (off !== null && !anyCaption) {
-    return `\\noindent\\hspace*{${hoffLen(off)}}${items.map(imgBody).join("\\quad ")}`;
+    return `\\noindent\\hspace*{${linewidthLen(off)}}${items.map(imgBody).join("\\quad ")}`;
   }
   const cmd =
     align === "left"
@@ -344,7 +341,7 @@ function serializeImage(b: Block): string {
         : "\\centering";
 
   // Any per-image caption → a figure of subfigures, each with its own \caption.
-  if (items.some((it) => (it.caption ?? "").trim())) {
+  if (anyCaption) {
     const subs = items.map((it) => {
       const frac = (
         (it.width ?? Math.max(10, Math.floor(90 / items.length))) / 100
@@ -395,7 +392,7 @@ function serializeGraph(b: Block): string {
   // Legacy single-offset fallback.
   const off = offsetOf(b);
   if (off !== null && !captioned) {
-    return tex.replace("\\begin{tikzpicture}", `\\noindent\\hspace*{${hoffLen(off)}}\\begin{tikzpicture}`);
+    return tex.replace("\\begin{tikzpicture}", `\\noindent\\hspace*{${linewidthLen(off)}}\\begin{tikzpicture}`);
   }
   return tex;
 }

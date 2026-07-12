@@ -1,0 +1,107 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+:root{
+  --bg:#fbfbfd; --surface:#ffffff; --ink:#17171c; --muted:#8a8a93; --line:#ebebf0; --accent:#5b5bd6;
+  font-family: ui-sans-serif,-apple-system,"Segoe UI",Roboto,Inter,sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);padding:40px 44px;-webkit-font-smoothing:antialiased}
+h1{font-size:24px;font-weight:680;letter-spacing:-.02em;margin:0 0 3px}
+.lead{color:var(--muted);font-size:13.5px;margin:0 0 30px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:11px;padding:24px 26px;margin-bottom:22px}
+.lbl{font-size:10.5px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);font-weight:600;margin:0 0 14px}
+.grid{display:flex;gap:26px;flex-wrap:wrap}
+.cell{display:flex;flex-direction:column;align-items:center;gap:8px}
+.cell small{font-size:10.5px;color:var(--muted)}
+.ic{width:24px;height:24px;display:grid;place-items:center}
+.ic svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.ic.w svg{stroke-width:2.3}
+.glyph{display:inline-grid;place-items:center;width:24px;height:24px;font-size:20px;line-height:1;font-weight:700}
+.glyph.ital{font-style:italic;font-family:Georgia,serif;font-weight:600}
+.glyph.ul{text-decoration:underline;text-underline-offset:2px}
+.glyph.strike{text-decoration:line-through}
+/* toolbar context strip */
+.bar{display:inline-flex;gap:2px;border:1px solid var(--line);border-radius:9px;background:var(--surface);padding:3px}
+.tb{width:32px;height:32px;border-radius:6px;display:grid;place-items:center;color:var(--ink)}
+.tb.on{background:rgba(91,91,214,.12);color:var(--accent)}
+.tb .ic{width:19px;height:19px}
+.tb .ic svg{width:19px;height:19px}
+.dark{background:#141419;border-color:#2a2a33}
+.dark .tb{color:#e8e8ee}
+.dark .tb.on{background:rgba(122,122,255,.22);color:#a3a3ff}
+</style></head><body>
+<h1>Text-format icons — drawn letterforms</h1>
+<p class="lead">Replaces the typed-character GLYPHS (B/I/U/S/T/H rendered as styled text) with stroke-drawn 24×24 SVGs matching the Graphite icon language.</p>
+
+<div class="panel">
+  <p class="lbl">Before — typed characters (current)</p>
+  <div class="grid">
+    <div class="cell"><span class="glyph">B</span><small>bold</small></div>
+    <div class="cell"><span class="glyph ital">I</span><small>italic</small></div>
+    <div class="cell"><span class="glyph ul">U</span><small>underline</small></div>
+    <div class="cell"><span class="glyph strike">S</span><small>strike</small></div>
+    <div class="cell"><span class="glyph">T</span><small>paragraph</small></div>
+    <div class="cell"><span class="glyph">H</span><small>heading</small></div>
+  </div>
+
+  <p class="lbl" style="margin-top:26px">After — drawn strokes (proposed)</p>
+  <div class="grid">
+    <div class="cell"><span class="ic w"><svg viewBox="0 0 24 24">
+      <path d="M8 4.5v15"/>
+      <path d="M8 4.5h4.6a3.4 3.4 0 0 1 0 6.8H8"/>
+      <path d="M8 11.3h5.4a4.1 4.1 0 0 1 0 8.2H8"/>
+    </svg></span><small>bold</small></div>
+
+    <div class="cell"><span class="ic"><svg viewBox="0 0 24 24">
+      <line x1="10.5" y1="5" x2="18" y2="5"/>
+      <line x1="6" y1="19" x2="13.5" y2="19"/>
+      <line x1="14.5" y1="5" x2="9.5" y2="19"/>
+    </svg></span><small>italic</small></div>
+
+    <div class="cell"><span class="ic"><svg viewBox="0 0 24 24">
+      <path d="M7.5 4v6.5a4.5 4.5 0 0 0 9 0V4"/>
+      <line x1="6" y1="20" x2="18" y2="20"/>
+    </svg></span><small>underline</small></div>
+
+    <div class="cell"><span class="ic"><svg viewBox="0 0 24 24">
+      <path d="M16.4 6.6a4.5 4.5 0 0 0-4.2-2.2c-2.3 0-4 1.3-4 3.1 0 1.5 1.1 2.4 3 3" />
+      <path d="M12.9 13.5c1.9.6 3 1.5 3 3 0 1.8-1.7 3.1-4 3.1a4.7 4.7 0 0 1-4.4-2.2"/>
+      <line x1="5" y1="12" x2="19" y2="12"/>
+    </svg></span><small>strike</small></div>
+
+    <div class="cell"><span class="ic"><svg viewBox="0 0 24 24">
+      <line x1="5.5" y1="5.5" x2="18.5" y2="5.5"/>
+      <line x1="5.5" y1="5.5" x2="5.5" y2="8"/>
+      <line x1="18.5" y1="5.5" x2="18.5" y2="8"/>
+      <line x1="12" y1="5.5" x2="12" y2="19.5"/>
+      <line x1="9.5" y1="19.5" x2="14.5" y2="19.5"/>
+    </svg></span><small>paragraph</small></div>
+
+    <div class="cell"><span class="ic"><svg viewBox="0 0 24 24">
+      <line x1="6.5" y1="4.5" x2="6.5" y2="19.5"/>
+      <line x1="17.5" y1="4.5" x2="17.5" y2="19.5"/>
+      <line x1="6.5" y1="12" x2="17.5" y2="12"/>
+    </svg></span><small>heading</small></div>
+  </div>
+
+  <p class="lbl" style="margin-top:26px">In context — 19px toolbar, light &amp; dark</p>
+  <div style="display:flex;gap:14px;align-items:center">
+    <div class="bar">
+      <span class="tb on"><span class="ic w"><svg viewBox="0 0 24 24"><path d="M8 4.5v15"/><path d="M8 4.5h4.6a3.4 3.4 0 0 1 0 6.8H8"/><path d="M8 11.3h5.4a4.1 4.1 0 0 1 0 8.2H8"/></svg></span></span>
+      <span class="tb"><span class="ic"><svg viewBox="0 0 24 24"><line x1="10.5" y1="5" x2="18" y2="5"/><line x1="6" y1="19" x2="13.5" y2="19"/><line x1="14.5" y1="5" x2="9.5" y2="19"/></svg></span></span>
+      <span class="tb"><span class="ic"><svg viewBox="0 0 24 24"><path d="M7.5 4v6.5a4.5 4.5 0 0 0 9 0V4"/><line x1="6" y1="20" x2="18" y2="20"/></svg></span></span>
+      <span class="tb"><span class="ic"><svg viewBox="0 0 24 24"><path d="M16.4 6.6a4.5 4.5 0 0 0-4.2-2.2c-2.3 0-4 1.3-4 3.1 0 1.5 1.1 2.4 3 3"/><path d="M12.9 13.5c1.9.6 3 1.5 3 3 0 1.8-1.7 3.1-4 3.1a4.7 4.7 0 0 1-4.4-2.2"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span></span>
+      <span class="tb"><span class="ic"><svg viewBox="0 0 24 24"><line x1="5.5" y1="5.5" x2="18.5" y2="5.5"/><line x1="5.5" y1="5.5" x2="5.5" y2="8"/><line x1="18.5" y1="5.5" x2="18.5" y2="8"/><line x1="12" y1="5.5" x2="12" y2="19.5"/><line x1="9.5" y1="19.5" x2="14.5" y2="19.5"/></svg></span></span>
+      <span class="tb"><span class="ic"><svg viewBox="0 0 24 24"><line x1="6.5" y1="4.5" x2="6.5" y2="19.5"/><line x1="17.5" y1="4.5" x2="17.5" y2="19.5"/><line x1="6.5" y1="12" x2="17.5" y2="12"/></svg></span></span>
+    </div>
+    <div class="bar dark">
+      <span class="tb on"><span class="ic w"><svg viewBox="0 0 24 24"><path d="M8 4.5v15"/><path d="M8 4.5h4.6a3.4 3.4 0 0 1 0 6.8H8"/><path d="M8 11.3h5.4a4.1 4.1 0 0 1 0 8.2H8"/></svg></span></span>
+      <span class="tb"><span class="ic"><svg viewBox="0 0 24 24"><line x1="10.5" y1="5" x2="18" y2="5"/><line x1="6" y1="19" x2="13.5" y2="19"/><line x1="14.5" y1="5" x2="9.5" y2="19"/></svg></span></span>
+      <span class="tb"><span class="ic"><svg viewBox="0 0 24 24"><path d="M7.5 4v6.5a4.5 4.5 0 0 0 9 0V4"/><line x1="6" y1="20" x2="18" y2="20"/></svg></span></span>
+      <span class="tb"><span class="ic"><svg viewBox="0 0 24 24"><path d="M16.4 6.6a4.5 4.5 0 0 0-4.2-2.2c-2.3 0-4 1.3-4 3.1 0 1.5 1.1 2.4 3 3"/><path d="M12.9 13.5c1.9.6 3 1.5 3 3 0 1.8-1.7 3.1-4 3.1a4.7 4.7 0 0 1-4.4-2.2"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span></span>
+      <span class="tb"><span class="ic"><svg viewBox="0 0 24 24"><line x1="5.5" y1="5.5" x2="18.5" y2="5.5"/><line x1="5.5" y1="5.5" x2="5.5" y2="8"/><line x1="18.5" y1="5.5" x2="18.5" y2="8"/><line x1="12" y1="5.5" x2="12" y2="19.5"/><line x1="9.5" y1="19.5" x2="14.5" y2="19.5"/></svg></span></span>
+      <span class="tb"><span class="ic"><svg viewBox="0 0 24 24"><line x1="6.5" y1="4.5" x2="6.5" y2="19.5"/><line x1="17.5" y1="4.5" x2="17.5" y2="19.5"/><line x1="6.5" y1="12" x2="17.5" y2="12"/></svg></span></span>
+    </div>
+  </div>
+</div>
+</body></html>

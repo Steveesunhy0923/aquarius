@@ -7,6 +7,11 @@
  * row-level reconciliation is deferred and marked `TODO(crdt)` so the future Yjs
  * implementation has obvious seams to fill.
  *
+ * NOTE: the realtime collaboration that actually shipped lives in `lib/collab/`
+ * (block-level Yjs over Supabase Realtime; ydoc column, migrations 0007/0008)
+ * and does not use this module. This engine is retained as the seam for a future
+ * offline/background sync; no app code imports it today.
+ *
  * Invariants honored by this skeleton:
  *   • Safe to import on the server — no top-level side effects, no `getStore()`
  *     at module load (only inside the constructor default, evaluated lazily).

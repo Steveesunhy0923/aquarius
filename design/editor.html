@@ -1,0 +1,61 @@
+<!doctype html><html><head><meta charset="utf-8">
+<link rel="stylesheet" href="kit.css">
+<style>
+ .toolbar-bar{display:flex;justify-content:center;padding:9px 0;border-bottom:1px solid var(--line);background:var(--surface)}
+ .editor-main{flex:1;background:var(--bg);padding:30px 24px;overflow:auto}
+ .title-edit{font-size:15px;font-weight:600;display:flex;align-items:center;gap:7px}
+ .presence{display:flex;align-items:center;gap:8px}
+ .presence .stack{display:flex}.presence .stack .av{margin-left:-7px}
+ .live{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:var(--muted)}
+ .live .dot{width:7px;height:7px;border-radius:50%;background:#3fb27f}
+</style></head>
+<body>
+<div class="shell">
+ <div class="topbar">
+   <span class="iconbtn"><span data-ic="back" style="width:18px;height:18px"></span></span>
+   <span class="title-edit">Mean Value Theorem</span>
+   <span class="spacer"></span>
+   <span class="presence">
+     <span class="stack"><span class="av" style="width:28px;height:28px;background:#5b5bd6">S</span><span class="av" style="width:28px;height:28px;background:#3fb27f">E</span></span>
+     <span class="live"><span class="dot"></span>Live</span>
+   </span>
+   <span class="btn secondary"><span data-ic="share" style="width:15px;height:15px"></span>Share</span>
+   <span class="iconbtn"><span data-ic="save" style="width:18px;height:18px"></span></span>
+   <span class="iconbtn"><span data-ic="templates" style="width:18px;height:18px"></span></span>
+   <span class="iconbtn"><span data-ic="more" style="width:18px;height:18px"></span></span>
+ </div>
+ <div class="toolbar-bar">
+   <div class="toolbar" id="tb"></div>
+ </div>
+ <div class="editor-main">
+   <div class="paper">
+     <h1 class="doc-h1">The Mean Value Theorem</h1>
+     <p class="doc-p">If <span class="imath">f</span> is continuous on the closed interval <span class="imath">[a, b]</span> and differentiable on the open interval <span class="imath">(a, b)</span>, then there exists at least one point <span class="imath">c ∈ (a, b)</span> such that the instantaneous rate of change equals the average rate of change:</p>
+     <div class="doc-eq"><span class="num">(1)</span>f′(c) = <span style="display:inline-block;text-align:center;vertical-align:middle">f(b) − f(a)<span style="display:block;border-top:1px solid currentColor;margin-top:2px">b − a</span></span></div>
+     <p class="doc-p">Geometrically, there is a point where the tangent line is parallel to the secant through the endpoints.</p>
+     <div class="gutter sel">
+       <div class="ctrls">
+         <span class="iconbtn"><span data-ic="drag" style="width:16px;height:16px"></span></span>
+         <span class="iconbtn"><span data-ic="moveup" style="width:15px;height:15px"></span></span>
+         <span class="iconbtn"><span data-ic="movedown" style="width:15px;height:15px"></span></span>
+         <span class="iconbtn"><span data-ic="trash" style="width:15px;height:15px"></span></span>
+       </div>
+       <div class="figure">
+         <div class="img"><span data-ic="graph" style="width:42px;height:42px"></span></div>
+         <div class="cap">Figure 1. The secant (dashed) is parallel to the tangent at c.</div>
+       </div>
+     </div>
+     <p class="doc-p">A direct consequence: if f′(x) = 0 for all x in an interval, then f is constant there.</p>
+   </div>
+ </div>
+</div>
+<script src="icons.js"></script>
+<script>
+const TB=[['ic','bold'],['ic','italic'],['ic','underline'],['sep'],['ic','heading'],['ic','list'],['sep'],['ic','inlineformula'],['ic','displayeq','act'],['ic','functions'],['sep'],['ic','image'],['ic','table'],['ic','link'],['sep'],['ic','undo'],['ic','redo'],['sep'],['ic','more']];
+document.getElementById('tb').innerHTML=TB.map(t=>{
+ if(t[0]==='sep')return '<div class="sep"></div>';
+ return `<div class="iconbtn ${t[2]==='act'?'act':''}"><span data-ic="${t[1]}" style="width:18px;height:18px"></span></div>`;
+}).join('');
+hydrate();
+</script>
+</body></html>

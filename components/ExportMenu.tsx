@@ -2,7 +2,8 @@
 
 import { documentToLatex } from "@/lib/blocks";
 import { getStore } from "@/lib/storage";
-import { type ReactNode, useState } from "react";
+import type { ReactNode } from "react";
+import { Menu, MenuItem } from "@/components/ui/Menu";
 
 function download(filename: string, content: string, mime: string) {
   const url = URL.createObjectURL(new Blob([content], { type: mime }));
@@ -62,10 +63,7 @@ export function ExportMenu({
   menuClassName?: string;
   label?: ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
-
   async function run(fmt: "tex" | "aqnote") {
-    setOpen(false);
     try {
       if (beforeExport) await beforeExport();
       await downloadNote(noteId, title, fmt);
@@ -75,40 +73,37 @@ export function ExportMenu({
   }
 
   return (
-    <span className="relative inline-flex">
-      <button
-        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen((o) => !o); }}
-        title="Export / download"
-        aria-label="Export / download"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        className={className}
-      >
-        {label}
-      </button>
-      {open && (
+    <Menu
+      width="w-48"
+      menuClassName={menuClassName}
+      trigger={({ open, toggle }) => (
+        <button
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggle(); }}
+          title="Export / download"
+          aria-label="Export / download"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          className={className}
+        >
+          {label}
+        </button>
+      )}
+    >
+      {(close) => (
         <>
-          <button
-            className="fixed inset-0 z-40 cursor-default"
-            aria-hidden
-            tabIndex={-1}
-            onClick={(e) => { e.preventDefault(); setOpen(false); }}
-          />
-          <div className={`absolute right-0 top-full z-50 mt-1 w-48 rounded-md border border-border bg-surface p-1 text-sm shadow-lg ${menuClassName}`}>
-            {onPdf && (
-              <button onClick={(e) => { e.preventDefault(); setOpen(false); onPdf(); }} className="block w-full rounded px-2 py-1.5 text-left hover:bg-foreground/[0.06]">
-                PDF <span className="text-muted">(print)</span>
-              </button>
-            )}
-            <button onClick={(e) => { e.preventDefault(); run("tex"); }} className="block w-full rounded px-2 py-1.5 text-left hover:bg-foreground/[0.06]">
-              LaTeX <span className="text-muted">(.tex)</span>
-            </button>
-            <button onClick={(e) => { e.preventDefault(); run("aqnote"); }} className="block w-full rounded px-2 py-1.5 text-left hover:bg-foreground/[0.06]">
-              Aquarius bundle <span className="text-muted">(.aqnote)</span>
-            </button>
-          </div>
+          {onPdf && (
+            <MenuItem onClick={() => { close(); onPdf(); }}>
+              PDF <span className="text-muted">(print)</span>
+            </MenuItem>
+          )}
+          <MenuItem onClick={() => { close(); void run("tex"); }}>
+            LaTeX <span className="text-muted">(.tex)</span>
+          </MenuItem>
+          <MenuItem onClick={() => { close(); void run("aqnote"); }}>
+            Aquarius bundle <span className="text-muted">(.aqnote)</span>
+          </MenuItem>
         </>
       )}
-    </span>
+    </Menu>
   );
 }

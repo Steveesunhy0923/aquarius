@@ -101,8 +101,16 @@ export async function getMyAccess(noteId: string): Promise<Access | null> {
   return (c as { role: Role } | null)?.role ?? null;
 }
 
+/** A note shared with the current user, plus whether they've opened it yet. */
+export interface SharedNote {
+  note: NoteMeta;
+  role: Role;
+  /** When the current user first opened it, or null while it's still "new". */
+  openedAt: string | null;
+}
+
 /** Notes other users have shared with the current user. */
-export async function listSharedWithMe(): Promise<{ note: NoteMeta; role: Role }[]> {
+export async function listSharedWithMe(): Promise<SharedNote[]> {
   const me = await uid();
   const { data: collabs, error } = await client()
     .from("note_collaborators").select("note_id, role").eq("user_id", me);
@@ -110,11 +118,41 @@ export async function listSharedWithMe(): Promise<{ note: NoteMeta; role: Role }
   const rows = (collabs ?? []) as { note_id: string; role: Role }[];
   if (rows.length === 0) return [];
   const roleById = new Map(rows.map((r) => [r.note_id, r.role]));
+  const openedById = await listMyOpens();
   const { data: notes, error: nErr } = await client()
     .from("notes").select("*").in("id", rows.map((r) => r.note_id)).is("deleted_at", null);
   if (nErr) throw nErr;
   return (notes ?? []).map((n) => {
     const meta = noteFromRow(n as Parameters<typeof noteFromRow>[0]);
-    return { note: meta, role: roleById.get(meta.id) ?? "viewer" };
+    return {
+      note: meta,
+      role: roleById.get(meta.id) ?? "viewer",
+      openedAt: openedById.get(meta.id) ?? null,
+    };
   });
+}
+
+/** noteId → opened_at for every share the current user has opened. Degrades to
+ *  "nothing opened" if the shared_note_opens migration isn't applied yet. */
+async function listMyOpens(): Promise<Map<string, string>> {
+  const { data, error } = await client().from("shared_note_opens").select("note_id, opened_at");
+  if (error) return new Map();
+  return new Map((data as { note_id: string; opened_at: string }[]).map((r) => [r.note_id, r.opened_at]));
+}
+
+/**
+ * Record that the current user opened a note shared with them, moving it from
+ * the "Shared with me" inbox into the library's Uncategorized section.
+ * Insert-only and idempotent; silently a no-op if the migration isn't applied
+ * or the caller isn't a collaborator on the note.
+ */
+export async function markSharedNoteOpened(noteId: string): Promise<void> {
+  try {
+    const me = await uid();
+    await client()
+      .from("shared_note_opens")
+      .upsert({ note_id: noteId, user_id: me }, { onConflict: "note_id,user_id", ignoreDuplicates: true });
+  } catch {
+    // Best-effort marker — opening the note must never fail because of it.
+  }
 }

@@ -1,9 +1,17 @@
 "use client";
 
 import { useState } from "react";
+import { Icon } from "@/components/Icon";
+import { Menu, MenuItem } from "@/components/ui/Menu";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { isDefaultUsername, setUsername, validateUsername } from "@/lib/profile/profile";
 import { AuthDialog } from "./AuthDialog";
+
+const SECTION = "text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted";
+const LINK = "text-xs text-muted hover:text-accent";
+const INPUT = "min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent";
+const PRIMARY = "rounded-md bg-accent px-3 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50";
+const RULE = "my-1 h-px bg-border-soft";
 
 /**
  * Library-header account control. Hidden entirely when Supabase isn't configured
@@ -14,7 +22,6 @@ import { AuthDialog } from "./AuthDialog";
 export function AccountMenu() {
   const { configured, loading, user, profile, linkedProviders, signOut, setPassword, linkGoogle, refreshProfile } = useAuth();
   const [dialog, setDialog] = useState(false);
-  const [open, setOpen] = useState(false);
 
   if (!configured || loading) return null;
 
@@ -36,54 +43,52 @@ export function AccountMenu() {
   const hasPassword = linkedProviders.includes("email");
 
   return (
-    <div className="relative">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2 rounded-full border border-border py-1 pl-1 pr-3 text-sm hover:border-accent"
-      >
-        <span className="relative grid h-7 w-7 place-items-center overflow-hidden rounded-full bg-accent/15 text-xs font-semibold text-accent">
-          {profile?.avatarUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element -- remote avatar
-            <img src={profile.avatarUrl} alt="" className="h-full w-full object-cover" />
-          ) : (
-            initial
-          )}
-          {needsUsername && <span className="absolute -right-0 -top-0 h-2 w-2 rounded-full bg-amber-500" />}
-        </span>
-        <span className="max-w-[10rem] truncate">{username}</span>
-      </button>
-
-      {open && (
+    <Menu
+      width="w-72"
+      trigger={({ open, toggle }) => (
+        <button
+          onClick={toggle}
+          aria-haspopup="menu"
+          aria-expanded={open}
+          className="flex items-center gap-2 rounded-full border border-border py-1 pl-1 pr-3 text-sm hover:border-accent"
+        >
+          <span className="relative grid h-7 w-7 place-items-center overflow-hidden rounded-full bg-accent-soft text-xs font-semibold text-accent">
+            {profile?.avatarUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element -- remote avatar
+              <img src={profile.avatarUrl} alt="" className="h-full w-full object-cover" />
+            ) : (
+              initial
+            )}
+            {needsUsername && <span className="absolute -right-0 -top-0 h-2 w-2 rounded-full bg-amber-500" />}
+          </span>
+          <span className="max-w-[10rem] truncate">{username}</span>
+          <Icon name="chevron" size={12} className="text-muted" />
+        </button>
+      )}
+    >
+      {(close) => (
         <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 z-50 mt-2 w-72 rounded-xl border border-border bg-surface p-3 shadow-xl">
-            <p className="mb-1 px-1 text-xs text-muted">Signed in as</p>
-            <UsernameForm
-              current={username}
-              highlight={needsUsername}
-              onSaved={refreshProfile}
-            />
+          <div className="px-2 py-1.5">
+            <p className={`mb-1 ${SECTION}`}>Signed in as</p>
+            <UsernameForm current={username} highlight={needsUsername} onSaved={refreshProfile} />
+          </div>
 
-            <div className="my-3 border-t border-border" />
+          <div className={RULE} />
 
-            <p className="mb-2 px-1 text-xs text-muted">Linked sign-in</p>
+          <div className="px-2 py-1.5">
+            <p className={`mb-2 ${SECTION}`}>Linked sign-in</p>
             <div className="space-y-1.5">
               <ProviderRow label="Google" linked={hasGoogle} onLink={linkGoogle} />
               <PasswordRow linked={hasPassword} onSet={setPassword} />
             </div>
-
-            <div className="my-3 border-t border-border" />
-
-            <button
-              onClick={() => { setOpen(false); void signOut(); }}
-              className="mt-1 w-full rounded-lg px-2 py-1.5 text-left text-sm hover:bg-foreground/[0.05]"
-            >
-              Sign out
-            </button>
           </div>
+
+          <div className={RULE} />
+
+          <MenuItem onClick={() => { close(); void signOut(); }}>Sign out</MenuItem>
         </>
       )}
-    </div>
+    </Menu>
   );
 }
 
@@ -95,9 +100,9 @@ function UsernameForm({ current, highlight, onSaved }: { current: string; highli
 
   if (!editing) {
     return (
-      <div className="flex items-center justify-between gap-2 px-1">
+      <div className="flex items-center justify-between gap-2">
         <span className="truncate text-sm font-medium">@{current}</span>
-        <button onClick={() => { setValue(current); setEditing(true); }} className="text-xs text-accent hover:underline">Edit</button>
+        <button onClick={() => { setValue(current); setEditing(true); }} className={LINK}>Edit</button>
       </div>
     );
   }
@@ -118,18 +123,18 @@ function UsernameForm({ current, highlight, onSaved }: { current: string; highli
   };
 
   return (
-    <div className="px-1">
+    <div>
       {highlight && <p className="mb-1 text-xs text-amber-600">Pick a username so others can share with you.</p>}
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-1.5">
         <span className="text-sm text-muted">@</span>
         <input
           autoFocus
           value={value}
           onChange={(e) => setValue(e.target.value)}
           placeholder="username"
-          className="min-w-0 flex-1 rounded border border-border bg-background px-2 py-1 text-sm outline-none focus:border-accent"
+          className={INPUT}
         />
-        <button onClick={save} disabled={busy} className="rounded bg-accent px-2 py-1 text-xs font-medium text-white disabled:opacity-50">Save</button>
+        <button onClick={save} disabled={busy} className={PRIMARY}>Save</button>
       </div>
       {err && <p className="mt-1 text-xs text-red-500">{err}</p>}
     </div>
@@ -138,12 +143,12 @@ function UsernameForm({ current, highlight, onSaved }: { current: string; highli
 
 function ProviderRow({ label, linked, onLink }: { label: string; linked: boolean; onLink: () => Promise<void> }) {
   return (
-    <div className="flex items-center justify-between px-1 text-sm">
+    <div className="flex items-center justify-between text-sm">
       <span>{label}</span>
       {linked ? (
         <span className="text-xs text-emerald-600">Linked</span>
       ) : (
-        <button onClick={() => void onLink()} className="text-xs text-accent hover:underline">Link</button>
+        <button onClick={() => void onLink()} className={LINK}>Link</button>
       )}
     </div>
   );
@@ -157,27 +162,27 @@ function PasswordRow({ linked, onSet }: { linked: boolean; onSet: (pw: string) =
 
   if (linked) {
     return (
-      <div className="flex items-center justify-between px-1 text-sm">
+      <div className="flex items-center justify-between text-sm">
         <span>Email &amp; password</span>
         <span className="text-xs text-emerald-600">Linked</span>
       </div>
     );
   }
   return (
-    <div className="px-1 text-sm">
+    <div className="text-sm">
       <div className="flex items-center justify-between">
         <span>Email &amp; password</span>
-        <button onClick={() => setOpen((v) => !v)} className="text-xs text-accent hover:underline">Add</button>
+        <button onClick={() => setOpen((v) => !v)} className={LINK}>Add</button>
       </div>
       {open && (
-        <div className="mt-1 flex items-center gap-1">
+        <div className="mt-1.5 flex items-center gap-1.5">
           <input
             type="password"
             value={pw}
             minLength={6}
             onChange={(e) => setPw(e.target.value)}
             placeholder="New password"
-            className="min-w-0 flex-1 rounded border border-border bg-background px-2 py-1 text-xs outline-none focus:border-accent"
+            className={INPUT}
           />
           <button
             disabled={busy || pw.length < 6}
@@ -187,7 +192,7 @@ function PasswordRow({ linked, onSet }: { linked: boolean; onSet: (pw: string) =
               catch (e) { setMsg(e instanceof Error ? e.message : String(e)); }
               finally { setBusy(false); }
             }}
-            className="rounded bg-accent px-2 py-1 text-xs font-medium text-white disabled:opacity-50"
+            className={PRIMARY}
           >
             Set
           </button>
@@ -197,4 +202,3 @@ function PasswordRow({ linked, onSet }: { linked: boolean; onSet: (pw: string) =
     </div>
   );
 }
-

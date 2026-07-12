@@ -199,6 +199,12 @@ export interface LibraryStore {
   getNoteMeta(id: EntityId): Promise<NoteMeta | undefined>;
   createNote(input: CreateNoteInput): Promise<NoteMeta>;
   updateNoteMeta(id: EntityId, patch: Partial<NoteMeta>): Promise<NoteMeta>;
+  /**
+   * PERMANENTLY deletes the note (metadata, package, and assets) — not
+   * recoverable. Soft-delete to "Recently Deleted" is
+   * `updateNoteMeta(id, { deletedAt })`; callers should soft-delete first and
+   * only call this on already-trashed notes.
+   */
   deleteNote(id: EntityId): Promise<void>;
   moveNote(id: EntityId, toNotebookId: EntityId): Promise<void>;
   /**

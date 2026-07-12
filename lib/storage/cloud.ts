@@ -17,7 +17,7 @@ import type { DocumentTree } from "@/lib/blocks/types";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { getCachedUserId } from "@/lib/supabase/session";
 import { bytesToPgHex, pgHexToBytes } from "@/lib/collab/bytes";
-import { base64ToBlob, blobToBase64, remapTreeAssetIds } from "./bundle";
+import { base64ToBlob, blobToBase64, remapSelfNoteLinks, remapTreeAssetIds } from "./bundle";
 import type {
   AssetBlob,
   AssetRef,
@@ -401,7 +401,8 @@ export class SupabaseLibraryStore implements LibraryStore {
       assetIdMap.set(oldId, ref.id);
       refs.push(ref);
     }
-    const tree = remapTreeAssetIds(bundle.pkg.tree, assetIdMap);
+    // Fresh asset ids + repoint self-referential note links at the new id.
+    const tree = remapSelfNoteLinks(remapTreeAssetIds(bundle.pkg.tree, assetIdMap), bundle.pkg.noteId, newNoteId);
     await this.saveNote({
       noteId: newNoteId, tree, latexCache: bundle.pkg.latexCache, assets: refs,
       updatedAt: new Date().toISOString(), rev: null,

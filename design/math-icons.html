@@ -1,0 +1,67 @@
+<!doctype html><html><head><meta charset="utf-8">
+<link rel="stylesheet" href="kit.css">
+<style>
+ body{background:#ececed;padding:40px}
+ h1{font-size:22px;font-weight:680;letter-spacing:-.02em;margin:0 0 4px}
+ .sub{color:#76767e;font-size:13px;margin:0 0 26px}
+ .panel{background:#fff;border:1px solid var(--line);border-radius:14px;padding:24px 28px;margin-bottom:20px;max-width:900px}
+ .lbl{font-size:10.5px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);font-weight:600;margin:0 0 18px}
+ .ba{display:grid;grid-template-columns:repeat(2,1fr);gap:22px 40px}
+ .pair{display:flex;align-items:center;gap:14px}
+ .tile{width:54px;height:54px;border:1px solid var(--line);border-radius:11px;display:grid;place-items:center;color:#17171c;flex:none}
+ .tile.new{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+ .pair .meta{margin-left:6px}
+ .pair .meta .nm{font-size:13px;font-weight:560}
+ .pair .meta .ds{font-size:11px;color:var(--muted)}
+ .arr{color:var(--faint);font-size:17px}
+ .grid{display:grid;grid-template-columns:repeat(6,1fr);gap:8px}
+ .cell{display:flex;flex-direction:column;align-items:center;gap:9px;padding:16px 4px;border-radius:9px}
+ .cell:hover{background:rgba(0,0,0,.02)}
+ .cell small{font-size:10px;color:var(--muted);text-align:center}
+ .ic svg{width:100%;height:100%}
+ .mtool{display:inline-flex;gap:4px;border:1px solid var(--line);border-radius:9px;padding:6px;background:#fff}
+ .mbtn{width:40px;height:40px;border:1px solid var(--line);border-radius:7px;display:grid;place-items:center;color:#17171c}
+ .msep{width:1px;height:22px;background:var(--line);margin:0 5px;align-self:center}
+</style></head><body>
+<h1>Redesigned math &amp; structure icons</h1>
+<p class="sub">Drawn shapes — placeholder boxes (□), real radicals/integrals, a symbol-palette — instead of literal glyphs stuffed into a box.</p>
+
+<div class="panel">
+  <div class="lbl">Before → after</div>
+  <div class="ba" id="ba"></div>
+</div>
+
+<div class="panel">
+  <div class="lbl">Full structure &amp; math set</div>
+  <div class="grid" id="grid"></div>
+</div>
+
+<div class="panel">
+  <div class="lbl">In an editor math toolbar</div>
+  <div class="mtool" id="mtool"></div>
+</div>
+
+<script src="icons.js"></script>
+<script>
+const OLD={
+ inlineformula:'<rect x="3.5" y="6" width="17" height="12" rx="2.4"/><text x="12" y="15.4" text-anchor="middle" font-size="8.5" font-style="italic" fill="currentColor" stroke="none" font-family="Georgia,serif">x²</text>',
+ displayeq:'<line x1="4" y1="6.5" x2="20" y2="6.5"/><line x1="4" y1="17.5" x2="20" y2="17.5"/><text x="12" y="15.4" text-anchor="middle" font-size="10" fill="currentColor" stroke="none" font-family="Georgia,serif">∑</text>',
+ functions:'<polyline points="3.5,13 6.2,18 9.8,5 20,5"/>',
+ choosesymbol:'<rect x="4.5" y="4.5" width="15" height="15" rx="2.2" stroke-dasharray="3 2.6"/><text x="12" y="16" text-anchor="middle" font-size="11" fill="currentColor" stroke="none" font-family="Georgia,serif">?</text>',
+};
+const BA=[['inlineformula','Inline formula','box + “x²”'],['displayeq','Display equation','rules + “∑”'],['functions','Functions & symbols','a bare radical'],['choosesymbol','Choose symbol','box + “?”']];
+function svg(i){return '<svg viewBox="0 0 24 24" style="width:30px;height:30px">'+i+'</svg>';}
+document.getElementById('ba').innerHTML=BA.map(([k,nm,ds])=>`
+ <div class="pair">
+   <span class="tile"><span class="ic">${svg(OLD[k])}</span></span>
+   <span class="arr">→</span>
+   <span class="tile new"><span class="ic" data-ic="${k}" style="width:30px;height:30px"></span></span>
+   <span class="meta"><div class="nm">${nm}</div><div class="ds">was: ${ds}</div></span>
+ </div>`).join('');
+const GRID=[['fraction','Fraction'],['sqrt','Square root'],['power','Power'],['integral','Integral'],['sum','Sum'],['matrix','Matrix'],['inlineformula','Inline formula'],['displayeq','Display eq'],['functions','Functions & sym'],['choosesymbol','Choose symbol'],['editformula','Edit formula']];
+document.getElementById('grid').innerHTML=GRID.map(([k,l])=>`<div class="cell"><span class="ic" data-ic="${k}" style="width:30px;height:30px"></span><small>${l}</small></div>`).join('');
+const TOOL=['fraction','sqrt','power','sum','integral','matrix','sep','inlineformula','displayeq','functions','choosesymbol'];
+document.getElementById('mtool').innerHTML=TOOL.map(k=>k==='sep'?'<span class="msep"></span>':`<span class="mbtn"><span class="ic" data-ic="${k}" style="width:22px;height:22px"></span></span>`).join('');
+hydrate();
+</script>
+</body></html>

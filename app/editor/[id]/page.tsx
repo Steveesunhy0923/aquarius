@@ -1,36 +1,62 @@
 "use client";
 
 import { BlockView } from "@/components/BlockView";
+import { DocStyleBar } from "@/components/DocStyleBar";
+import { EditBox, type EditBoxHandle } from "@/components/EditBox";
+import { EditorSidebar } from "@/components/EditorSidebar";
+import { uiPrompt } from "@/components/ui/dialogs";
 import { ExportMenu } from "@/components/ExportMenu";
 import { FigureBox } from "@/components/FigureBox";
+import { FigureControls } from "@/components/FigureControls";
+import { FormulaEditBox, StructuralFormulaBox } from "@/components/FormulaEditBox";
 import { GraphEditor } from "@/components/GraphEditor";
 import { ImageRowEditor } from "@/components/ImageRowEditor";
-import { Katex } from "@/components/Katex";
+import { InkInsertPanel } from "@/components/ink/InkInsertPanel";
 import { SymbolPicker } from "@/components/SymbolPicker";
-import { Icon, type IconName } from "@/components/Icon";
+import { SymbolToolbar } from "@/components/SymbolToolbar";
+import { Icon } from "@/components/Icon";
 import { TablePicker } from "@/components/TablePicker";
 import { TableRowEditor } from "@/components/TableRowEditor";
+import {
+  HEAD_BTN,
+  HEAD_BTN_BASE,
+  HEAD_BTN_HOVER,
+  HighlightButton,
+  ICON_BTN,
+  ListToolButton,
+  ToolButton,
+} from "@/components/ToolbarControls";
 import { DesignPicker } from "@/components/DesignPicker";
 import { ShareDialog } from "@/components/ShareDialog";
-import { MathField, activeMathField, activeTextInserter } from "@/components/MathField";
-import { MathEdit, activeMathEdit } from "@/components/MathEdit";
-import { math as makeMathBlock } from "@/lib/blocks/factory";
-import { insertSnippet } from "@/lib/matheditor";
+import { activeMathField, activeTextInserter } from "@/components/MathField";
+import { activeMathEdit } from "@/components/MathEdit";
+import { isStructural, structuralEquation } from "@/lib/matheditor";
 import { PresenceAvatars } from "@/components/PresenceAvatars";
 import { TemplateApplyDialog } from "@/components/TemplateApplyDialog";
-import { getMyAccess, listCollaborators, type Access } from "@/lib/sharing/sharing";
+import { getMyAccess, listCollaborators, markSharedNoteOpened, type Access } from "@/lib/sharing/sharing";
 import { useCollab, type PeerInfo } from "@/lib/collab";
 import { getSettings, setSettings } from "@/lib/settings/settings";
 import { freshTree, saveTemplate, type BuiltInBackground, type SavedTemplate } from "@/lib/templates/templates";
+import { freshBlocks, listSavedModules, recordModuleUse, saveModule, updateModule, type Module } from "@/lib/templates/modules";
+import { ModuleEditorDialog } from "@/components/ModuleEditorDialog";
+import { NoteLinkPicker, type NoteLinkPick } from "@/components/NoteLinkPicker";
+import { makeNoteHref, NOTE_LINK_EVENT, type NoteLinkTarget } from "@/lib/blocks/notelink";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { documentToLatex } from "@/lib/blocks";
 import { emptyDocument } from "@/lib/blocks/types";
+import { calloutColorOf, withCalloutColor } from "@/lib/blocks/callouts";
+import { isEmptyBlock, isEmptyDoc } from "@/lib/blocks/empty";
 import {
-  CALLOUT_COLORS,
-  calloutColorOf,
-  isHexColor,
-  withCalloutColor,
-} from "@/lib/blocks/callouts";
+  computeOutline,
+  hiddenBlockIds,
+  isHeadingCollapsed,
+  reorderSectionBlocks,
+  sectionRange,
+  type OutlineItem,
+} from "@/lib/blocks/outline";
+import { paginate } from "@/lib/editor/pagination";
+import { moveRowItemAcross, reorderRowItem, type RowItems } from "@/lib/editor/rowItems";
+import type { DocHandle } from "@/lib/editor/types";
 import {
   HEADING_NAMES,
   computeHeadingNumbers,
@@ -53,27 +79,16 @@ import {
   blockEditSource,
   displayFromSource,
   hasContent,
-  inlineMathSpans,
   isParagraph,
   paragraphFromSource,
-  previewLatex,
-  replaceInlineMathSpan,
 } from "@/lib/blocks/source";
 import { graphModel, makeGraphBlock, withGraph, type GraphData } from "@/lib/blocks/graph";
 import { DEFAULT_HIGHLIGHT } from "@/lib/blocks/format";
-import { A4_W, A4_H, FONTS, FONT_SIZES, LINE_SPACINGS, INDENTS, fontFamilyOf } from "@/lib/blocks/docstyle";
+import { A4_W, A4_H, fontFamilyOf } from "@/lib/blocks/docstyle";
+import { listItems, listOrdered, makeList, withList, type ListMarker } from "@/lib/blocks/lists";
 import {
-  BULLET_MARKERS,
-  NUMBER_MARKERS,
-  listItems,
-  listOrdered,
-  makeList,
-  withList,
-  type ListMarker,
-} from "@/lib/blocks/lists";
-import {
-  TABLE_STYLES,
   demoRows,
+  makeTableBlock,
   tableAlign,
   tableItems,
   withTables,
@@ -82,11 +97,10 @@ import {
 } from "@/lib/blocks/tables";
 import type { Block, DocumentStyle, DocumentTree, Placement } from "@/lib/blocks/types";
 import { getStore, isCloudActive } from "@/lib/storage";
-import type { NotePackage, NoteMeta } from "@/lib/storage/types";
+import type { NotePackage } from "@/lib/storage/types";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
-  forwardRef,
   useCallback,
   useEffect,
   useImperativeHandle,
@@ -96,28 +110,10 @@ import {
   useState,
   type CSSProperties,
   type ChangeEvent,
-  type FocusEvent,
-  type KeyboardEvent,
   type MouseEvent,
   type MutableRefObject,
   type ReactNode,
-  type RefObject,
 } from "react";
-
-/** Imperative API a DocumentEditor exposes to the page (for the section outline). */
-export interface DocHandle {
-  scrollToBlock: (id: string) => void;
-  toggleSection: (id: string) => void;
-  reorderSections: (fromHeadingId: string, toHeadingId: string | null) => void;
-}
-
-/** One entry in the section outline (a heading). */
-export interface OutlineItem {
-  id: string;
-  text: string;
-  level: number;
-  collapsed: boolean;
-}
 
 interface DocProps {
   id: string;
@@ -132,187 +128,11 @@ interface DocProps {
   handleRef: MutableRefObject<DocHandle | null>;
 }
 
-const SYM_KEY = "aquarius.symbols";
-const DEFAULT_TB1 = ["\\frac{}{}", "\\sqrt{}", "^{}", "\\sum_{}^{}", "\\int_{}^{}", "\\sin", "\\cos", "\\neq", "\\pi", "\\alpha"];
-/** Structure inserts that get a drawn icon instead of a KaTeX preview. */
-const STRUCT_ICON: Record<string, IconName> = {
-  "\\frac{}{}": "fraction",
-  "\\sqrt{}": "sqrt",
-  "^{}": "power",
-  "\\sum_{}^{}": "sum",
-  "\\int_{}^{}": "integral",
-};
-// Human-readable names for the structure buttons, used as their accessible label
-// (the raw LaTeX makes a poor screen-reader announcement).
-const STRUCT_LABEL: Record<string, string> = {
-  "\\frac{}{}": "fraction",
-  "\\sqrt{}": "square root",
-  "^{}": "exponent",
-  "\\sum_{}^{}": "summation",
-  "\\int_{}^{}": "integral",
-};
-// Eight editable symbol slots; the "Edit" button lets users change any of them.
-const DEFAULT_SYMBOLS = ["\\infty", "\\rightarrow", "\\in", "\\leq", "\\geq", "\\neq", "\\pm", "\\times"];
-const SYMBOL_COUNT = DEFAULT_SYMBOLS.length;
-
-/** Shared sizing so every toolbar icon button is about the same size. */
-const ICON_BTN =
-  "grid h-9 min-w-9 place-items-center rounded-md border border-border px-2 text-sm hover:border-accent";
-
-/** Borderless icon button for the top bar (drawn glyphs, not word labels).
- *  `_BASE` is layout + resting/disabled color only; `HEAD_BTN` adds the hover
- *  state. A toggle that has its own active style composes from `_BASE` so it
- *  never carries two competing `hover:` utilities (Tailwind picks the winner by
- *  emission order, which would be fragile). */
-const HEAD_BTN_BASE =
-  "grid h-9 w-9 place-items-center rounded-md transition disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-muted";
-const HEAD_BTN_HOVER = "text-muted hover:bg-foreground/[0.06] hover:text-foreground";
-const HEAD_BTN = `${HEAD_BTN_BASE} ${HEAD_BTN_HOVER}`;
-
-/** Preset highlight colors offered in the H-button dropdown. */
-const HIGHLIGHT_COLORS = ["#fde047", "#bbf7d0", "#bfdbfe", "#fbcfe8", "#fed7aa", "#e9d5ff", "#fecaca", "#a7f3d0"];
-
-/** Greedily pack blocks into A4-height pages by their measured heights. */
-function paginate(
-  blocks: Block[],
-  heights: Record<string, number>,
-  pageContent: number,
-): string[][] {
-  const pages: string[][] = [];
-  let cur: string[] = [];
-  let curH = 0;
-  for (const b of blocks) {
-    const h = (heights[b.id] ?? 0) + 4; // + inter-block gap
-    if (cur.length && curH + h > pageContent) {
-      pages.push(cur);
-      cur = [];
-      curH = 0;
-    }
-    cur.push(b.id);
-    curH += h;
-  }
-  pages.push(cur); // always at least one page (possibly empty)
-  return pages;
-}
-
-/** A block with no meaningful content (used to auto-remove abandoned boxes). */
-function isEmptyBlock(b: Block): boolean {
-  switch (b.type) {
-    case "heading":
-      return !(b.value && b.value.trim());
-    case "list":
-      return listItems(b).every((x) => !x.trim());
-    case "image":
-    case "table":
-    case "code":
-    case "tikz":
-    case "graph":
-      return false;
-    default:
-      return !hasContent(b); // text or formula
-  }
-}
-
-/** A document with no meaningful content (used to discard abandoned new notes). */
-function isEmptyDoc(blocks: Block[]): boolean {
-  return blocks.length === 0 || blocks.every(isEmptyBlock);
-}
-
-// ─── Section outline helpers ──────────────────────────────────────────────────
-
-const isHeadingCollapsed = (b: Block): boolean => !!b.attrs?.collapsed;
-
-/** The flat outline (one entry per heading), in document order. */
-function computeOutline(blocks: Block[]): OutlineItem[] {
-  const out: OutlineItem[] = [];
-  for (const b of blocks) {
-    if (b.type === "heading") {
-      out.push({ id: b.id, text: b.value?.trim() || "Untitled heading", level: headingLevel(b), collapsed: isHeadingCollapsed(b) });
-    }
-  }
-  return out;
-}
-
-/**
- * Block ids hidden because they live inside a collapsed section. A collapsed
- * heading hides every following block (incl. deeper headings) until the next
- * heading whose level is the same or higher. The collapsed heading itself shows.
- */
-function hiddenBlockIds(blocks: Block[]): Set<string> {
-  const hidden = new Set<string>();
-  let hiding = false;
-  let threshold = 0;
-  for (const b of blocks) {
-    if (b.type === "heading") {
-      const lvl = headingLevel(b);
-      if (hiding) {
-        if (lvl <= threshold) hiding = false; // this heading starts a visible region
-        else { hidden.add(b.id); continue; } // deeper heading — stay hidden
-      }
-      if (isHeadingCollapsed(b)) { hiding = true; threshold = lvl; }
-      continue;
-    }
-    if (hiding) hidden.add(b.id);
-  }
-  return hidden;
-}
-
-/** [start, end) index range of a heading's section subtree (heading + its body). */
-function sectionRange(blocks: Block[], headingId: string): [number, number] | null {
-  const start = blocks.findIndex((b) => b.id === headingId);
-  if (start < 0 || blocks[start].type !== "heading") return null;
-  const level = headingLevel(blocks[start]);
-  let end = start + 1;
-  while (end < blocks.length) {
-    const b = blocks[end];
-    if (b.type === "heading" && headingLevel(b) <= level) break;
-    end++;
-  }
-  return [start, end];
-}
-
-/** Move the `from` heading's whole section relative to the `to` section (or end). */
-function reorderSectionBlocks(blocks: Block[], fromId: string, toId: string | null): Block[] {
-  const from = sectionRange(blocks, fromId);
-  if (!from) return blocks;
-  const moving = blocks.slice(from[0], from[1]);
-  const rest = [...blocks.slice(0, from[0]), ...blocks.slice(from[1])];
-  if (toId === null) return [...rest, ...moving]; // drop at end
-  const origTo = sectionRange(blocks, toId);
-  const movingDown = !!origTo && origTo[0] > from[0];
-  const to = sectionRange(rest, toId);
-  if (!to) return blocks; // target was inside the moved subtree (e.g. its own child)
-  // Dragging down → drop AFTER the target section; dragging up → drop BEFORE it.
-  const at = movingDown ? to[1] : to[0];
-  return [...rest.slice(0, at), ...moving, ...rest.slice(at)];
-}
-
-function readLS(key: string, fallback: string[]): string[] {
-  if (typeof window === "undefined") return fallback;
-  try {
-    const v = localStorage.getItem(key);
-    const parsed = v ? (JSON.parse(v) as unknown) : null;
-    return Array.isArray(parsed) ? (parsed as string[]) : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-type Picker = { kind: "symbol"; index: number } | { kind: "insert" } | null;
 type Selected = { id: string; index: number; kind: "image" | "table" } | null;
 
-/** A structural (block-tree) formula — tagged so legacy rawMath formulas (no
- *  marker) keep opening in MathLive. Only new equations made by the beta editor. */
-function isStructural(b: Block): boolean {
-  return b.type === "math" && b.attrs?.editor === "structural";
-}
-/** Build a new tagged structural math block, optionally seeded with a snippet. */
-function structuralEquation(latex?: string): Block {
-  const m = makeMathBlock();
-  const tagged: Block = { ...m, attrs: { ...(m.attrs ?? {}), editor: "structural" } };
-  if (!latex) return tagged;
-  return insertSnippet(tagged, { rowOwnerId: tagged.id, slot: "body", index: 0 }, latex).tree;
-}
+// Item accessors for the generic figure-row reorder/move (lib/editor/rowItems).
+const IMAGE_ROW: RowItems<ImageItem> = { items: imageItems, withItems: withImages };
+const TABLE_ROW: RowItems<TableData> = { items: tableItems, withItems: withTables };
 
 function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, onSaved, handleRef }: DocProps) {
   const { loading: authLoading, user } = useAuth();
@@ -328,16 +148,16 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   const [color, setColor] = useState<string | null>(null);
   const [selected, setSelected] = useState<Selected>(null);
 
-  const toolbar1 = DEFAULT_TB1; // fixed default structures (no longer user-editable)
-  // Eight editable symbol slots (always exactly SYMBOL_COUNT), changed via "Edit".
-  const [symbols, setSymbols] = useState<string[]>(() =>
-    [...readLS(SYM_KEY, DEFAULT_SYMBOLS), ...DEFAULT_SYMBOLS].slice(0, SYMBOL_COUNT),
-  );
-  const [editSyms, setEditSyms] = useState(false);
-  const [picker, setPicker] = useState<Picker>(null);
+  const [symbolsOpen, setSymbolsOpen] = useState(false); // the "browse all symbols" picker
   const [tablePicker, setTablePicker] = useState(false);
+  const [inkOpen, setInkOpen] = useState(false); // handwriting → LaTeX bottom sheet
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [confirmTemplate, setConfirmTemplate] = useState<DocumentTree | null>(null);
+  const [moduleEdit, setModuleEdit] = useState<Module | null>(null); // module builder via the / menu's pencil
+  // Note-link picker: the [from,to) draft range the picked link will replace,
+  // what that range contained at open time (so a stale range never splices
+  // blind), and an optional user-selected label (toolbar path).
+  const [linkPicker, setLinkPicker] = useState<{ from: number; to: number; expect: string; label?: string } | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
   // Current user's access to this note: "owner" (incl. local/guest), an editor
   // role, or a read-only role. Drives the Share dialog and read-only mode.
@@ -345,6 +165,10 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   const readOnly = access === "viewer" || access === "commenter";
   const readOnlyRef = useRef(readOnly);
   readOnlyRef.current = readOnly;
+  // The signed-in user has NO access to this cloud note (never shared, or the
+  // owner un-shared/deleted it). Renders a dead-end screen instead of a blank
+  // phantom document whose saves would silently fail against RLS.
+  const [gone, setGone] = useState(false);
   // Real-time co-editing is eligible only for a SHARED cloud note (a Role access
   // implies it's shared; an owner must actually have collaborators).
   const [shared, setShared] = useState(false);
@@ -403,6 +227,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   const initialTitleRef = useRef<string | null>(null);
   const deletedRef = useRef(false); // note is being discarded; suppress saves
   const printedRef = useRef(false); // guards the one-shot ?print=1 auto-print
+  const jumpedRef = useRef(false); // guards the one-shot ?block=<id> scroll (note links)
 
   useEffect(() => {
     if (primary && typeof window !== "undefined")
@@ -411,12 +236,6 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   useEffect(() => {
     pkgRef.current = pkg;
   }, [pkg]);
-  useEffect(() => {
-    // The editable symbol slots are a global preference shared via localStorage.
-    // In split view both panes persist to the same key (last write wins; the
-    // other pane converges on its next mount) — acceptable for a rare action.
-    if (typeof window !== "undefined") try { localStorage.setItem(SYM_KEY, JSON.stringify(symbols)); } catch { /* noop */ }
-  }, [symbols]);
   // Autosave: debounce a write ~800ms after the last change to the note/title.
   // `saved` starts true (a freshly-loaded note is clean), so this never fires on
   // load — only after a real edit flips it dirty.
@@ -508,7 +327,11 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     if (!isCloudActive()) { setAccess("owner"); return; }
     let alive = true;
     getMyAccess(id)
-      .then((a) => { if (alive) setAccess(a ?? "owner"); })
+      .then((a) => {
+        if (!alive) return;
+        if (a === null) setGone(true); // cloud note we can't see: gone or never ours
+        else setAccess(a);
+      })
       .catch(() => { if (alive) setAccess("owner"); });
     return () => { alive = false; };
   }, [id, authLoading]);
@@ -517,7 +340,13 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   useEffect(() => {
     if (authLoading) return;
     if (!isCloudActive()) { setShared(false); return; }
-    if (access === "viewer" || access === "commenter" || access === "editor") { setShared(true); return; }
+    if (access === "viewer" || access === "commenter" || access === "editor") {
+      setShared(true);
+      // First open of a note shared with me: move it out of the "Shared with
+      // me" inbox into the library's Uncategorized section.
+      void markSharedNoteOpened(id);
+      return;
+    }
     let alive = true;
     listCollaborators(id)
       .then((c) => { if (alive) setShared(c.length > 0); })
@@ -532,6 +361,22 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     if (new URLSearchParams(window.location.search).get("print") !== "1") return;
     printedRef.current = true;
     const t = setTimeout(() => { void printPdf(); }, 600);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pkg]);
+  // Arrived via a note link with a section target (?block=<id>): scroll to it
+  // once the document has loaded and rendered. The one-shot flag is consumed
+  // INSIDE the timeout so a pkg update in the first 500ms (collab initial
+  // sync) re-arms the timer instead of eating the scroll.
+  useEffect(() => {
+    if (!primary || !pkg || jumpedRef.current) return;
+    if (typeof window === "undefined") return;
+    const b = new URLSearchParams(window.location.search).get("block");
+    if (!b) return;
+    const t = setTimeout(() => {
+      jumpedRef.current = true;
+      scrollToBlock(b);
+    }, 500);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pkg]);
@@ -748,15 +593,49 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
 
   // ── section outline (driven from the page's left sidebar) ──────────────────
   function scrollToBlock(blockId: string) {
-    blockEls.current.get(blockId)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    const el = blockEls.current.get(blockId);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+    // Not rendered — a note link can target a heading hidden inside a collapsed
+    // ancestor section: expand the ancestors, then scroll on the next frame.
+    const bs = pkgRef.current?.tree.blocks ?? [];
+    if (!hiddenBlockIds(bs).has(blockId)) return; // truly gone — nothing to do
+    setBlocks((list) => {
+      const at = list.findIndex((b) => b.id === blockId);
+      if (at < 0) return list;
+      return list.map((b) => {
+        if (b.type !== "heading" || !b.attrs?.collapsed) return b;
+        const range = sectionRange(list, b.id);
+        if (!range || at <= range[0] || at >= range[1]) return b;
+        const attrs = { ...b.attrs };
+        delete attrs.collapsed;
+        return { ...b, attrs };
+      });
+    });
+    setTimeout(() => blockEls.current.get(blockId)?.scrollIntoView({ behavior: "smooth", block: "center" }), 120);
   }
+  /** Scroll the page surface back to the top (whole-note link to this pane). */
+  function scrollToTop() {
+    rootRef.current?.querySelector(".print-surface")?.scrollTo({ top: 0, behavior: "smooth" });
+  }
+  // The ink sheet covers the lower ~half of the pane; when it opens, bring the
+  // block being edited (the insertion target) back into the visible half. The
+  // scroll container gains matching bottom padding while the sheet is open.
+  useEffect(() => {
+    if (!inkOpen) return;
+    const target = editingId ?? selected?.id;
+    if (target) setTimeout(() => scrollToBlock(target), 60);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inkOpen]);
   function toggleSection(blockId: string) {
     updateById(blockId, (b) => ({ ...b, attrs: { ...b.attrs, collapsed: !b.attrs?.collapsed } }));
   }
   function reorderSections(fromId: string, toId: string | null) {
     setBlocks((bs) => reorderSectionBlocks(bs, fromId, toId));
   }
-  useImperativeHandle(handleRef, () => ({ scrollToBlock, toggleSection, reorderSections }), [handleRef]);
+  useImperativeHandle(handleRef, () => ({ scrollToBlock, scrollToTop, toggleSection, reorderSections, saveSectionAsModule: (hid: string) => void saveSectionAsModule(hid) }), [handleRef]);
   // Report the outline to the page whenever it actually changes (not every keystroke).
   const lastOutline = useRef("");
   useEffect(() => {
@@ -804,6 +683,75 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     if (edit) startEdit(block);
     else setEditingId(null);
   }
+  /** Slash-insert: rebuild the edited paragraph without its `/query` and splice
+   *  the module's blocks in right after it — ONE tree update, one undo step.
+   *  A paragraph that existed only to host the slash is dropped entirely. */
+  function insertModule(m: Module, cleanedDraft: string) {
+    if (readOnlyRef.current) return;
+    const anchor = editingId;
+    const fresh = freshBlocks(m.blocks);
+    if (fresh.length === 0) return;
+    setBlocks((bs) => {
+      const i = anchor ? bs.findIndex((b) => b.id === anchor) : -1;
+      if (i < 0 || !anchor) return [...bs, ...fresh];
+      const cleaned = withCalloutColor(paragraphFromSource(cleanedDraft, anchor), color);
+      const next = [...bs];
+      if (isEmptyBlock(cleaned)) next.splice(i, 1, ...fresh);
+      else {
+        next[i] = cleaned;
+        next.splice(i + 1, 0, ...fresh);
+      }
+      return next;
+    });
+    recordModuleUse(m.id);
+    setEditingId(null);
+    setSelected(null);
+    setTimeout(() => scrollToBlock(fresh[0].id), 60);
+  }
+
+  /** Pencil in the `/` menu: commit the draft without its `/query` (dropping
+   *  the paragraph if that leaves it empty — same contract as insertModule),
+   *  end the edit, and open the builder on the FRESH stored copy so a stale
+   *  menu snapshot can't clobber a newer version of the module. */
+  function editModule(m: Module, cleanedDraft: string) {
+    if (readOnlyRef.current) return;
+    const anchor = editingId;
+    if (anchor) {
+      setBlocks((bs) => {
+        const i = bs.findIndex((b) => b.id === anchor);
+        if (i < 0) return bs;
+        const cleaned = withCalloutColor(paragraphFromSource(cleanedDraft, anchor), color);
+        const next = [...bs];
+        if (isEmptyBlock(cleaned)) next.splice(i, 1);
+        else next[i] = cleaned;
+        return next;
+      });
+      setEditingId(null);
+      setSelected(null);
+    }
+    setModuleEdit(listSavedModules().find((x) => x.id === m.id) ?? m);
+  }
+
+  /** "Save section as module" (outline hover action): capture the heading's
+   *  whole section (`sectionRange`) as a reusable, personal module. */
+  async function saveSectionAsModule(headingId: string) {
+    const bs = pkgRef.current?.tree.blocks ?? [];
+    const range = sectionRange(bs, headingId);
+    if (!range) return;
+    const section = bs.slice(range[0], range[1]);
+    const name = (
+      await uiPrompt({
+        title: "Save section as module",
+        message: "Modules are reusable sections — type / while writing to insert one.",
+        placeholder: "Module name",
+        initial: bs[range[0]].value?.trim() || "Untitled section",
+        confirmLabel: "Save",
+      })
+    )?.trim();
+    if (!name) return;
+    saveModule(name, section, new Date().toISOString());
+  }
+
   function moveBlock(from: number | null, to: number) {
     if (from == null) return;
     const len = pkgRef.current?.tree.blocks.length ?? 0;
@@ -878,51 +826,85 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     // Not editing: open a new equation (structural when the beta is on).
     addBlock(getSettings().mathEditorBeta ? structuralEquation(latex) : displayFromSource(latex));
   }
+  /** Replace [from, to) of the editing textarea with `insert`, commit, and
+   *  restore focus with the caret after the insertion. */
+  function spliceIntoTextarea(from: number, to: number, insert: string) {
+    const t = taRef.current;
+    if (!t) return;
+    const cur = t.value;
+    const next = cur.slice(0, from) + insert + cur.slice(to);
+    const pos = from + insert.length;
+    setDraft(next);
+    caretRef.current = pos;
+    commit(next, color);
+    requestAnimationFrame(() => {
+      const x = taRef.current;
+      if (x) { x.focus(); try { x.setSelectionRange(pos, pos); } catch { /* noop */ } }
+    });
+  }
   function wrapSelection(prefix: string, suffix: string = prefix) {
     if (!editingId || !editingPara) return;
     const t = taRef.current;
     if (!t) return;
     const s = t.selectionStart ?? 0;
     const e = t.selectionEnd ?? s;
-    const cur = t.value;
-    const sel = cur.slice(s, e) || "text";
-    const next = cur.slice(0, s) + prefix + sel + suffix + cur.slice(e);
-    const pos = s + prefix.length + sel.length + suffix.length;
-    setDraft(next);
-    caretRef.current = pos;
-    commit(next, color);
-    requestAnimationFrame(() => {
-      const x = taRef.current;
-      if (x) { x.focus(); try { x.setSelectionRange(pos, pos); } catch { /* noop */ } }
-    });
+    const sel = t.value.slice(s, e) || "text";
+    spliceIntoTextarea(s, e, prefix + sel + suffix);
   }
-  function insertLink() {
+  async function insertLink() {
     if (!editingId || !editingPara) return;
     const t = taRef.current;
     if (!t) return;
     const s = t.selectionStart ?? 0;
     const e = t.selectionEnd ?? s;
-    const cur = t.value;
-    const sel = cur.slice(s, e) || "link";
-    const url = (typeof window !== "undefined" ? window.prompt("Link URL:", "https://") : "") || "";
+    const sel = t.value.slice(s, e) || "link";
+    // The dialog steals focus once; the toolbar mousedown already armed the
+    // one-shot `sticky` so the edit box stays open across it.
+    const url = (await uiPrompt({ title: "Insert link", placeholder: "https://…", initial: "https://", confirmLabel: "Insert" }))?.trim();
     if (!url) return;
-    const snippet = `[${sel}](${url})`;
-    const next = cur.slice(0, s) + snippet + cur.slice(e);
-    const pos = s + snippet.length;
-    setDraft(next);
-    caretRef.current = pos;
-    commit(next, color);
-    requestAnimationFrame(() => {
-      const x = taRef.current;
-      if (x) { x.focus(); try { x.setSelectionRange(pos, pos); } catch { /* noop */ } }
-    });
+    spliceIntoTextarea(s, e, `[${sel}](${url})`);
   }
-  function onPickSymbol(latex: string) {
-    if (picker?.kind === "symbol") {
-      const idx = picker.index;
-      setSymbols((a) => a.map((x, i) => (i === idx ? latex : x)));
+
+  // ── note links ([[ or the toolbar button → picker → [title](note://…)) ─────
+  /** Open the picker to replace the "[[" trigger range. Arms the one-shot
+   *  `sticky` so the picker's focus-steal doesn't exit the edit box. */
+  function openNoteLinkPicker(from: number, to: number) {
+    if (readOnlyRef.current) return;
+    sticky.current = true;
+    setLinkPicker({ from, to, expect: "[[" });
+  }
+  function toolbarNoteLink() {
+    if (!editingId || !editingPara) return;
+    const t = taRef.current;
+    if (!t) return;
+    const s = t.selectionStart ?? 0;
+    const e = t.selectionEnd ?? s;
+    const sel = t.value.slice(s, e);
+    sticky.current = true;
+    // A selection becomes the link's label (mirrors Insert link's behavior).
+    setLinkPicker({ from: s, to: e, expect: sel, label: sel.trim() || undefined });
+  }
+  function insertNoteLink(pick: NoteLinkPick) {
+    const range = linkPicker;
+    setLinkPicker(null);
+    const ta = taRef.current;
+    if (!range || !ta) return;
+    // Square brackets and inline-math delimiters would break the [text](url)
+    // marker — strip them from whichever label we use.
+    const label =
+      (range.label ?? `${pick.title}${pick.section ? ` › ${pick.section}` : ""}`)
+        .replace(/\\[()]/g, "")
+        .replace(/[[\]]/g, "")
+        .trim() || "note";
+    const marker = `[${label}](${makeNoteHref(pick.noteId, pick.blockId)})`;
+    // The range was captured at open time — only splice if it still matches;
+    // otherwise fall back to the caret rather than cutting arbitrary text.
+    if (ta.value.slice(range.from, range.to) === range.expect) {
+      spliceIntoTextarea(range.from, range.to, marker);
+    } else {
+      const at = ta.selectionStart ?? ta.value.length;
+      spliceIntoTextarea(at, at, marker);
     }
-    setPicker(null);
   }
 
   // ── headings ────────────────────────────────────────────────────────────────
@@ -1028,13 +1010,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     });
   }
   function reorderImage(blockId: string, from: number, to: number) {
-    updateById(blockId, (b) => {
-      const items = [...imageItems(b)];
-      if (from === to || from < 0 || to < 0 || from >= items.length || to >= items.length) return b;
-      const [m] = items.splice(from, 1);
-      items.splice(to, 0, m);
-      return withImages(b, items);
-    });
+    updateById(blockId, (b) => reorderRowItem(IMAGE_ROW, b, from, to));
     setSelected((s) => (s && s.id === blockId ? { ...s, index: to } : s));
   }
   function deleteImage(blockId: string, i: number) {
@@ -1049,7 +1025,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   // ── tables ──────────────────────────────────────────────────────────────────
   function insertTable(style: TableStyle) {
     setTablePicker(false);
-    const block = { id: crypto.randomUUID(), type: "table" as const, attrs: { tables: [{ style, rows: demoRows() }], align: "center" } };
+    const block = makeTableBlock(style, demoRows());
     addBlock(block, false);
     selectItem(block.id, 0, "table");
   }
@@ -1075,13 +1051,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   function tblAddCol() { if (!selected) return; updateTableItem(selected.id, selected.index, (t) => ({ ...t, rows: t.rows.map((r) => [...r, ""]) })); }
   function tblRemoveCol() { if (!selected) return; updateTableItem(selected.id, selected.index, (t) => { const cols = Math.max(1, ...t.rows.map((r) => r.length)); return cols <= 1 ? t : { ...t, rows: t.rows.map((r) => r.slice(0, -1)) }; }); }
   function reorderTable(blockId: string, from: number, to: number) {
-    updateById(blockId, (b) => {
-      const items = [...tableItems(b)];
-      if (from === to || from < 0 || to < 0 || from >= items.length || to >= items.length) return b;
-      const [m] = items.splice(from, 1);
-      items.splice(to, 0, m);
-      return withTables(b, items);
-    });
+    updateById(blockId, (b) => reorderRowItem(TABLE_ROW, b, from, to));
     setSelected((s) => (s && s.id === blockId ? { ...s, index: to } : s));
   }
   function deleteTable(blockId: string, i: number) {
@@ -1099,58 +1069,20 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
       reorderImage(fromId, fromIndex, toIndex);
       return;
     }
-    const fromBlock = pkgRef.current?.tree.blocks.find((b) => b.id === fromId);
-    const toBlock = pkgRef.current?.tree.blocks.find((b) => b.id === toId);
-    if (!fromBlock || !toBlock) return;
-    const item = imageItems(fromBlock)[fromIndex];
-    if (!item) return;
-    const at = Math.max(0, Math.min(toIndex, imageItems(toBlock).length));
-    // Crossing boxes reflows both: drop every object's placement so each block
-    // re-centers and the in-flow LaTeX stays consistent (all-or-none pos).
-    const drop = (it: ImageItem): ImageItem => { const c = { ...it }; delete c.pos; return c; };
-    setBlocks((bs) =>
-      bs.flatMap((b) => {
-        if (b.id === fromId) {
-          const items = imageItems(b).filter((_, k) => k !== fromIndex).map(drop);
-          return items.length ? [withImages(b, items)] : [];
-        }
-        if (b.id === toId) {
-          const items = imageItems(b).map(drop);
-          items.splice(at, 0, drop(item));
-          return [withImages(b, items)];
-        }
-        return [b];
-      }),
-    );
-    setSelected({ id: toId, index: at, kind: "image" });
+    const res = moveRowItemAcross(IMAGE_ROW, pkgRef.current?.tree.blocks ?? [], fromId, fromIndex, toId, toIndex);
+    if (!res) return;
+    setBlocks(res.update);
+    setSelected({ id: toId, index: res.at, kind: "image" });
   }
   function moveTableItem(fromId: string, fromIndex: number, toId: string, toIndex: number) {
     if (fromId === toId) {
       reorderTable(fromId, fromIndex, toIndex);
       return;
     }
-    const fromBlock = pkgRef.current?.tree.blocks.find((b) => b.id === fromId);
-    const toBlock = pkgRef.current?.tree.blocks.find((b) => b.id === toId);
-    if (!fromBlock || !toBlock) return;
-    const item = tableItems(fromBlock)[fromIndex];
-    if (!item) return;
-    const at = Math.max(0, Math.min(toIndex, tableItems(toBlock).length));
-    const drop = (t: TableData): TableData => { const c = { ...t }; delete c.pos; return c; };
-    setBlocks((bs) =>
-      bs.flatMap((b) => {
-        if (b.id === fromId) {
-          const items = tableItems(b).filter((_, k) => k !== fromIndex).map(drop);
-          return items.length ? [withTables(b, items)] : [];
-        }
-        if (b.id === toId) {
-          const items = tableItems(b).map(drop);
-          items.splice(at, 0, drop(item));
-          return [withTables(b, items)];
-        }
-        return [b];
-      }),
-    );
-    setSelected({ id: toId, index: at, kind: "table" });
+    const res = moveRowItemAcross(TABLE_ROW, pkgRef.current?.tree.blocks ?? [], fromId, fromIndex, toId, toIndex);
+    if (!res) return;
+    setBlocks(res.update);
+    setSelected({ id: toId, index: res.at, kind: "table" });
   }
 
   function moveSelected(dir: number) {
@@ -1211,6 +1143,18 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   }
   saveFnRef.current = save;
 
+  if (gone) {
+    return (
+      <div className="grid h-full place-items-center">
+        <div className="text-center">
+          <p className="text-sm text-muted">This note is no longer available — it may have been unshared or deleted.</p>
+          <Link href="/" className="mt-3 inline-flex items-center gap-1.5 text-sm text-accent hover:underline">
+            <Icon name="back" size={15} /> Back to Library
+          </Link>
+        </div>
+      </div>
+    );
+  }
   if (!pkg) {
     return <div className="grid h-full place-items-center text-muted">Opening note…</div>;
   }
@@ -1238,8 +1182,9 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     setShowSource(false);
     setEditingId(null);
     setSelected(null);
-    setPicker(null);
+    setSymbolsOpen(false);
     setTablePicker(false);
+    setInkOpen(false);
     const prev = zoom;
     if (prev !== 1) setZoom(1);
     // Let the re-layout/pagination settle at 100% before invoking print.
@@ -1280,7 +1225,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   } as CSSProperties;
 
   return (
-    <main ref={rootRef} className="flex h-full min-h-0 flex-col" onMouseDown={onActivate}>
+    <main ref={rootRef} className="relative flex h-full min-h-0 flex-col" onMouseDown={onActivate}>
       <input ref={fileRef} type="file" accept="image/*" onChange={onPickImage} className="hidden" />
 
       <header className="print-hide flex items-center gap-3 border-b border-border px-4 py-3">
@@ -1292,7 +1237,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
             <button onMouseDown={(e) => e.preventDefault()} onClick={redo} disabled={redoStack.current.length === 0} title="Redo (⌘/Ctrl+Shift+Z)" aria-label="Redo" className={HEAD_BTN}><Icon name="redo" size={18} /></button>
           </div>
         )}
-        {!readOnly && <button onClick={() => setTemplatesOpen(true)} title="Design — templates & backgrounds" aria-label="Design — templates and backgrounds" className={HEAD_BTN}><Icon name="templates" size={18} /></button>}
+        {!readOnly && <button onClick={() => setTemplatesOpen(true)} title="Design — templates, modules & backgrounds" aria-label="Design — templates, modules and backgrounds" className={HEAD_BTN}><Icon name="templates" size={18} /></button>}
         {collab.active && <PresenceAvatars peers={collab.peers} selfId={user?.id ?? null} connected={collab.connected} />}
         {isCloudActive() && <button onClick={() => setShareOpen(true)} title="Share this document" aria-label="Share" className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent"><Icon name="share" size={16} />Share</button>}
         <button onClick={() => setShowSource((s) => !s)} title={showSource ? "Back to the visual editor" : "Show the LaTeX source"} aria-label={showSource ? "Show visual editor" : "Show LaTeX source"} aria-pressed={showSource} className={`${HEAD_BTN_BASE} ${showSource ? "bg-accent-soft text-accent" : HEAD_BTN_HOVER}`}><Icon name="code" size={18} /></button>
@@ -1330,6 +1275,10 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
         <ToolButton onClick={newImageRow} title="Insert image"><Icon name="image" size={18} /></ToolButton>
         <ToolButton onClick={() => setTablePicker(true)} title="Insert table"><Icon name="table" size={18} /></ToolButton>
         <button onMouseDown={keepFocus} onClick={insertLink} title="Insert link" aria-label="Insert link" className={ICON_BTN}><Icon name="link" size={18} /></button>
+        <button onMouseDown={keepFocus} onClick={toolbarNoteLink} title="Link to another note (or type [[ while writing)" aria-label="Link to another note" className={ICON_BTN}><Icon name="notelink" size={18} /></button>
+        {/* keepFocus (like Insert link): opening the sheet while editing prose keeps the block editor
+            alive, so Insert routes the recognized LaTeX into it as inline math. */}
+        <button onMouseDown={keepFocus} onClick={() => setInkOpen((o) => !o)} title="Handwrite a formula (ink → LaTeX)" aria-label="Handwrite a formula" aria-pressed={inkOpen} className={`grid h-9 min-w-9 place-items-center rounded-md border px-2 text-sm ${inkOpen ? "border-accent bg-accent-soft text-accent" : "border-border hover:border-accent"}`}><Icon name="ink" size={18} /></button>
         <span className="mx-1 h-7 w-px bg-border" />
         {/* Unnumbered · Numbered list */}
         <ListToolButton ordered={false} open={listMenu === "bullet"} onToggle={() => setListMenu((m) => (m === "bullet" ? null : "bullet"))} onInsert={(marker) => insertList(false, marker)} />
@@ -1337,63 +1286,26 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
       </div>
 
       {/* Functions & symbols */}
-      <div className="print-hide flex flex-wrap items-center justify-center gap-1.5 border-b border-border px-6 py-2">
-        {/* Structures — fixed defaults (not user-editable) */}
-        {toolbar1.map((latex, i) => {
-          const sIcon = STRUCT_ICON[latex];
-          return (
-            <button key={i} onMouseDown={keepFocus} onClick={() => onInsert(latex)} title={`Insert ${latex}`} aria-label={`Insert ${STRUCT_LABEL[latex] ?? latex}`} className={ICON_BTN}>
-              {sIcon ? <Icon name={sIcon} size={20} /> : <Katex latex={previewLatex(latex)} />}
-            </button>
-          );
-        })}
-        <span className="mx-2 h-7 w-px bg-border" />
-        {/* Symbols — eight editable slots; "Edit" lets the user change any of them */}
-        {symbols.map((latex, i) => (
-          <button key={i} onMouseDown={(e) => { if (!editSyms) keepFocus(e); else if (editingId) sticky.current = true; }} onClick={() => (editSyms ? setPicker({ kind: "symbol", index: i }) : onInsert(latex))} title={editSyms ? "Click to change this symbol" : `Insert ${latex}`} aria-label={editSyms ? `Change symbol ${i + 1}` : `Insert ${latex}`} className={`${ICON_BTN} ${editSyms ? "border-dashed border-accent/60" : ""}`}>
-            <Katex latex={previewLatex(latex)} />
-          </button>
-        ))}
-        <button onMouseDown={keepFocus} onClick={() => setEditSyms((s) => !s)} title={editSyms ? "Done — finish changing symbols" : "Change the symbols"} aria-label={editSyms ? "Done changing symbols" : "Change the symbols"} aria-pressed={editSyms} className={`grid h-9 min-w-9 place-items-center rounded-md border px-2 ${editSyms ? "border-accent bg-accent-soft text-accent" : "border-border text-muted hover:border-accent"}`}><Icon name="editformula" size={17} /></button>
-        <span className="mx-2 h-7 w-px bg-border" />
-        <button onMouseDown={keepFocus} onClick={() => setPicker({ kind: "insert" })} title="Browse all functions & symbols" aria-label="Browse all functions and symbols" className={ICON_BTN}><Icon name="functions" size={20} /></button>
-      </div>
+      <SymbolToolbar
+        onInsert={onInsert}
+        onBrowse={() => setSymbolsOpen(true)}
+        keepFocus={keepFocus}
+        markSticky={() => { if (editingId) sticky.current = true; }}
+      />
 
       {/* Document settings */}
       {!showSource && (
-        <div className="print-hide flex flex-wrap items-center justify-center gap-3 border-b border-border px-6 py-2 text-xs text-muted">
-          <label className="flex items-center gap-1">Font
-            <select value={fontKey} onChange={(e) => setDocStyle({ fontFamily: e.target.value })} className="rounded border border-border bg-background px-1 py-0.5" style={{ fontFamily }}>
-              {Object.keys(FONTS).map((f) => <option key={f} value={f}>{f}</option>)}
-            </select>
-          </label>
-          <label className="flex items-center gap-1">Size
-            <select value={fontSize} onChange={(e) => setDocStyle({ fontSize: Number(e.target.value) })} className="rounded border border-border bg-background px-1 py-0.5">
-              {FONT_SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
-          </label>
-          <label className="flex items-center gap-1">Spacing
-            <select value={lineSpacing} onChange={(e) => setDocStyle({ lineSpacing: Number(e.target.value) })} className="rounded border border-border bg-background px-1 py-0.5">
-              {LINE_SPACINGS.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
-          </label>
-          <label className="flex items-center gap-1">Indent
-            <select value={indent} onChange={(e) => setDocStyle({ indent: Number(e.target.value) })} className="rounded border border-border bg-background px-1 py-0.5">
-              {INDENTS.map((s) => <option key={s} value={s}>{s === 0 ? "none" : `${s}em`}</option>)}
-            </select>
-          </label>
-          <span className="mx-1 h-4 w-px bg-border" />
-          <span>Pages</span>
-          <div className="inline-flex overflow-hidden rounded border border-border">
-            <button onClick={() => setDocStyle({ pageLayout: "vertical" })} className={`px-2 py-0.5 ${layout === "vertical" ? "bg-accent text-white" : "hover:bg-foreground/5"}`}>Vertical</button>
-            <button onClick={() => setDocStyle({ pageLayout: "horizontal" })} className={`px-2 py-0.5 ${layout === "horizontal" ? "bg-accent text-white" : "hover:bg-foreground/5"}`}>Horizontal</button>
-          </div>
-          <span className="mx-1 h-4 w-px bg-border" />
-          <label className="flex items-center gap-1" title="Page size">Zoom
-            <input type="range" min={0.6} max={1.4} step={0.05} value={zoom} onChange={(e) => setZoom(Number(e.target.value))} className="w-24" />
-            <span className="w-9 text-right">{Math.round(zoom * 100)}%</span>
-          </label>
-        </div>
+        <DocStyleBar
+          fontKey={fontKey}
+          fontFamily={fontFamily}
+          fontSize={fontSize}
+          lineSpacing={lineSpacing}
+          indent={indent}
+          layout={layout}
+          zoom={zoom}
+          onStyle={setDocStyle}
+          onZoom={setZoom}
+        />
       )}
 
       {readOnly && (
@@ -1409,7 +1321,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
           <textarea readOnly value={documentToLatex(pkg.tree)} className="h-[70vh] w-full rounded-lg border border-border bg-surface p-4 font-mono text-sm" />
         </div>
       ) : (
-        <div className="print-surface flex-1 overflow-auto p-8" style={{ background: "var(--background)" }}>
+        <div className={`print-surface flex-1 overflow-auto p-8 ${inkOpen ? "pb-[52vh]" : ""}`} style={{ background: "var(--background)" }}>
           <div className={`print-stack ${layout === "horizontal" ? "flex items-start gap-8" : "flex flex-col items-center gap-8"}`}>
             {pages.map((ids, p) => (
               <div key={p} className={`print-page relative shrink-0 text-foreground shadow-xl ring-1 ring-border ${docStyle.background ? "" : "bg-surface"} ${ids.length === 0 ? "print-hide" : ""} ${p === lastContentPage ? "last-print-page" : ""}`} style={{ width: pageW, minHeight: pageH, background: docStyle.background || undefined, color: docStyle.foreground || undefined }}>
@@ -1457,20 +1369,26 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
         </div>
       )}
 
-      {picker?.kind === "insert" ? (
+      {symbolsOpen && (
         <SymbolPicker
           title="Functions & symbols"
           onPick={onInsert}
-          onClose={() => setPicker(null)}
+          onClose={() => setSymbolsOpen(false)}
           closeOnPick={false}
           keepFocus={keepFocus}
           onNavMouseDown={() => { if (editingId) sticky.current = true; }}
           autoFocusSearch={!editingId}
         />
-      ) : picker ? (
-        <SymbolPicker title="Choose a symbol for this slot" onPick={onPickSymbol} onClose={() => setPicker(null)} />
-      ) : null}
+      )}
       {tablePicker && <TablePicker onPick={insertTable} onClose={() => setTablePicker(false)} />}
+      {inkOpen && !readOnly && (
+        <InkInsertPanel
+          onInsert={onInsert}
+          onClose={() => setInkOpen(false)}
+          markSticky={() => { if (editingId) sticky.current = true; }}
+          suspendEscape={symbolsOpen || tablePicker || templatesOpen || !!confirmTemplate || !!moduleEdit || shareOpen || !!graphEdit}
+        />
+      )}
       {graphEdit && (
         <GraphEditor
           initial={graphEdit.id ? graphModel(blocks.find((b) => b.id === graphEdit.id) ?? { id: "", type: "graph" }) : undefined}
@@ -1488,6 +1406,16 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
         />
       )}
       {shareOpen && <ShareDialog noteId={id} access={access} onClose={() => setShareOpen(false)} />}
+      {linkPicker && (
+        <NoteLinkPicker currentId={id} onPick={insertNoteLink} onClose={() => setLinkPicker(null)} />
+      )}
+      {moduleEdit && (
+        <ModuleEditorDialog
+          initial={{ name: moduleEdit.name, blocks: moduleEdit.blocks }}
+          onSave={(name, blocks) => { updateModule(moduleEdit.id, name, blocks); setModuleEdit(null); }}
+          onClose={() => setModuleEdit(null)}
+        />
+      )}
       {confirmTemplate && (
         <TemplateApplyDialog
           onAdd={(dontAsk) => { if (dontAsk) setSettings({ templateApplyMode: "add" }); applyTemplate(confirmTemplate, "add"); }}
@@ -1559,8 +1487,8 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
             b.id === editingId ? (
               <div className="rounded-md border border-accent/40 bg-surface p-2">
                 <div className="mb-2 flex items-center gap-2 text-xs">
-                  <button onMouseDown={(e) => e.preventDefault()} onClick={() => setListOrdered(b.id, true)} className={`rounded border px-2 py-0.5 ${listOrdered(b) ? "border-accent text-accent" : "border-border text-muted"}`}>1. Numbered</button>
-                  <button onMouseDown={(e) => e.preventDefault()} onClick={() => setListOrdered(b.id, false)} className={`rounded border px-2 py-0.5 ${!listOrdered(b) ? "border-accent text-accent" : "border-border text-muted"}`}>• Bulleted</button>
+                  <button onMouseDown={(e) => e.preventDefault()} onClick={() => setListOrdered(b.id, true)} className={`flex items-center gap-1 rounded border px-2 py-0.5 ${listOrdered(b) ? "border-accent text-accent" : "border-border text-muted"}`}><Icon name="listnumber" size={14} />Numbered</button>
+                  <button onMouseDown={(e) => e.preventDefault()} onClick={() => setListOrdered(b.id, false)} className={`flex items-center gap-1 rounded border px-2 py-0.5 ${!listOrdered(b) ? "border-accent text-accent" : "border-border text-muted"}`}><Icon name="list" size={14} />Bulleted</button>
                   <button onClick={() => endEdit(b.id)} className="ml-auto rounded border border-border px-2 py-0.5">Done</button>
                 </div>
                 <textarea value={listItems(b).join("\n")} autoFocus onChange={(e) => setListText(b.id, e.target.value)} placeholder="One item per line…" rows={Math.max(2, listItems(b).length)} className="w-full resize-none bg-transparent text-sm outline-none" />
@@ -1619,7 +1547,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
             />
           ) : b.id === editingId ? (
             editingPara ? (
-              <EditBox ref={editBoxRef} taRef={taRef} para={editingPara} draft={draft} color={color} previewBlock={withCalloutColor(paragraphFromSource(draft, b.id), color)} onChange={onDraftChange} onColor={pickColor} onExit={() => endEdit(b.id)} sticky={sticky} />
+              <EditBox ref={editBoxRef} taRef={taRef} para={editingPara} draft={draft} color={color} previewBlock={withCalloutColor(paragraphFromSource(draft, b.id), color)} onChange={onDraftChange} onColor={pickColor} onExit={() => endEdit(b.id)} onInsertModule={insertModule} onEditModule={editModule} onNoteLink={openNoteLinkPicker} sticky={sticky} />
             ) : getSettings().mathEditorBeta && isStructural(b) ? (
               <StructuralFormulaBox block={b} onChange={(next) => setBlocks((bs) => bs.map((x) => (x.id === b.id ? next : x)), true)} onExit={() => endEdit(b.id)} sticky={sticky} />
             ) : (
@@ -1640,59 +1568,22 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   // ── inline control panel under the selected image/table block ──────────────
   function renderControls(block: Block): ReactNode {
     if (!selected) return null;
-    const aligns: ImageAlign[] = ["left", "center", "right"];
-    const curAlign = selected.kind === "image" ? imageAlign(block) : tableAlign(block);
-    const count = selected.kind === "image" ? imageItems(block).length : tableItems(block).length;
-
     return (
-      <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-sm">
-        <span className="font-medium">{selected.kind === "image" ? "Picture" : "Table"} #{selected.index + 1}</span>
-        <span className="mx-1 h-5 w-px bg-border" />
-
-        {selected.kind === "image" && (() => {
-          const item = imageItems(block)[selected.index];
-          if (!item) return null;
-          return (
-            <>
-              <span className="text-muted">Size</span>
-              <input type="range" min={5} max={100} value={item.width ?? 50} onChange={(e) => imgWidth(Number(e.target.value))} className="w-40" />
-              <input type="number" min={5} max={100} value={item.width ?? ""} placeholder="auto" onChange={(e) => imgWidth(e.target.value === "" ? undefined : Number(e.target.value))} className="w-14 rounded border border-border bg-background px-1 text-center" />
-              <span className="text-muted">%</span>
-              <span className="mx-1 h-5 w-px bg-border" />
-            </>
-          );
-        })()}
-
-        {selected.kind === "table" && (() => {
-          const t = tableItems(block)[selected.index];
-          if (!t) return null;
-          return (
-            <>
-              <span className="text-muted">Style</span>
-              <select value={t.style} onChange={(e) => tblStyle(e.target.value as TableStyle)} className="rounded border border-border bg-background px-1 py-0.5">
-                {TABLE_STYLES.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-              <button onClick={tblAddRow} title="Add row" aria-label="Add row" className="flex items-center gap-1 rounded border border-border px-1.5 py-0.5 hover:border-accent"><Icon name="plus" size={13} />Row</button>
-              <button onClick={tblRemoveRow} title="Remove row" aria-label="Remove row" className="flex items-center gap-1 rounded border border-border px-1.5 py-0.5 hover:border-accent"><Icon name="minus" size={13} />Row</button>
-              <button onClick={tblAddCol} title="Add column" aria-label="Add column" className="flex items-center gap-1 rounded border border-border px-1.5 py-0.5 hover:border-accent"><Icon name="plus" size={13} />Col</button>
-              <button onClick={tblRemoveCol} title="Remove column" aria-label="Remove column" className="flex items-center gap-1 rounded border border-border px-1.5 py-0.5 hover:border-accent"><Icon name="minus" size={13} />Col</button>
-              <span className="mx-1 h-5 w-px bg-border" />
-            </>
-          );
-        })()}
-
-        <span className="text-muted">Align</span>
-        {aligns.map((a) => (
-          <button key={a} onClick={() => rowAlign(a)} className={`rounded px-1.5 py-0.5 capitalize ${curAlign === a ? "bg-accent text-white" : "border border-border hover:border-accent"}`}>{a}</button>
-        ))}
-        <span className="mx-1 h-5 w-px bg-border" />
-
-        <button onClick={() => moveSelected(-1)} disabled={selected.index === 0} title="Move left" aria-label="Move left" className="grid place-items-center rounded border border-border px-1.5 py-0.5 hover:border-accent disabled:opacity-30"><Icon name="moveleft" size={14} /></button>
-        <button onClick={() => moveSelected(1)} disabled={selected.index >= count - 1} title="Move right" aria-label="Move right" className="grid place-items-center rounded border border-border px-1.5 py-0.5 hover:border-accent disabled:opacity-30"><Icon name="moveright" size={14} /></button>
-        <button onClick={() => (selected.kind === "image" ? addImageToRow(block.id) : addTableToRow(block.id))} title="Add another" aria-label="Add another" className="flex items-center gap-1 rounded border border-border px-2 py-0.5 hover:border-accent"><Icon name="plus" size={13} />Add</button>
-        <button onClick={() => (selected.kind === "image" ? deleteImage(block.id, selected.index) : deleteTable(block.id, selected.index))} title="Delete" aria-label="Delete" className="flex items-center gap-1 rounded border border-border px-2 py-0.5 text-red-500 hover:border-red-400"><Icon name="trash" size={14} />Delete</button>
-        <button onClick={() => setSelected(null)} title="Done" aria-label="Done" className="ml-auto flex items-center gap-1 rounded border border-border px-2 py-0.5 hover:border-accent"><Icon name="close" size={13} />Done</button>
-      </div>
+      <FigureControls
+        block={block}
+        selected={selected}
+        onImgWidth={imgWidth}
+        onTblStyle={tblStyle}
+        onTblAddRow={tblAddRow}
+        onTblRemoveRow={tblRemoveRow}
+        onTblAddCol={tblAddCol}
+        onTblRemoveCol={tblRemoveCol}
+        onAlign={rowAlign}
+        onMove={moveSelected}
+        onAdd={() => (selected.kind === "image" ? addImageToRow(block.id) : addTableToRow(block.id))}
+        onDelete={() => (selected.kind === "image" ? deleteImage(block.id, selected.index) : deleteTable(block.id, selected.index))}
+        onDone={() => setSelected(null)}
+      />
     );
   }
 }
@@ -1708,6 +1599,7 @@ export default function EditorPage() {
   const [notesRev, setNotesRev] = useState(0); // bumped on save → refresh recent files
   const handleA = useRef<DocHandle | null>(null);
   const handleB = useRef<DocHandle | null>(null);
+  const paneBRef = useRef<HTMLDivElement | null>(null); // which pane a note-link click came from
   const bumpNotes = useCallback(() => setNotesRev((v) => v + 1), []);
 
   // Opening the primary doc resets the split; opening a file puts it in pane B.
@@ -1723,6 +1615,34 @@ export default function EditorPage() {
   const onHeadingsA = useCallback((o: OutlineItem[]) => setOutlineA(o), []);
   const onHeadingsB = useCallback((o: OutlineItem[]) => setOutlineB(o), []);
 
+  // Note-link clicks: when the target note is already open in a pane, jump to
+  // it in place (scroll to the linked section — or the top — and focus the
+  // pane) instead of navigating. A link clicked INSIDE pane B to a third note
+  // replaces pane B (keeping the split) rather than navigating pane A away.
+  // Anything else falls through to NoteLink's router.push.
+  useEffect(() => {
+    const onLink = (e: Event) => {
+      const { noteId, blockId, source } =
+        (e as CustomEvent<NoteLinkTarget & { source?: HTMLElement | null }>).detail;
+      const pane = noteId === id ? "a" : noteId === secondId ? "b" : null;
+      if (pane) {
+        e.preventDefault();
+        const handle = pane === "a" ? handleA : handleB;
+        if (blockId) handle.current?.scrollToBlock(blockId);
+        else handle.current?.scrollToTop();
+        setActiveSlot(pane);
+        return;
+      }
+      if (source && paneBRef.current?.contains(source)) {
+        e.preventDefault();
+        openSecond(noteId);
+        if (blockId) setTimeout(() => handleB.current?.scrollToBlock(blockId), 900);
+      }
+    };
+    window.addEventListener(NOTE_LINK_EVENT, onLink);
+    return () => window.removeEventListener(NOTE_LINK_EVENT, onLink);
+  }, [id, secondId, openSecond]);
+
   const split = secondId !== null;
   const active: "a" | "b" = split ? activeSlot : "a";
   const activeHandle = active === "a" ? handleA : handleB;
@@ -1731,7 +1651,7 @@ export default function EditorPage() {
   return (
     <div className="print-flow flex h-screen flex-col">
       <div className="print-hide flex items-center gap-3 border-b border-border px-4 py-2">
-        <Link href="/" className="text-sm text-muted hover:text-accent">← Library</Link>
+        <Link href="/" className="flex items-center gap-1.5 text-sm text-muted hover:text-accent"><Icon name="back" size={14} />Library</Link>
         <span className="text-sm font-semibold tracking-tight">Aquarius</span>
         {split && <span className="text-xs text-muted">Split view — click a pane to focus its tools &amp; outline</span>}
         <span className="ml-auto text-xs text-muted">{split ? "2 / 2 open" : "1 open"}</span>
@@ -1745,135 +1665,11 @@ export default function EditorPage() {
             <DocumentEditor key={id} id={id} primary split={split} onActivate={() => setActiveSlot("a")} onHeadings={onHeadingsA} onSaved={bumpNotes} handleRef={handleA} />
           </div>
           {split && secondId && (
-            <div className={`min-w-0 flex-1 overflow-hidden ${active === "b" ? "print-flow" : "print-hide"} ${active === "b" ? "ring-1 ring-inset ring-accent/50" : ""}`}>
+            <div ref={paneBRef} className={`min-w-0 flex-1 overflow-hidden ${active === "b" ? "print-flow" : "print-hide"} ${active === "b" ? "ring-1 ring-inset ring-accent/50" : ""}`}>
               <DocumentEditor key={secondId} id={secondId} primary={false} split onActivate={() => setActiveSlot("b")} onClose={closeSecond} onHeadings={onHeadingsB} onSaved={bumpNotes} handleRef={handleB} />
             </div>
           )}
         </div>
-      </div>
-    </div>
-  );
-}
-
-/** Left rail: a searchable recent-files list (top) and the section outline (bottom). */
-function EditorSidebar({
-  currentId,
-  secondId,
-  onOpen,
-  outline,
-  handle,
-  notesRev,
-}: {
-  currentId: string;
-  secondId: string | null;
-  onOpen: (id: string) => void;
-  outline: OutlineItem[];
-  handle: MutableRefObject<DocHandle | null>;
-  notesRev: number;
-}) {
-  return (
-    <aside className="print-hide flex w-60 shrink-0 flex-col border-r border-border">
-      <RecentFilesPanel currentId={currentId} secondId={secondId} onOpen={onOpen} notesRev={notesRev} />
-      <SectionOutline outline={outline} handle={handle} />
-    </aside>
-  );
-}
-
-function RecentFilesPanel({ currentId, secondId, onOpen, notesRev }: { currentId: string; secondId: string | null; onOpen: (id: string) => void; notesRev: number }) {
-  const [query, setQuery] = useState("");
-  const [recent, setRecent] = useState<NoteMeta[]>([]);
-  const [results, setResults] = useState<NoteMeta[] | null>(null);
-
-  // Refresh when the open documents change or any pane saves (titles/recency shift).
-  useEffect(() => {
-    getStore().listRecentNotes(60).then(setRecent).catch(() => {});
-  }, [currentId, secondId, notesRev]);
-
-  useEffect(() => {
-    const q = query.trim();
-    if (!q) { setResults(null); return; }
-    let alive = true;
-    const t = setTimeout(() => {
-      getStore().searchNotes(q).then((r) => { if (alive) setResults([...r.title, ...r.content]); }).catch(() => {});
-    }, 200);
-    return () => { alive = false; clearTimeout(t); };
-  }, [query]);
-
-  const list = results ?? recent;
-  return (
-    <div className="flex min-h-0 flex-1 flex-col border-b border-border">
-      <div className="px-3 pb-2 pt-3">
-        <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted">Files</h2>
-        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search files…" className="w-full rounded-md border border-border bg-surface px-2 py-1.5 text-sm outline-none focus:border-accent" />
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-        {list.length === 0 ? (
-          <p className="px-2 py-2 text-xs text-muted">{query.trim() ? "No matches." : "No files yet."}</p>
-        ) : (
-          list.map((n) => {
-            const open = n.id === currentId || n.id === secondId;
-            return (
-              <button
-                key={n.id}
-                onClick={() => onOpen(n.id)}
-                disabled={open}
-                title={open ? "Already open" : "Open on the right (split view)"}
-                className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm ${open ? "bg-accent/10 text-accent" : "hover:bg-foreground/5"}`}
-              >
-                <span className="truncate">{n.title || "Untitled"}</span>
-                {open && <span className="ml-auto shrink-0 text-[10px] uppercase">{n.id === currentId ? "A" : "B"}</span>}
-              </button>
-            );
-          })
-        )}
-      </div>
-    </div>
-  );
-}
-
-/** Overleaf-style outline: click to jump, drag to reorder, eye to hide a section. */
-function SectionOutline({ outline, handle }: { outline: OutlineItem[]; handle: MutableRefObject<DocHandle | null> }) {
-  const dragId = useRef<string | null>(null);
-  return (
-    <div className="flex min-h-0 flex-[1.3] flex-col">
-      <h2 className="px-3 pb-2 pt-3 text-xs font-medium uppercase tracking-wide text-muted">Sections</h2>
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-        {outline.length === 0 ? (
-          <p className="px-2 py-2 text-xs text-muted">No headings yet. Add a Title/Subtitle to outline this document.</p>
-        ) : (
-          <>
-            {outline.map((item) => (
-              <div
-                key={item.id}
-                draggable
-                onDragStart={() => { dragId.current = item.id; }}
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  if (dragId.current && dragId.current !== item.id) handle.current?.reorderSections(dragId.current, item.id);
-                  dragId.current = null;
-                }}
-                className="group flex items-center gap-1 rounded-md hover:bg-foreground/5"
-                style={{ paddingLeft: `${(item.level - 1) * 12}px` }}
-              >
-                <span className="cursor-grab select-none px-0.5 text-muted opacity-0 group-hover:opacity-100" title="Drag to reorder">⠿</span>
-                <button onClick={() => handle.current?.scrollToBlock(item.id)} className={`min-w-0 flex-1 truncate py-1 text-left text-sm ${item.collapsed ? "text-muted line-through" : ""}`} title={item.text}>
-                  {item.text}
-                </button>
-                <button onClick={() => handle.current?.toggleSection(item.id)} title={item.collapsed ? "Show section" : "Hide section"} className="shrink-0 px-1 text-xs text-muted opacity-0 hover:text-accent group-hover:opacity-100">
-                  {item.collapsed ? "🙈" : "👁"}
-                </button>
-              </div>
-            ))}
-            <div
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => { e.preventDefault(); if (dragId.current) handle.current?.reorderSections(dragId.current, null); dragId.current = null; }}
-              className="mt-1 rounded border border-dashed border-transparent py-1 text-center text-[10px] text-muted hover:border-border"
-            >
-              drop here to move to end
-            </div>
-          </>
-        )}
       </div>
     </div>
   );
@@ -1884,339 +1680,4 @@ function HeadingDisplay({ block, number }: { block: Block; number?: string }) {
   const cls = lvl === 1 ? "text-2xl font-bold" : lvl === 2 ? "text-xl font-semibold" : lvl === 3 ? "text-lg font-semibold" : "text-base font-semibold";
   const text = block.value || "Untitled heading";
   return <div className={cls} style={{ textAlign: headingAlign(block) }}>{number ? `${number} ` : ""}{text}</div>;
-}
-
-// ─── Edit box (paragraph/formula) ────────────────────────────────────────────
-export interface EditBoxHandle {
-  /** Open the inline-math box editor, optionally seeded with a structure. */
-  openMath: (seed: string) => void;
-}
-const EditBox = forwardRef<EditBoxHandle, {
-  taRef: RefObject<HTMLTextAreaElement | null>;
-  para: boolean;
-  draft: string;
-  color: string | null;
-  previewBlock: Block;
-  onChange: (text: string, caret: number) => void;
-  onColor: (c: string | null) => void;
-  onExit: () => void;
-  sticky: MutableRefObject<boolean>;
-}>(function EditBox(
-  { taRef, para, draft, color, previewBlock, onChange, onColor, onExit, sticky },
-  ref,
-) {
-  const boxRef = useRef<HTMLDivElement>(null);
-  const [hexDraft, setHexDraft] = useState(color ?? "");
-  useEffect(() => setHexDraft(color ?? ""), [color]);
-
-  // Inline-math: a small MathLive popover for building/editing a formula inside
-  // prose without typing \(…\). Edits go through the SOURCE STRING (the nth
-  // \(…\) span) so the existing commit→paragraphFromSource round-trip is the one
-  // source of truth. `initial` seeds the box (a structure picked from the
-  // toolbar, or the existing formula being edited); `caret` is where a new
-  // formula will be spliced.
-  const [mathPopover, setMathPopover] = useState<
-    { mode: "insert"; caret: number; initial: string } | { mode: "edit"; index: number; initial: string } | null
-  >(null);
-  const spans = para ? inlineMathSpans(draft) : [];
-
-  // Open the box editor. `seed` (empty for a blank formula, or a structure like
-  // \frac{\placeholder{}}{\placeholder{}} from a toolbar button) pre-fills it.
-  const openMath = useCallback((seed: string) => {
-    const ta = taRef.current;
-    const caret = ta?.selectionStart ?? ta?.value.length ?? 0;
-    setMathPopover({ mode: "insert", caret, initial: seed });
-  }, [taRef]);
-  useImperativeHandle(ref, () => ({ openMath }), [openMath]);
-
-  function commitMath(latex: string) {
-    const cur = taRef.current?.value ?? draft; // live source (popover doesn't touch the textarea)
-    setMathPopover((pop) => {
-      if (!pop) return null;
-      if (pop.mode === "insert") {
-        if (latex.trim()) {
-          const c = Math.min(pop.caret, cur.length);
-          const ins = `\\(${latex}\\)`;
-          onChange(cur.slice(0, c) + ins + cur.slice(c), c + ins.length);
-        }
-      } else {
-        onChange(replaceInlineMathSpan(cur, pop.index, latex), cur.length);
-      }
-      return null;
-    });
-  }
-
-  function onFocusOut(e: FocusEvent<HTMLDivElement>) {
-    if (mathPopover) return; // editing an inline formula in the popover — never exit
-    if (boxRef.current && e.relatedTarget && boxRef.current.contains(e.relatedTarget as Node)) return;
-    if (sticky.current) { sticky.current = false; return; }
-    onExit();
-  }
-
-  // Keep Tab inside the box (its default focus-move would blur → exit). Escape
-  // commits/leaves. Tab/Shift+Tab indent/outdent prose; in formula mode it only
-  // holds focus (a literal tab is meaningless whitespace in LaTeX). Reads the
-  // live textarea value, mirroring spliceAtCaret.
-  function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === "Escape") { e.preventDefault(); onExit(); return; }
-    if (e.key !== "Tab") return;
-    e.preventDefault();
-    if (!para) return; // formula: keep focus, don't inject whitespace into LaTeX
-    const ta = e.currentTarget;
-    const value = ta.value;
-    const start = ta.selectionStart ?? 0;
-    const end = ta.selectionEnd ?? start;
-    const restore = (s: number, en: number) =>
-      requestAnimationFrame(() => { try { ta.setSelectionRange(s, en); } catch { /* noop */ } });
-    const outdent = (line: string): number =>
-      line.startsWith("\t") ? 1 : line.startsWith("  ") ? 2 : line.startsWith(" ") ? 1 : 0;
-
-    // Multi-line selection → indent/outdent every line it touches (never replace).
-    if (value.slice(start, end).includes("\n")) {
-      const from = value.lastIndexOf("\n", start - 1) + 1;
-      const lines = value.slice(from, end).split("\n");
-      let firstDelta = 0;
-      let totalDelta = 0;
-      const out = lines.map((line, i) => {
-        // A selection ending on a line boundary yields a trailing "" = the next
-        // line; leave it untouched.
-        if (i === lines.length - 1 && line === "") return line;
-        const delta = e.shiftKey ? -outdent(line) : 1;
-        if (i === 0) firstDelta = delta;
-        totalDelta += delta;
-        return e.shiftKey ? line.slice(-delta) : "\t" + line;
-      });
-      if (totalDelta === 0) return; // nothing to outdent
-      const next = value.slice(0, from) + out.join("\n") + value.slice(end);
-      onChange(next, end + totalDelta);
-      restore(Math.max(from, start + firstDelta), end + totalDelta);
-      return;
-    }
-
-    // Single line: outdent the line, or insert a tab at the caret.
-    if (e.shiftKey) {
-      const from = value.lastIndexOf("\n", start - 1) + 1;
-      const drop = outdent(value.slice(from));
-      if (!drop) return;
-      const pos = Math.max(from, start - drop);
-      onChange(value.slice(0, from) + value.slice(from + drop), pos);
-      restore(pos, pos);
-      return;
-    }
-    const pos = start + 1;
-    onChange(value.slice(0, start) + "\t" + value.slice(end), pos);
-    restore(pos, pos);
-  }
-
-  return (
-    <div ref={boxRef} onBlur={onFocusOut} className="relative rounded-md border border-accent/40 bg-surface p-2">
-      {para && (
-        <div className="mb-2 flex flex-wrap items-center gap-1.5">
-          <span className="mr-1 text-xs text-muted">Box:</span>
-          <button onClick={() => onColor(null)} className={`rounded border px-2 py-0.5 text-xs ${color ? "border-border text-muted" : "border-accent text-accent"}`}>None</button>
-          {CALLOUT_COLORS.map((c) => (
-            <button key={c} onClick={() => onColor(c)} title={c} className="h-6 w-6 rounded" style={{ background: c, outline: color === c ? "2px solid var(--foreground)" : "1px solid rgba(0,0,0,.12)", outlineOffset: "1px" }} />
-          ))}
-          <span className="mx-1 h-5 w-px bg-border" />
-          <input type="color" value={color ?? "#fef3c7"} onChange={(e) => onColor(e.target.value)} title="Custom color (wheel)" className="h-7 w-8 cursor-pointer rounded border border-border bg-transparent p-0.5" />
-          <input type="text" value={hexDraft} onChange={(e) => { const v = e.target.value; setHexDraft(v); if (isHexColor(v)) onColor(v); }} placeholder="#RRGGBB" spellCheck={false} className="w-24 rounded border border-border bg-background px-2 py-0.5 font-mono text-xs outline-none focus:border-accent" />
-        </div>
-      )}
-      {para && (
-        <div className="mb-2 flex flex-wrap items-center gap-1.5">
-          <button onClick={() => openMath("")} title="Insert an inline formula (fill in the boxes)" className="rounded border border-border px-2 py-0.5 text-xs hover:border-accent"><span className="italic">ƒ</span> Insert math</button>
-          {spans.length > 0 && <span className="ml-1 text-xs text-muted">Formulas (click to edit):</span>}
-          {spans.map((s, i) => (
-            <button key={i} onClick={() => setMathPopover({ mode: "edit", index: i, initial: s.latex })} title="Edit this formula" className="rounded border border-border px-1.5 py-0.5 hover:border-accent">
-              <Katex latex={s.latex.trim() || "\\square"} />
-            </button>
-          ))}
-        </div>
-      )}
-      <textarea ref={taRef} value={draft} spellCheck={para} onKeyDown={onKeyDown} onChange={(e) => onChange(e.target.value, e.target.selectionStart ?? 0)} rows={para ? Math.max(2, draft.split("\n").length) : 2} placeholder={para ? "Type text… **bold**, *italic*, ƒ to insert a formula" : "LaTeX, e.g. \\frac{a}{b}"} className="w-full resize-none bg-transparent font-mono text-sm outline-none" />
-      <div className="mt-2 border-t border-border pt-2">
-        {draft.trim() ? <BlockView block={previewBlock} /> : <span className="text-xs text-muted">preview</span>}
-      </div>
-      {mathPopover && (
-        <InlineMathPopover
-          initial={mathPopover.initial}
-          onCommit={commitMath}
-          onCancel={() => setMathPopover(null)}
-        />
-      )}
-    </div>
-  );
-});
-
-// ─── Inline-math popover (Desmos-style editor for a formula inside prose) ─────
-function InlineMathPopover({ initial, onCommit, onCancel }: {
-  initial: string;
-  onCommit: (latex: string) => void;
-  onCancel: () => void;
-}) {
-  const latest = useRef(initial);
-  return (
-    <div className="absolute left-2 right-2 top-full z-30 mt-1 rounded-md border border-accent bg-surface p-2 shadow-lg">
-      <div className="mb-1 text-xs text-muted">Build the formula — type to fill the boxes; the toolbar &amp; Σ symbols insert here too.</div>
-      <MathField value={initial} inline autoFocus onChange={(l) => { latest.current = l; }} onExit={onCancel} className="block min-h-[2.25rem] rounded border border-border bg-background px-2 py-1 text-base" />
-      <div className="mt-2 flex justify-end gap-2">
-        <button onMouseDown={(e) => e.preventDefault()} onClick={onCancel} className="rounded border border-border px-2.5 py-1 text-xs text-muted hover:border-accent">Cancel</button>
-        <button onMouseDown={(e) => e.preventDefault()} onClick={() => onCommit(latest.current)} className="rounded bg-accent px-3 py-1 text-xs font-medium text-white">Done</button>
-      </div>
-    </div>
-  );
-}
-
-// ─── Formula edit box (Desmos-style structural editor via MathLive) ──────────
-// Wraps <MathField> in the same chrome + sticky/click-out behavior as EditBox so
-// toolbar/symbol clicks (which set `sticky`) don't blur-exit the field. The field
-// is the WYSIWYG view, so no separate KaTeX preview is needed.
-function FormulaEditBox({
-  draft, onChange, onExit, sticky,
-}: {
-  draft: string;
-  onChange: (text: string, caret: number) => void;
-  onExit: () => void;
-  sticky: MutableRefObject<boolean>;
-}) {
-  const boxRef = useRef<HTMLDivElement>(null);
-  function onFocusOut(e: FocusEvent<HTMLDivElement>) {
-    if (boxRef.current && e.relatedTarget && boxRef.current.contains(e.relatedTarget as Node)) return;
-    if (sticky.current) { sticky.current = false; return; }
-    onExit();
-  }
-  return (
-    <div ref={boxRef} onBlur={onFocusOut} className="rounded-md border border-accent/40 bg-surface p-2">
-      <MathField value={draft} onChange={(latex) => onChange(latex, 0)} onExit={onExit} autoFocus className="block text-lg" />
-    </div>
-  );
-}
-
-// ─── Structural formula editor (beta) — the block-tree editor in the same chrome.
-function StructuralFormulaBox({
-  block, onChange, onExit, sticky,
-}: {
-  block: Block;
-  onChange: (b: Block) => void;
-  onExit: () => void;
-  sticky: MutableRefObject<boolean>;
-}) {
-  const boxRef = useRef<HTMLDivElement>(null);
-  function onFocusOut(e: FocusEvent<HTMLDivElement>) {
-    if (boxRef.current && e.relatedTarget && boxRef.current.contains(e.relatedTarget as Node)) return;
-    if (sticky.current) { sticky.current = false; return; }
-    onExit();
-  }
-  return (
-    <div ref={boxRef} onBlur={onFocusOut} className="rounded-md border border-accent/40 bg-surface p-2">
-      <MathEdit block={block} onChange={onChange} onExit={onExit} autoFocus />
-    </div>
-  );
-}
-
-function ToolButton({ onClick, title, label, children }: { onClick: () => void; title: string; label?: string; children: ReactNode }) {
-  // The glyph is aria-hidden, so an icon-only button needs its own name; default
-  // it to the tooltip text rather than leaning on the weak title-as-name fallback.
-  return <button onClick={onClick} title={title} aria-label={label ?? title} className={ICON_BTN}>{children}</button>;
-}
-
-// ─── List buttons (icon + style-dropdown) ────────────────────────────────────
-const MARKER_GLYPH: Record<ListMarker, string> = {
-  disc: "•", circle: "◦", square: "▪",
-  decimal: "1.", "lower-alpha": "a.", "lower-roman": "i.",
-};
-const MARKER_NAME: Record<ListMarker, string> = {
-  disc: "Disc", circle: "Circle", square: "Square",
-  decimal: "Decimal", "lower-alpha": "Lower alpha", "lower-roman": "Lower roman",
-};
-
-function BulletedListIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" aria-hidden>
-      <circle cx="2.4" cy="4" r="1.1" fill="currentColor" stroke="none" />
-      <circle cx="2.4" cy="8" r="1.1" fill="currentColor" stroke="none" />
-      <circle cx="2.4" cy="12" r="1.1" fill="currentColor" stroke="none" />
-      <line x1="6" y1="4" x2="14.5" y2="4" />
-      <line x1="6" y1="8" x2="14.5" y2="8" />
-      <line x1="6" y1="12" x2="14.5" y2="12" />
-    </svg>
-  );
-}
-
-function NumberedListIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" aria-hidden>
-      <line x1="6" y1="4" x2="14.5" y2="4" />
-      <line x1="6" y1="8" x2="14.5" y2="8" />
-      <line x1="6" y1="12" x2="14.5" y2="12" />
-      <text x="0" y="5.7" fontSize="5.6" fill="currentColor" stroke="none">1</text>
-      <text x="0" y="9.9" fontSize="5.6" fill="currentColor" stroke="none">2</text>
-      <text x="0" y="14.1" fontSize="5.6" fill="currentColor" stroke="none">3</text>
-    </svg>
-  );
-}
-
-function ListToolButton({ ordered, open, onToggle, onInsert }: {
-  ordered: boolean;
-  open: boolean;
-  onToggle: () => void;
-  onInsert: (marker?: ListMarker) => void;
-}) {
-  const markers = ordered ? NUMBER_MARKERS : BULLET_MARKERS;
-  return (
-    <span className="relative inline-flex">
-      <button onClick={() => onInsert()} title={ordered ? "Numbered list" : "Bulleted list"} aria-label={ordered ? "Numbered list" : "Bulleted list"} className="relative z-30 grid h-9 w-9 place-items-center rounded-l-md border border-border hover:border-accent">
-        {ordered ? <NumberedListIcon /> : <BulletedListIcon />}
-      </button>
-      <button onClick={onToggle} title="List style" aria-label="List style" aria-expanded={open} className={`relative z-30 grid h-9 w-5 place-items-center rounded-r-md border border-l-0 hover:border-accent ${open ? "border-accent text-accent" : "border-border text-muted"}`}><Icon name="chevron" size={11} /></button>
-      {open && (
-        <>
-          <button className="fixed inset-0 z-20 cursor-default" aria-hidden tabIndex={-1} onClick={onToggle} />
-          <div className="absolute left-0 top-full z-30 mt-1 w-44 rounded-md border border-border bg-surface p-1 shadow-lg">
-            {markers.map((m) => (
-              <button key={m} onClick={() => onInsert(m)} className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-sm hover:bg-foreground/[0.06]">
-                <span className="inline-grid w-6 place-items-center font-mono text-xs text-muted">{MARKER_GLYPH[m]}</span>
-                {MARKER_NAME[m]}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-    </span>
-  );
-}
-
-// ─── Highlight button (H + color dropdown) ───────────────────────────────────
-function HighlightButton({ color, open, onToggle, onApply, onColor, keepFocus, onColorMouseDown }: {
-  color: string;
-  open: boolean;
-  onToggle: () => void;
-  onApply: () => void;
-  onColor: (c: string) => void;
-  keepFocus: (e: MouseEvent) => void;
-  onColorMouseDown: () => void;
-}) {
-  return (
-    <span className="relative inline-flex">
-      <button onMouseDown={keepFocus} onClick={onApply} title="Highlight selection" aria-label="Highlight selection" className={`${ICON_BTN} relative z-30 rounded-r-none`} style={{ background: color, color: "#1f2937" }}>H</button>
-      <button onMouseDown={keepFocus} onClick={onToggle} title="Highlight color" aria-label="Highlight color" aria-expanded={open} className={`relative z-30 grid h-9 w-5 place-items-center rounded-r-md border border-l-0 hover:border-accent ${open ? "border-accent text-accent" : "border-border text-muted"}`}><Icon name="chevron" size={11} /></button>
-      {open && (
-        <>
-          <button className="fixed inset-0 z-20 cursor-default" aria-hidden tabIndex={-1} onClick={onToggle} />
-          <div className="absolute left-0 top-full z-30 mt-1 rounded-md border border-border bg-surface p-2 shadow-lg">
-            <div className="grid grid-cols-4 gap-1">
-              {HIGHLIGHT_COLORS.map((c) => (
-                <button key={c} onMouseDown={keepFocus} onClick={() => { onColor(c); onToggle(); }} title={c} className="h-6 w-6 rounded" style={{ background: c, outline: color.toLowerCase() === c ? "2px solid var(--foreground)" : "1px solid rgba(0,0,0,.12)", outlineOffset: "1px" }} />
-              ))}
-            </div>
-            <label className="mt-2 flex items-center gap-2 text-xs text-muted">
-              Custom
-              {/* sticky-only (no preventDefault) so the native color picker still opens while editing */}
-              <input type="color" value={color} onMouseDown={onColorMouseDown} onChange={(e) => onColor(e.target.value)} className="h-6 w-8 cursor-pointer rounded border border-border bg-transparent p-0.5" />
-            </label>
-          </div>
-        </>
-      )}
-    </span>
-  );
 }

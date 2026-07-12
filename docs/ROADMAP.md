@@ -1,5 +1,29 @@
 # Roadmap
 
+## Release record
+
+- **0.6.0 — Graphite + modular notes + note links** (branch `ui-graphite-redesign`).
+  The Graphite hand-drawn UI restyle (drawn icon set, redesigned library/home, editor
+  chrome split into `DocStyleBar`/`SymbolToolbar`/`ToolbarControls`/`EditBox`, new
+  `components/ui/` kit with stacked-dialog Escape handling). **Modular notes**
+  (`docs/MODULES.md` is the detailed record): `Module` type + built-in catalog, the five
+  note templates as module stacks, `/` slash-insert menu (fuzzy, keyboard, usage-ranked),
+  save-section-as-module from the outline, and a Modules tab in the Designs dialog with a
+  form-based builder (create from scratch, edit/delete, customize built-ins; lossless
+  round-trip; dirty-close guard). **Note links**: `[text](note://id#headingBlockId)` —
+  insert via `[[` or the toolbar picker (whole note or a chosen section), hover preview
+  card, click-to-open with section scroll and in-place jumps for already-open panes;
+  copies rewrite self-links; LaTeX/print export as plain text. Plus the `/ink`
+  handwriting→LaTeX lab with correction capture (`docs/HANDWRITING_MODEL.md`), the `ml/`
+  MathWriting pipeline (code only), Capacitor iOS shell scaffolding
+  (`docs/IPAD_APP_PLAN.md`), demo-library seeding, and migration `0009`.
+- **0.5.0** (`14a99e0`) — MathLive fill-the-box math input + structural math editor beta.
+- **0.4.x** — auth/profiles/cloud store, sharing + roles, Yjs realtime co-editing.
+
+Status note: some "not started" rows below predate 0.5/0.6 — templates, the symbol
+palette, and the full toolbar exist now; `docs/MODULES.md` supersedes this file for the
+modules initiative.
+
 ## 0.4 — Social platform (in progress)
 
 Turning Aquarius from local-only into a collaborative platform. **Slice 1 (auth +

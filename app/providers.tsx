@@ -3,6 +3,7 @@
 import { useEffect, type ReactNode } from "react";
 import { AuthProvider } from "@/lib/auth/AuthProvider";
 import { MathKeyboardDismiss } from "@/components/MathKeyboardDismiss";
+import { SystemDialogs } from "@/components/ui/dialogs";
 import { applyMathKeyboard, applyTheme, getSettings } from "@/lib/settings/settings";
 
 /** Client-side context providers mounted once at the app root. */
@@ -18,6 +19,7 @@ export function Providers({ children }: { children: ReactNode }) {
     <AuthProvider>
       {children}
       <MathKeyboardDismiss />
+      <SystemDialogs />
     </AuthProvider>
   );
 }

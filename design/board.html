@@ -1,0 +1,132 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+:root{ font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, Inter, sans-serif; }
+*{ box-sizing:border-box; }
+body{ margin:0; background:#ececed; color:#16161a; padding:40px; }
+h1.board{ font-size:22px; font-weight:680; letter-spacing:-0.02em; margin:0 0 4px; }
+p.sub{ margin:0 0 28px; color:#76767e; font-size:13.5px; }
+.cols{ display:grid; grid-template-columns:repeat(3,1fr); gap:24px; align-items:start; }
+.col{ background:var(--card-bg); border:1px solid var(--line); border-radius:calc(var(--radius) + 6px); padding:22px; color:var(--ink);
+      font-feature-settings:"cv01","ss01"; }
+.col h2{ font-size:16px; font-weight:680; letter-spacing:-0.02em; margin:0 0 2px; }
+.col .tag{ font-size:12px; color:var(--muted); margin:0 0 18px; line-height:1.45; }
+.swatches{ display:flex; gap:8px; margin-bottom:20px; }
+.sw{ width:34px; height:34px; border-radius:calc(var(--radius) - 1px); border:1px solid rgba(0,0,0,.06); }
+.section-label{ font-size:10.5px; text-transform:uppercase; letter-spacing:.09em; color:var(--muted); margin:0 0 10px; font-weight:600; }
+.type .t-h{ font-size:21px; font-weight:670; letter-spacing:-0.02em; }
+.type .t-b{ font-size:13.5px; line-height:1.5; color:var(--ink); opacity:.92; margin-top:4px; }
+.type .t-c{ font-size:11.5px; color:var(--muted); margin-top:4px; }
+.divider{ height:1px; background:var(--line); margin:20px 0; }
+.btns{ display:flex; flex-wrap:wrap; gap:9px; align-items:center; }
+.btn{ font-size:12.5px; font-weight:560; border-radius:var(--radius); padding:8px 14px; cursor:default; border:1px solid transparent; display:inline-flex; gap:7px; align-items:center; }
+.btn.primary{ background:var(--accent); color:var(--on-accent); }
+.btn.secondary{ background:transparent; color:var(--ink); border-color:var(--line); }
+.btn.ghost{ background:transparent; color:var(--muted); }
+.btn .ic{ width:15px; height:15px; }
+.iconbtn{ width:34px; height:34px; border-radius:var(--radius); border:1px solid var(--line); display:inline-grid; place-items:center; color:var(--ink); }
+.iconbtn.fill{ background:var(--accent); color:var(--on-accent); border-color:transparent; }
+.iconbtn.bare{ border-color:transparent; }
+.grid{ display:grid; grid-template-columns:repeat(6,1fr); gap:6px 4px; margin-top:4px; }
+.cell{ display:flex; flex-direction:column; align-items:center; gap:6px; padding:10px 2px; border-radius:var(--radius); }
+.cell .ic, .cell .glyph{ width:24px; height:24px; color:var(--ink); display:grid; place-items:center; }
+.cell .glyph{ font-size:18px; font-weight:700; line-height:1; }
+.cell .glyph.ital{ font-style:italic; font-weight:600; font-family:Georgia,"Times New Roman",serif; }
+.cell small{ font-size:9px; color:var(--muted); letter-spacing:.01em; }
+.ic svg{ width:100%; height:100%; }
+.ic svg :is(path,circle,rect,line,polyline){ fill:none; stroke:currentColor; stroke-width:var(--sw); stroke-linecap:var(--cap); stroke-linejoin:var(--join); }
+.toolbar{ margin-top:6px; display:flex; gap:3px; align-items:center; background:var(--bar-bg); border:1px solid var(--line); border-radius:var(--radius); padding:5px; width:max-content; }
+.toolbar .iconbtn{ width:30px; height:30px; border-color:transparent; }
+.toolbar .sep{ width:1px; height:18px; background:var(--line); margin:0 3px; }
+
+/* Direction A — Graphite */
+.colA{ --card-bg:#ffffff; --ink:#17171c; --muted:#8a8a93; --line:#ebebf0; --accent:#5b5bd6; --on-accent:#fff; --radius:7px; --sw:1.6; --cap:round; --join:round; --bar-bg:#fbfbfd; }
+/* Direction B — Paper */
+.colB{ --card-bg:#fbfaf6; --ink:#221f1a; --muted:#9b9384; --line:#ece6db; --accent:#4f7d6d; --on-accent:#fff; --radius:13px; --sw:1.85; --cap:round; --join:round; --bar-bg:#f4f1ea; }
+/* Direction C — Contrast */
+.colC{ --card-bg:#ffffff; --ink:#0b0b0f; --muted:#6b7280; --line:#e3e3ea; --accent:#4f46e5; --on-accent:#fff; --radius:3px; --sw:2.0; --cap:butt; --join:miter; --bar-bg:#0b0b0f; }
+.colC .toolbar .iconbtn{ color:#f4f4f6; }
+</style></head>
+<body>
+<h1 class="board">Aquarius — UI direction studies</h1>
+<p class="sub">Same components, three minimalist languages. Icons are line-drawn / glyph, recognizable by shape. Pick one to develop into the full system + screens.</p>
+<div class="cols">
+  <div class="col colA" data-dir="A"></div>
+  <div class="col colB" data-dir="B"></div>
+  <div class="col colC" data-dir="C"></div>
+</div>
+
+<script>
+const META = {
+  A: { name:"A · Graphite", tag:"Near-mono, thin 1.6 line icons, soft 7px corners, indigo used sparingly. Calm & editorial." },
+  B: { name:"B · Paper", tag:"Warm off-white, rounded 13px, fuller 1.85 strokes, sage accent. Cozy notebook feel." },
+  C: { name:"C · Contrast", tag:"Crisp white/ink, sharp 3px corners, geometric 2px icons, one bold indigo. High-clarity & modern." },
+};
+const PALETTE = {
+  A:["#ffffff","#17171c","#5b5bd6","#8a8a93","#ebebf0"],
+  B:["#fbfaf6","#221f1a","#4f7d6d","#9b9384","#ece6db"],
+  C:["#ffffff","#0b0b0f","#4f46e5","#6b7280","#e3e3ea"],
+};
+// Line icons (24x24)
+const I = {
+  search:'<circle cx="11" cy="11" r="6"/><line x1="20" y1="20" x2="15.6" y2="15.6"/>',
+  newnote:'<path d="M14 3.5H7.5A2 2 0 0 0 5.5 5.5v13A2 2 0 0 0 7.5 20.5h9a2 2 0 0 0 2-2V8z"/><path d="M14 3.5V8h4.5"/><line x1="12" y1="12" x2="12" y2="16.5"/><line x1="9.75" y1="14.25" x2="14.25" y2="14.25"/>',
+  settings:'<line x1="4" y1="8.5" x2="20" y2="8.5"/><line x1="4" y1="15.5" x2="20" y2="15.5"/><circle cx="9" cy="8.5" r="2.3"/><circle cx="15" cy="15.5" r="2.3"/>',
+  share:'<circle cx="6" cy="12" r="2.4"/><circle cx="17.5" cy="6" r="2.4"/><circle cx="17.5" cy="18" r="2.4"/><line x1="8.1" y1="11" x2="15.4" y2="7"/><line x1="8.1" y1="13" x2="15.4" y2="17"/>',
+  trash:'<line x1="5" y1="7" x2="19" y2="7"/><path d="M9 7V5.4a1.2 1.2 0 0 1 1.2-1.2h3.6A1.2 1.2 0 0 1 15 5.4V7"/><path d="M7.3 7l.9 11.4a1.4 1.4 0 0 0 1.4 1.3h4.8a1.4 1.4 0 0 0 1.4-1.3L16.7 7"/><line x1="10.5" y1="10.5" x2="10.7" y2="16.5"/><line x1="13.5" y1="10.5" x2="13.3" y2="16.5"/>',
+  table:'<rect x="4" y="5" width="16" height="14" rx="1.5"/><line x1="4" y1="10" x2="20" y2="10"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="12" y1="5" x2="12" y2="19"/>',
+  image:'<rect x="4" y="5" width="16" height="14" rx="1.6"/><circle cx="9" cy="10" r="1.7"/><path d="M5 17.2l3.7-3.6 2.8 2.7 3.2-3.1 4.3 4.2"/>',
+  link:'<path d="M10 14l4-4"/><path d="M11.5 7.2l1.3-1.3a3.6 3.6 0 0 1 5.1 5.1L16.4 12.4"/><path d="M12.5 16.8l-1.3 1.3a3.6 3.6 0 0 1-5.1-5.1L7.6 11.6"/>',
+  undo:'<polyline points="9,7 5,11 9,15"/><path d="M5 11h8.5a5 5 0 0 1 0 10H10"/>',
+  list:'<line x1="9" y1="7" x2="20" y2="7"/><line x1="9" y1="12" x2="20" y2="12"/><line x1="9" y1="17" x2="20" y2="17"/><circle cx="5" cy="7" r="1"/><circle cx="5" cy="12" r="1"/><circle cx="5" cy="17" r="1"/>',
+  graph:'<polyline points="4,19 4,5"/><polyline points="4,19 20,19"/><path d="M5 16c4 0 4.5-8 8-8 2.5 0 3 5 6 5"/>',
+  highlight:'<path d="M5 19h5"/><path d="M12.5 6.5l5 5-6 6-5 .9.9-5z"/><line x1="11" y1="8" x2="16" y2="13"/>',
+};
+// Glyph icons (text)
+const GLYPH = { bold:['B',''], italic:['I','ital'], heading:['H',''], sigma:['∑',''] };
+const ORDER = [
+  ['ic','search','Search'],['ic','newnote','New'],['ic','settings','Settings'],['ic','share','Share'],['ic','trash','Delete'],['gl','bold','Bold'],
+  ['gl','italic','Italic'],['gl','heading','Heading'],['gl','sigma','Equation'],['ic','table','Table'],['ic','image','Image'],['ic','link','Link'],
+  ['ic','list','List'],['ic','graph','Graph'],['ic','highlight','Highlight'],['ic','undo','Undo'],
+];
+const TOOL = ['bold|gl','italic|gl','heading|gl','sep','sigma|gl','table|ic','image|ic','link|ic','sep','undo|ic'];
+
+function svg(inner){ return '<svg viewBox="0 0 24 24">'+inner+'</svg>'; }
+function cell(kind,key,label){
+  if(kind==='gl'){ const [ch,cls]=GLYPH[key]; return `<div class="cell"><span class="glyph ${cls}">${ch}</span><small>${label}</small></div>`; }
+  return `<div class="cell"><span class="ic">${svg(I[key])}</span><small>${label}</small></div>`;
+}
+document.querySelectorAll('.col').forEach(col=>{
+  const d=col.dataset.dir;
+  const sws=PALETTE[d].map(c=>`<div class="sw" style="background:${c}"></div>`).join('');
+  const grid=ORDER.map(o=>cell(o[0],o[1],o[2])).join('');
+  const tools=TOOL.map(t=>{
+    if(t==='sep') return '<div class="sep"></div>';
+    const [key,kind]=t.split('|');
+    const inner = kind==='gl' ? `<span class="glyph ${GLYPH[key][1]}" style="font-size:15px">${GLYPH[key][0]}</span>` : `<span class="ic" style="width:18px;height:18px">${svg(I[key])}</span>`;
+    return `<div class="iconbtn">${inner}</div>`;
+  }).join('');
+  col.innerHTML = `
+    <h2>${META[d].name}</h2>
+    <div class="tag">${META[d].tag}</div>
+    <div class="swatches">${sws}</div>
+    <div class="section-label">Type</div>
+    <div class="type"><div class="t-h">The Mean Value Theorem</div><div class="t-b">If f is continuous on [a, b] and differentiable on (a, b), there is a point c where f′(c) equals the average rate of change.</div><div class="t-c">Calculus · 4 notes · edited 2h ago</div></div>
+    <div class="divider"></div>
+    <div class="section-label">Buttons</div>
+    <div class="btns">
+      <span class="btn primary"><span class="ic"><svg viewBox="0 0 24 24">${I.newnote}</svg></span>New note</span>
+      <span class="btn secondary">Share</span>
+      <span class="btn ghost">Cancel</span>
+      <span class="iconbtn fill"><span class="ic" style="width:18px;height:18px">${svg(I.search)}</span></span>
+      <span class="iconbtn"><span class="ic" style="width:18px;height:18px">${svg(I.settings)}</span></span>
+    </div>
+    <div class="divider"></div>
+    <div class="section-label">Icon set — recognizable by shape</div>
+    <div class="grid">${grid}</div>
+    <div class="divider"></div>
+    <div class="section-label">Editor toolbar in context</div>
+    <div class="toolbar">${tools}</div>
+  `;
+});
+</script>
+</body></html>

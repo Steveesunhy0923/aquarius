@@ -34,7 +34,7 @@ export function PresenceAvatars({
             <span
               key={p.userId}
               title={you ? `${p.username} (you)` : p.username}
-              className="grid h-7 w-7 place-items-center rounded-full border-2 border-background text-[10px] font-semibold text-white"
+              className="grid h-7 w-7 place-items-center rounded-full border-2 border-surface text-[10px] font-semibold text-white"
               style={{ backgroundColor: p.color }}
             >
               {initials(p.username)}

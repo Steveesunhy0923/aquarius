@@ -9,6 +9,9 @@ import { escapeLatex } from "./captions";
 
 export const DEFAULT_HIGHLIGHT = "#fde047"; // yellow
 
+/** Preset highlight colors offered in the highlight button's dropdown. */
+export const HIGHLIGHT_COLORS = ["#fde047", "#bbf7d0", "#bfdbfe", "#fbcfe8", "#fed7aa", "#e9d5ff", "#fecaca", "#a7f3d0"];
+
 export interface FormatSeg {
   text: string;
   bold?: boolean;
@@ -57,7 +60,9 @@ export function formatToLatex(text: string): string {
         const hex = s.highlight.replace("#", "").toUpperCase();
         t = `\\colorbox[HTML]{${hex}}{${t}}`; // requires \usepackage{xcolor}
       }
-      if (s.href) t = `\\href{${s.href}}{${t}}`; // requires \usepackage{hyperref}
+      // note:// links are app-internal — a PDF can't follow them, so export
+      // just the text; real URLs become \href (requires \usepackage{hyperref}).
+      if (s.href && !s.href.startsWith("note://")) t = `\\href{${s.href}}{${t}}`;
       return t;
     })
     .join("");

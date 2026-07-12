@@ -29,7 +29,7 @@ import {
 
 import { emptyDocument } from "@/lib/blocks/types";
 import type { DocumentTree } from "@/lib/blocks/types";
-import { base64ToBlob, blobToBase64, remapTreeAssetIds } from "./bundle";
+import { base64ToBlob, blobToBase64, remapSelfNoteLinks, remapTreeAssetIds } from "./bundle";
 import type {
   AssetBlob,
   AssetRef,
@@ -649,8 +649,13 @@ export class LocalLibraryStore implements LibraryStore {
     }
 
     // Rewrite every image block's attrs.assetId to its fresh id, deep through
-    // slots and inline text runs.
-    const remappedTree = remapTreeAssetIds(bundle.pkg.tree, assetIdMap);
+    // slots and inline text runs — and repoint self-referential note links at
+    // the new note id (a copy's internal links must not target the original).
+    const remappedTree = remapSelfNoteLinks(
+      remapTreeAssetIds(bundle.pkg.tree, assetIdMap),
+      bundle.pkg.noteId,
+      newNoteId,
+    );
 
     const ts = now();
     const tx = db.transaction(

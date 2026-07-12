@@ -1,0 +1,190 @@
+<!doctype html><html><head><meta charset="utf-8">
+<title>Aquarius — editor (redesigned, drawn icons)</title>
+<style>
+:root{
+  --background:#fbfbfd; --foreground:#17171c; --surface:#ffffff;
+  --border:#ebebf0; --border-soft:#f2f2f6; --accent:#5b5bd6; --accent-soft:#eeeefb;
+  --muted:#8a8a93; --faint:#b9b9c2;
+}
+.dark{
+  --background:#0e0e12; --foreground:#ededf2; --surface:#17171d;
+  --border:#2a2a35; --border-soft:#20202a; --accent:#818cf8; --accent-soft:#23233a;
+  --muted:#9ca3af; --faint:#6b7280;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--background);color:var(--foreground);
+  font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+.app{width:1180px;margin:0 auto;background:var(--background)}
+/* icon primitives — mirror components/Icon.tsx */
+.ic{display:inline-grid;place-items:center;vertical-align:middle;color:inherit}
+.ic svg{display:block}
+.ic svg :is(path,circle,rect,line,polyline,polygon){fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.ic svg [style*="fill:currentColor"]{fill:currentColor}
+.glyph{display:inline-grid;place-items:center;font-weight:700;line-height:1}
+.glyph.ital{font-style:italic;font-weight:600;font-family:Georgia,serif}
+.glyph.ul{text-decoration:underline;text-underline-offset:2px}
+.glyph.strike{text-decoration:line-through}
+/* header */
+.header{display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--border);padding:12px 16px}
+.title{flex:1;font-size:18px;font-weight:600}
+.headbtn{display:grid;place-items:center;width:36px;height:36px;border-radius:6px;color:var(--muted);background:transparent}
+.headbtn.dim{opacity:.35}
+.headbtn.code{} /* default (inactive) */
+.headbtn.save-dirty{color:var(--accent)}
+.headbtn.save-clean{color:var(--faint)}
+.headbtn.close:hover{color:#ef4444}
+.sharebtn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:6px;padding:7px 12px;font-size:14px;color:var(--foreground)}
+.presence{display:inline-flex;align-items:center;gap:8px;margin-right:2px}
+.stack{display:flex}.stack .av{margin-left:-7px}
+.av{display:grid;place-items:center;border-radius:50%;width:26px;height:26px;font-size:11px;font-weight:600;color:#fff;border:2px solid var(--surface)}
+.live{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--muted)}
+.live .dot{width:7px;height:7px;border-radius:50%;background:#3fb27f}
+/* toolbar rows — full-width, centered, bottom border (mirrors live app) */
+.row{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:8px;border-bottom:1px solid var(--border);padding:8px 24px}
+.row.tight{gap:6px}
+.sep{width:1px;height:28px;background:var(--border);margin:0 4px}
+.iconbtn{display:grid;place-items:center;height:36px;min-width:36px;padding:0 8px;border:1px solid var(--border);border-radius:6px;color:var(--foreground);background:transparent}
+.iconbtn.act{background:var(--accent-soft);color:var(--accent);border-color:transparent}
+.iconbtn.hl{background:#fde047;color:#3a3a00;border-color:transparent}
+.dark .iconbtn.hl{color:#3a3a00}
+.select{display:inline-flex;align-items:center;gap:8px;height:36px;border:1px solid var(--border);border-radius:6px;padding:0 10px;font-size:14px;color:var(--foreground);background:var(--surface)}
+.select .ic{color:var(--muted)}
+.sym{font-family:"KaTeX_Main",Georgia,serif;font-size:17px}
+.editpill{display:grid;place-items:center;height:36px;min-width:36px;border:1px solid var(--border);border-radius:6px;color:var(--muted);padding:0 8px}
+/* doc settings */
+.dset{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:14px;border-bottom:1px solid var(--border);padding:8px 24px;font-size:12.5px;color:var(--muted)}
+.dset .seg{display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden}
+.dset .seg span{padding:5px 12px;color:var(--muted)} .dset .seg span.on{background:var(--accent);color:#fff}
+.dset .mini{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:5px;padding:3px 8px;color:var(--foreground)}
+.range{width:120px;height:4px;border-radius:3px;background:var(--border);position:relative}
+.range::after{content:"";position:absolute;left:62%;top:50%;transform:translate(-50%,-50%);width:13px;height:13px;border-radius:50%;background:var(--accent)}
+/* paper */
+.canvas{padding:30px 24px;background:var(--background)}
+.paper{max-width:720px;margin:0 auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:44px 54px}
+.doc-h1{font-size:25px;font-weight:700;letter-spacing:-.02em;margin:0 0 14px}
+.doc-p{font-size:15px;line-height:1.65;margin:0 0 15px}
+.imath{font-family:Georgia,serif;font-style:italic;color:color-mix(in srgb,var(--accent) 78%,var(--foreground))}
+.doc-eq{text-align:center;font-family:Georgia,serif;font-size:18px;margin:20px 0}
+.doc-eq .num{float:right;color:var(--muted);font-size:13px}
+.frac{display:inline-block;text-align:center;vertical-align:middle}
+.frac .den{display:block;border-top:1px solid currentColor;margin-top:2px}
+.tag{position:fixed;left:14px;top:10px;font-size:11px;color:var(--faint)}
+</style></head>
+<body>
+<div class="app" id="app">
+  <!-- HEADER -->
+  <div class="header">
+    <span class="title">The Mean Value Theorem</span>
+    <span class="headbtn" data-ic="undo" title="Undo"></span>
+    <span class="headbtn" data-ic="redo" title="Redo"></span>
+    <span class="headbtn" data-ic="templates" title="Design — templates & backgrounds"></span>
+    <span class="presence">
+      <span class="stack"><span class="av" style="background:#5b5bd6">S</span><span class="av" style="background:#3fb27f">E</span></span>
+      <span class="live"><span class="dot"></span>Live</span>
+    </span>
+    <span class="sharebtn"><span class="ic" data-ic="share" style="width:16px;height:16px"></span>Share</span>
+    <span class="headbtn code" data-ic="code" title="Show LaTeX source"></span>
+    <span class="headbtn" data-ic="export" title="Export / download"></span>
+    <span class="headbtn save-dirty" data-ic="save" title="Unsaved changes — click to save"></span>
+    <span class="headbtn close" data-ic="close" title="Close pane"></span>
+  </div>
+
+  <!-- BLOCK TOOLS -->
+  <div class="row">
+    <span class="select">Heading… <span class="ic" data-ic="chevron" style="width:15px;height:15px"></span></span>
+    <span class="sep"></span>
+    <span class="iconbtn" data-gl="paragraph" title="New paragraph"></span>
+    <span class="iconbtn" data-ic="displayeq" title="Centered equation"></span>
+    <span class="iconbtn" data-ic="graph" title="Interactive graph"></span>
+    <span class="sep"></span>
+    <span class="iconbtn" data-gl="bold"></span>
+    <span class="iconbtn" data-gl="italic"></span>
+    <span class="iconbtn" data-gl="underline"></span>
+    <span class="iconbtn" data-gl="strike"></span>
+    <span class="iconbtn hl" data-gl="heading" title="Highlight"></span>
+    <span class="sep"></span>
+    <span class="iconbtn" data-ic="image" title="Image"></span>
+    <span class="iconbtn" data-ic="table" title="Table"></span>
+    <span class="iconbtn" data-ic="link" title="Link"></span>
+    <span class="sep"></span>
+    <span class="iconbtn" data-ic="list" title="Bulleted list"></span>
+    <span class="iconbtn" data-ic="list" title="Numbered list"></span>
+  </div>
+
+  <!-- FUNCTIONS & SYMBOLS -->
+  <div class="row tight">
+    <span class="iconbtn" data-ic="fraction"></span>
+    <span class="iconbtn" data-ic="sqrt"></span>
+    <span class="iconbtn" data-ic="power"></span>
+    <span class="iconbtn" data-ic="sum"></span>
+    <span class="iconbtn" data-ic="integral"></span>
+    <span class="sep"></span>
+    <span class="iconbtn sym">∞</span>
+    <span class="iconbtn sym">→</span>
+    <span class="iconbtn sym">∈</span>
+    <span class="iconbtn sym">≤</span>
+    <span class="iconbtn sym">≥</span>
+    <span class="iconbtn sym">≠</span>
+    <span class="iconbtn sym">±</span>
+    <span class="iconbtn sym">×</span>
+    <span class="editpill" data-ic="editformula" title="Change the symbols"></span>
+    <span class="sep"></span>
+    <span class="iconbtn" data-ic="functions" title="Browse all functions & symbols"></span>
+  </div>
+
+  <!-- DOC SETTINGS -->
+  <div class="dset">
+    <span>Font <span class="mini">Computer Modern <span class="ic" data-ic="chevron" style="width:12px;height:12px"></span></span></span>
+    <span>Size <span class="mini">14 <span class="ic" data-ic="chevron" style="width:12px;height:12px"></span></span></span>
+    <span>Spacing <span class="mini">1.5 <span class="ic" data-ic="chevron" style="width:12px;height:12px"></span></span></span>
+    <span>Indent <span class="mini">none <span class="ic" data-ic="chevron" style="width:12px;height:12px"></span></span></span>
+    <span>Pages <span class="seg"><span class="on">Vertical</span><span>Horizontal</span></span></span>
+    <span>Zoom <span class="range"></span> 100%</span>
+  </div>
+
+  <!-- PAPER -->
+  <div class="canvas">
+    <div class="paper">
+      <h1 class="doc-h1">The Mean Value Theorem</h1>
+      <p class="doc-p">If <span class="imath">f</span> is continuous on the closed interval <span class="imath">[a, b]</span> and differentiable on the open interval <span class="imath">(a, b)</span>, then there exists at least one point <span class="imath">c ∈ (a, b)</span> such that the instantaneous rate of change equals the average rate of change:</p>
+      <div class="doc-eq"><span class="num">(1)</span><span class="imath">f′(c)</span> = <span class="frac"><span class="imath">f(b) − f(a)</span><span class="den imath">b − a</span></span></div>
+      <p class="doc-p">Geometrically, there is a point where the tangent line is parallel to the secant through the endpoints. A direct consequence: if <span class="imath">f′(x) = 0</span> for all x in an interval, then f is constant there.</p>
+    </div>
+  </div>
+</div>
+
+<script>
+const I={
+ undo:'<polyline points="9,7 5,11 9,15"/><path d="M5 11h8.5a5 5 0 0 1 0 10H10"/>',
+ redo:'<polyline points="15,7 19,11 15,15"/><path d="M19 11h-8.5a5 5 0 0 0 0 10H14"/>',
+ templates:'<path d="M12 4l7.5 3.6-7.5 3.6-7.5-3.6z"/><polyline points="4.5,12 12,15.6 19.5,12"/><polyline points="4.5,15.8 12,19.4 19.5,15.8"/>',
+ share:'<circle cx="6" cy="12" r="2.4"/><circle cx="17.5" cy="6" r="2.4"/><circle cx="17.5" cy="18" r="2.4"/><line x1="8.1" y1="11" x2="15.4" y2="7"/><line x1="8.1" y1="13" x2="15.4" y2="17"/>',
+ code:'<polyline points="8.5,8 4.5,12 8.5,16"/><polyline points="15.5,8 19.5,12 15.5,16"/><line x1="13.6" y1="6" x2="10.4" y2="18"/>',
+ export:'<path d="M5 13.5v3.5A1.5 1.5 0 0 0 6.5 18.5h11a1.5 1.5 0 0 0 1.5-1.5v-3.5"/><line x1="12" y1="4" x2="12" y2="14"/><polyline points="8.2,7.4 12,3.7 15.8,7.4"/>',
+ save:'<path d="M7.4 17.5a3.5 3.5 0 0 1-.5-7 5 5 0 0 1 9.5-1.4 3.6 3.6 0 0 1 1.1 7"/><polyline points="9.5,13.3 11.2,15.1 14.7,11.1"/>',
+ close:'<line x1="7" y1="7" x2="17" y2="17"/><line x1="17" y1="7" x2="7" y2="17"/>',
+ chevron:'<polyline points="6.5,10 12,15 17.5,10"/>',
+ displayeq:'<polyline points="17,5.5 7,5.5 12,12 7,18.5 17,18.5"/><line x1="17" y1="5.5" x2="17" y2="8.2"/><line x1="17" y1="18.5" x2="17" y2="15.8"/>',
+ graph:'<polyline points="5,4 5,19 20,19"/><path d="M6.2 16c3.4 0 3.9-9 7.8-9 2.6 0 3 6 5.5 6"/>',
+ image:'<rect x="4" y="5" width="16" height="14" rx="1.8"/><circle cx="9" cy="10" r="1.7"/><path d="M5 17.6l4-3.8 3 2.9 3-2.9 4 3.8"/>',
+ table:'<rect x="4" y="5" width="16" height="14" rx="1.6"/><line x1="4" y1="10" x2="20" y2="10"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="12" y1="5" x2="12" y2="19"/>',
+ link:'<path d="M10 14l4-4"/><path d="M11.5 7.4l1.4-1.4a3.6 3.6 0 0 1 5.1 5.1l-1.9 1.9"/><path d="M12.5 16.6l-1.4 1.4a3.6 3.6 0 0 1-5.1-5.1l1.9-1.9"/>',
+ list:'<line x1="9" y1="7" x2="20" y2="7"/><line x1="9" y1="12" x2="20" y2="12"/><line x1="9" y1="17" x2="20" y2="17"/><circle cx="5" cy="7" r="1.1" style="fill:currentColor"/><circle cx="5" cy="12" r="1.1" style="fill:currentColor"/><circle cx="5" cy="17" r="1.1" style="fill:currentColor"/>',
+ fraction:'<line x1="5" y1="12" x2="19" y2="12"/><rect x="7.5" y="4.8" width="9" height="4.6" rx="1.1"/><rect x="7.5" y="14.6" width="9" height="4.6" rx="1.1"/>',
+ sqrt:'<polyline points="3,13 5.6,18 9,5.5 21,5.5"/><rect x="11" y="8.5" width="7" height="7" rx="1.2"/>',
+ power:'<rect x="4.5" y="9.5" width="8.5" height="8.5" rx="1.4"/><rect x="14.5" y="4.5" width="5" height="5" rx="1.1"/>',
+ sum:'<polyline points="16.5,5.5 7.5,5.5 12,12 7.5,18.5 16.5,18.5"/>',
+ integral:'<path d="M7 18.2c0 1.2.9 2 1.8 2 1.1 0 1.7-.9 1.7-2.2V6.2C10.5 4.9 11.1 4 12.2 4c.9 0 1.8.8 1.8 2"/>',
+ editformula:'<path d="M5 19l.6-3.3 8.8-8.8 2.7 2.7-8.8 8.8z"/><line x1="13.6" y1="7.4" x2="16.3" y2="10.1"/>',
+ functions:'<rect x="3.5" y="3.5" width="17" height="17" rx="4"/><circle cx="8.4" cy="8.4" r="1.15" style="fill:currentColor"/><path d="M13.2 7.2l2.7 2.7M15.9 7.2l-2.7 2.7"/><path d="M6.8 15.4c1.1-1.9 2.2 1.9 3.3 0"/><path d="M13.5 15.3h3.2M15.1 13.7v3.2"/>',
+};
+const GLYPH={bold:['B',''],italic:['I','ital'],underline:['U','ul'],strike:['S','strike'],paragraph:['T',''],heading:['H','']};
+function svg(i,sz){return '<svg width="'+sz+'" height="'+sz+'" viewBox="0 0 24 24">'+(i||'')+'</svg>';}
+document.querySelectorAll('[data-ic]').forEach(el=>{
+  const sz=el.classList.contains('ic')?parseInt(el.style.width)||18:(el.classList.contains('headbtn')?18:(el.classList.contains('editpill')?17:(el.classList.contains('functions')?20:19)));
+  const size=el.classList.contains('ic')?(parseInt(el.style.width)||16):(el.dataset.ic==='share'?16:el.dataset.ic==='chevron'?14:el.dataset.ic==='functions'?20:el.dataset.ic==='close'?17:18);
+  el.classList.add('ic');el.innerHTML=svg(I[el.dataset.ic], size);
+});
+document.querySelectorAll('[data-gl]').forEach(el=>{const g=GLYPH[el.dataset.gl];el.classList.add('glyph');if(g[1])el.classList.add(g[1]);el.style.fontSize='15px';el.textContent=g[0];});
+</script>
+</body></html>

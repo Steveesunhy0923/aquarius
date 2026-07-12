@@ -2,14 +2,17 @@
 
 import { AccountMenu } from "@/components/auth/AccountMenu";
 import { SettingsDialog } from "@/components/SettingsDialog";
-import { downloadNote } from "@/components/ExportMenu";
-import { NoteCover } from "@/components/NoteCover";
 import { Icon } from "@/components/Icon";
+import { ImportMenu } from "@/components/library/ImportMenu";
+import { DeletedCard, SharedNoteCard } from "@/components/library/NoteCard";
+import { Empty, NOTE_GRID, NoteGrid, ResultGroup } from "@/components/library/NoteGrid";
+import { SideHead, SideItem, TagChip } from "@/components/library/Sidebar";
+import { uiAlert, uiConfirm, uiPrompt } from "@/components/ui/dialogs";
 import { useAuth } from "@/lib/auth/AuthProvider";
-import { listSharedWithMe, type Role } from "@/lib/sharing/sharing";
+import { errorMessage } from "@/lib/errors";
+import { listSharedWithMe, type SharedNote } from "@/lib/sharing/sharing";
 import { getStore, migrateLocalToCloud, seedDemoLibrary } from "@/lib/storage";
 import type { LibraryStore, NoteBundleFile, NoteMeta, Notebook, Subject } from "@/lib/storage/types";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -62,7 +65,8 @@ export default function LibraryPage() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [shared, setShared] = useState(false);
-  const [sharedNotes, setSharedNotes] = useState<{ note: NoteMeta; role: Role }[]>([]);
+  const [uncat, setUncat] = useState(false);
+  const [sharedNotes, setSharedNotes] = useState<SharedNote[]>([]);
 
   // Initial load: seed on first run, purge expired trash, then list subjects.
   // Re-runs when the signed-in user changes (sign in/out swaps cloud ↔ local
@@ -79,6 +83,10 @@ export default function LibraryPage() {
       if (!alive) return;
       setSubjects(subs);
       setSubjectId(subs[0]?.id ?? null);
+      // Leave any account-scoped view (shared/uncat) when the account changes.
+      setShared(false);
+      setUncat(false);
+      setTrash(false);
       setReady(true);
     })().catch(console.error);
     return () => { alive = false; };
@@ -127,10 +135,15 @@ export default function LibraryPage() {
     getStore().listDeletedNotes().then(setDeleted).catch(console.error);
   }, [trash]);
 
+  // Shares split by whether they've been opened: unopened ones are the
+  // "Shared with me" inbox; opened ones live in the Uncategorized section.
+  // Keyed to userId so sign-out clears the list and account switches refetch.
   useEffect(() => {
-    if (!shared) return;
+    if (!userId || (!shared && !uncat)) { setSharedNotes([]); return; }
     listSharedWithMe().then(setSharedNotes).catch(() => setSharedNotes([]));
-  }, [shared]);
+  }, [shared, uncat, userId]);
+  const sharedInbox = useMemo(() => sharedNotes.filter((s) => !s.openedAt), [sharedNotes]);
+  const uncatNotes = useMemo(() => sharedNotes.filter((s) => s.openedAt), [sharedNotes]);
 
   const refresh = useCallback(async () => {
     const store = getStore();
@@ -140,7 +153,7 @@ export default function LibraryPage() {
   }, [notebookId, query, trash]);
 
   const addSubject = useCallback(async () => {
-    const name = prompt("New subject name?")?.trim();
+    const name = (await uiPrompt({ title: "New subject", placeholder: "Subject name", confirmLabel: "Create" }))?.trim();
     if (!name) return;
     const store = getStore();
     const s = await store.createSubject({ name });
@@ -150,7 +163,7 @@ export default function LibraryPage() {
 
   const addNotebook = useCallback(async () => {
     if (!subjectId) return;
-    const name = prompt("New notebook name?")?.trim();
+    const name = (await uiPrompt({ title: "New notebook", placeholder: "Notebook name", confirmLabel: "Create" }))?.trim();
     if (!name) return;
     const store = getStore();
     const nb = await store.createNotebook({ subjectId, name });
@@ -160,7 +173,13 @@ export default function LibraryPage() {
 
   const removeSubject = useCallback(async (sid: string) => {
     const s = subjects.find((x) => x.id === sid);
-    if (!confirm(`Delete subject “${s?.name ?? ""}” and all its notebooks and notes? This cannot be undone.`)) return;
+    const ok = await uiConfirm({
+      title: "Delete subject",
+      message: `Delete “${s?.name ?? ""}” and all its notebooks and notes? This cannot be undone.`,
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (!ok) return;
     const store = getStore();
     await store.deleteSubject(sid);
     const subs = await store.listSubjects();
@@ -170,15 +189,18 @@ export default function LibraryPage() {
 
   const uploadToCloud = useCallback(async () => {
     if (uploading) return;
-    if (!confirm("Copy your local notes into your cloud library?")) return;
+    if (!(await uiConfirm({ title: "Upload to cloud", message: "Copy your local notes into your cloud library?", confirmLabel: "Upload" }))) return;
     setUploading(true);
     try {
       const { notes } = await migrateLocalToCloud();
       setSubjects(await getStore().listSubjects());
       await refresh();
-      alert(notes > 0 ? `Uploaded ${notes} note${notes === 1 ? "" : "s"} to the cloud.` : "No local notes to upload.");
+      await uiAlert({
+        title: "Upload to cloud",
+        message: notes > 0 ? `Uploaded ${notes} note${notes === 1 ? "" : "s"} to the cloud.` : "No local notes to upload.",
+      });
     } catch (e) {
-      alert(e instanceof Error ? e.message : String(e));
+      await uiAlert({ title: "Upload failed", message: errorMessage(e) });
     } finally {
       setUploading(false);
     }
@@ -186,7 +208,13 @@ export default function LibraryPage() {
 
   const removeNotebook = useCallback(async (nbId: string) => {
     const nb = notebooks.find((x) => x.id === nbId);
-    if (!confirm(`Delete notebook “${nb?.name ?? ""}” and all its notes? This cannot be undone.`)) return;
+    const ok = await uiConfirm({
+      title: "Delete notebook",
+      message: `Delete “${nb?.name ?? ""}” and all its notes? This cannot be undone.`,
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (!ok) return;
     const store = getStore();
     await store.deleteNotebook(nbId);
     if (!subjectId) return;
@@ -218,7 +246,13 @@ export default function LibraryPage() {
   );
   const purge = useCallback(
     async (id: string) => {
-      if (!confirm("Delete permanently? This cannot be undone.")) return;
+      const ok = await uiConfirm({
+        title: "Delete note",
+        message: "Delete permanently? This cannot be undone.",
+        confirmLabel: "Delete",
+        danger: true,
+      });
+      if (!ok) return;
       await getStore().deleteNote(id);
       await refresh();
     },
@@ -226,7 +260,13 @@ export default function LibraryPage() {
   );
   const emptyTrash = useCallback(async () => {
     if (deleted.length === 0) return;
-    if (!confirm(`Permanently delete all ${deleted.length} note(s)? This cannot be undone.`)) return;
+    const ok = await uiConfirm({
+      title: "Empty Recently Deleted",
+      message: `Permanently delete all ${deleted.length} note${deleted.length === 1 ? "" : "s"}? This cannot be undone.`,
+      confirmLabel: "Delete all",
+      danger: true,
+    });
+    if (!ok) return;
     const store = getStore();
     await Promise.all(deleted.map((n) => store.deleteNote(n.id)));
     await refresh();
@@ -249,7 +289,7 @@ export default function LibraryPage() {
         await refresh();
       } catch (e) {
         console.error("copy failed", e);
-        alert("Couldn't copy this note.");
+        await uiAlert({ title: "Copy failed", message: "Couldn't copy this note." });
       }
     },
     [refresh],
@@ -280,14 +320,19 @@ export default function LibraryPage() {
         await importBundle(bundle);
       } catch (e) {
         console.error("import failed", e);
-        alert("Couldn't import that file. It must be a valid .aqnote bundle.");
+        await uiAlert({ title: "Import failed", message: "Couldn't import that file. It must be a valid .aqnote bundle." });
       }
     },
     [importBundle],
   );
 
   const importFromLink = useCallback(async () => {
-    const url = prompt("Paste a link to an .aqnote file")?.trim();
+    const url = (await uiPrompt({
+      title: "Import from link",
+      message: "Paste a link to a public .aqnote file.",
+      placeholder: "https://…",
+      confirmLabel: "Import",
+    }))?.trim();
     if (!url) return;
     try {
       const res = await fetch(url);
@@ -297,13 +342,13 @@ export default function LibraryPage() {
       await importBundle(bundle);
     } catch (e) {
       console.error("import from link failed", e);
-      alert("Couldn't import from that link. It must point to a public .aqnote file.");
+      await uiAlert({ title: "Import failed", message: "Couldn't import from that link. It must point to a public .aqnote file." });
     }
   }, [importBundle]);
 
   const addTag = useCallback(
     async (note: NoteMeta) => {
-      const raw = prompt("Add a tag")?.trim();
+      const raw = (await uiPrompt({ title: "Add tag", placeholder: "Tag name", confirmLabel: "Add" }))?.trim();
       if (!raw) return;
       const tag = raw.replace(/,/g, " ").trim();
       if (!tag || note.tags.includes(tag)) return;
@@ -354,7 +399,7 @@ export default function LibraryPage() {
           </span>
           <input
             value={query}
-            onChange={(e) => { setQuery(e.target.value); if (e.target.value.trim()) setTrash(false); }}
+            onChange={(e) => { setQuery(e.target.value); if (e.target.value.trim()) { setTrash(false); setShared(false); setUncat(false); } }}
             placeholder="Search title, tag, or content…"
             className="w-full rounded-lg border border-border bg-surface py-2 pl-9 pr-8 text-sm outline-none focus:border-accent"
           />
@@ -385,7 +430,7 @@ export default function LibraryPage() {
         <aside className="overflow-auto border-r border-border bg-surface px-3 py-4">
           <SideHead onAdd={addSubject} addLabel="Add subject">Subjects</SideHead>
           {subjects.map((s) => (
-            <SideItem key={s.id} active={!trash && !shared && s.id === subjectId} onClick={() => { setTrash(false); setShared(false); setSubjectId(s.id); }} onDelete={() => removeSubject(s.id)}>
+            <SideItem key={s.id} active={!trash && !shared && !uncat && s.id === subjectId} onClick={() => { setTrash(false); setShared(false); setUncat(false); setSubjectId(s.id); }} onDelete={() => removeSubject(s.id)}>
               <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: s.color || "var(--accent)" }} />
               <span className="truncate">{s.name}</span>
             </SideItem>
@@ -394,9 +439,9 @@ export default function LibraryPage() {
           <SideHead onAdd={subjectId ? addNotebook : undefined} addLabel="Add notebook">Notebooks</SideHead>
           {subjectId && notebooks.length === 0 && <p className="px-2.5 py-1.5 text-[13px] text-muted">No notebooks yet</p>}
           {notebooks.map((nb) => {
-            const on = !trash && !shared && nb.id === notebookId;
+            const on = !trash && !shared && !uncat && nb.id === notebookId;
             return (
-              <SideItem key={nb.id} active={on} onClick={() => { setTrash(false); setShared(false); setNotebookId(nb.id); }} onDelete={() => removeNotebook(nb.id)}>
+              <SideItem key={nb.id} active={on} onClick={() => { setTrash(false); setShared(false); setUncat(false); setNotebookId(nb.id); }} onDelete={() => removeNotebook(nb.id)}>
                 <Icon name="notebooks" size={16} className={`shrink-0 ${on ? "text-accent" : "text-muted"}`} />
                 <span className="truncate">{nb.name}</span>
               </SideItem>
@@ -405,12 +450,18 @@ export default function LibraryPage() {
 
           <SideHead>Library</SideHead>
           {user && (
-            <SideItem active={shared} onClick={() => { setShared(true); setTrash(false); setQuery(""); }}>
+            <SideItem active={shared} onClick={() => { setShared(true); setUncat(false); setTrash(false); setQuery(""); }}>
               <Icon name="share" size={16} className={`shrink-0 ${shared ? "text-accent" : "text-muted"}`} />
               <span className="truncate">Shared with me</span>
             </SideItem>
           )}
-          <SideItem active={trash} onClick={() => { setTrash(true); setShared(false); }}>
+          {user && (
+            <SideItem active={uncat} onClick={() => { setUncat(true); setShared(false); setTrash(false); setQuery(""); }}>
+              <Icon name="inbox" size={16} className={`shrink-0 ${uncat ? "text-accent" : "text-muted"}`} />
+              <span className="truncate">Uncategorized</span>
+            </SideItem>
+          )}
+          <SideItem active={trash} onClick={() => { setTrash(true); setShared(false); setUncat(false); setQuery(""); }}>
             <Icon name="trash" size={16} className={`shrink-0 ${trash ? "text-accent" : "text-muted"}`} />
             <span className="truncate">Recently Deleted</span>
           </SideItem>
@@ -440,7 +491,7 @@ export default function LibraryPage() {
               {deleted.length === 0 ? (
                 <Empty>Nothing here. Deleted notes will appear for {TRASH_DAYS} days.</Empty>
               ) : (
-                <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] items-start gap-4">
+                <div className={NOTE_GRID}>
                   {deleted.map((n) => (
                     <DeletedCard key={n.id} note={n} onRestore={restore} onPurge={purge} />
                   ))}
@@ -449,23 +500,28 @@ export default function LibraryPage() {
             </>
           ) : shared ? (
             <>
-              <h2 className="mb-4 text-sm font-medium uppercase tracking-wide text-muted">Shared with me</h2>
-              {sharedNotes.length === 0 ? (
-                <Empty>Nothing yet. Notes other people share with you appear here.</Empty>
+              <h2 className="mb-1 text-sm font-medium uppercase tracking-wide text-muted">Shared with me</h2>
+              <p className="mb-4 text-xs text-muted">New shares appear here; once you open one it moves to Uncategorized.</p>
+              {sharedInbox.length === 0 ? (
+                <Empty>Nothing new.</Empty>
               ) : (
-                <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] items-start gap-4">
-                  {sharedNotes.map(({ note, role }) => (
-                    <button
-                      key={note.id}
-                      onClick={() => router.push(`/editor/${note.id}`)}
-                      className="flex flex-col items-stretch overflow-hidden rounded-lg border border-border bg-surface text-left hover:border-accent"
-                    >
-                      <NoteCover noteId={note.id} />
-                      <span className="line-clamp-2 px-3 pt-2 text-sm font-medium">{note.title}</span>
-                      <span className="px-3 pb-3 pt-1">
-                        <span className="rounded bg-foreground/5 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted">{role}</span>
-                      </span>
-                    </button>
+                <div className={NOTE_GRID}>
+                  {sharedInbox.map(({ note, role }) => (
+                    <SharedNoteCard key={note.id} note={note} role={role} onOpen={() => router.push(`/editor/${note.id}`)} />
+                  ))}
+                </div>
+              )}
+            </>
+          ) : uncat ? (
+            <>
+              <h2 className="mb-1 text-sm font-medium uppercase tracking-wide text-muted">Uncategorized</h2>
+              <p className="mb-4 text-xs text-muted">Shared notes you&rsquo;ve opened. To file one under a subject, make a copy.</p>
+              {uncatNotes.length === 0 ? (
+                <Empty>Nothing here yet.</Empty>
+              ) : (
+                <div className={NOTE_GRID}>
+                  {uncatNotes.map(({ note, role }) => (
+                    <SharedNoteCard key={note.id} note={note} role={role} onOpen={() => router.push(`/editor/${note.id}`)} />
                   ))}
                 </div>
               )}
@@ -546,303 +602,4 @@ export default function LibraryPage() {
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
     </main>
   );
-}
-
-type CardHandlers = {
-  onDelete: (id: string) => void;
-  onCopy: (n: NoteMeta) => void;
-  onPdf: (n: NoteMeta) => void;
-  onAddTag: (n: NoteMeta) => void;
-  onRemoveTag: (n: NoteMeta, tag: string) => void;
-};
-
-function ResultGroup({ label, notes, ...h }: { label: string; notes: NoteMeta[] } & CardHandlers) {
-  return (
-    <div>
-      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">
-        {label} <span className="font-normal">· {notes.length}</span>
-      </h3>
-      <NoteGrid notes={notes} {...h} />
-    </div>
-  );
-}
-
-function NoteGrid({ notes, onNew, ...h }: { notes: NoteMeta[]; onNew?: () => void } & CardHandlers) {
-  return (
-    <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] items-start gap-4">
-      {onNew && <NewNoteTile onClick={onNew} />}
-      {notes.map((n) => (
-        <NoteCard key={n.id} note={n} {...h} />
-      ))}
-    </div>
-  );
-}
-
-/** A big, card-sized tile that creates a new blank note — always the first cell. */
-function NewNoteTile({ onClick }: { onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      className="group flex flex-col rounded-xl border-2 border-dashed border-border bg-surface/40 p-3 text-left transition hover:border-accent hover:bg-accent/[0.03]"
-    >
-      <div className="grid aspect-[3/4] place-items-center rounded-md border border-dashed border-border text-muted transition group-hover:border-accent group-hover:text-accent">
-        <span className="text-5xl font-light leading-none">+</span>
-      </div>
-      <div className="mt-2 text-sm font-medium text-muted transition group-hover:text-accent">New note</div>
-      <div className="text-xs text-muted">Blank document</div>
-    </button>
-  );
-}
-
-/** Dropdown to import a note from an .aqnote file or a link to one. */
-function ImportMenu({
-  disabled,
-  onFile,
-  onLink,
-}: {
-  disabled: boolean;
-  onFile: () => void;
-  onLink: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <span className="relative inline-flex">
-      <button
-        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen((o) => !o); }}
-        disabled={disabled}
-        title="Import a note"
-        className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm font-medium text-muted hover:border-accent hover:text-accent disabled:opacity-40 disabled:hover:border-border disabled:hover:text-muted"
-      >
-        <Icon name="import" size={14} /> Import
-      </button>
-      {open && (
-        <>
-          <button
-            className="fixed inset-0 z-40 cursor-default"
-            aria-hidden
-            tabIndex={-1}
-            onClick={(e) => { e.preventDefault(); setOpen(false); }}
-          />
-          <div className="absolute right-0 top-full z-50 mt-1 w-44 rounded-md border border-border bg-surface p-1 text-sm shadow-lg">
-            <MenuItem onClick={() => { setOpen(false); onFile(); }}>
-              From file <span className="text-muted">(.aqnote)</span>
-            </MenuItem>
-            <MenuItem onClick={() => { setOpen(false); onLink(); }}>From link…</MenuItem>
-          </div>
-        </>
-      )}
-    </span>
-  );
-}
-
-function exportOrAlert(noteId: string, title: string, fmt: "tex" | "aqnote") {
-  downloadNote(noteId, title, fmt).catch((e) => {
-    console.error("export failed", e);
-    alert("Couldn't export this note.");
-  });
-}
-
-function MenuItem({
-  onClick,
-  danger,
-  children,
-}: {
-  onClick: () => void;
-  danger?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      onClick={(e) => { e.preventDefault(); e.stopPropagation(); onClick(); }}
-      className={`block w-full rounded px-2 py-1.5 text-left hover:bg-foreground/[0.06] ${danger ? "text-red-500" : ""}`}
-    >
-      {children}
-    </button>
-  );
-}
-
-function NoteCardMenu({
-  note,
-  onCopy,
-  onDelete,
-  onPdf,
-}: {
-  note: NoteMeta;
-  onCopy: (n: NoteMeta) => void;
-  onDelete: (id: string) => void;
-  onPdf: (n: NoteMeta) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <span className="relative inline-flex">
-      <button
-        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen((o) => !o); }}
-        title="More"
-        className="grid h-6 w-6 place-items-center rounded-full bg-surface text-muted shadow ring-1 ring-border hover:text-foreground hover:ring-accent"
-      >
-        <Icon name="more" size={16} />
-      </button>
-      {open && (
-        <>
-          <button
-            className="fixed inset-0 z-40 cursor-default"
-            aria-hidden
-            tabIndex={-1}
-            onClick={(e) => { e.preventDefault(); setOpen(false); }}
-          />
-          <div className="absolute right-0 top-full z-50 mt-1 w-44 rounded-md border border-border bg-surface p-1 text-sm shadow-lg">
-            <MenuItem onClick={() => { setOpen(false); onCopy(note); }}>Make a copy</MenuItem>
-            <MenuItem onClick={() => { setOpen(false); onPdf(note); }}>
-              Download <span className="text-muted">(PDF)</span>
-            </MenuItem>
-            <MenuItem onClick={() => { setOpen(false); exportOrAlert(note.id, note.title, "tex"); }}>
-              Download <span className="text-muted">(.tex)</span>
-            </MenuItem>
-            <MenuItem onClick={() => { setOpen(false); exportOrAlert(note.id, note.title, "aqnote"); }}>
-              Download <span className="text-muted">(.aqnote)</span>
-            </MenuItem>
-            <div className="my-1 h-px bg-border" />
-            <MenuItem danger onClick={() => { setOpen(false); onDelete(note.id); }}>Delete</MenuItem>
-          </div>
-        </>
-      )}
-    </span>
-  );
-}
-
-function NoteCard({ note, onDelete, onCopy, onPdf, onAddTag, onRemoveTag }: { note: NoteMeta } & CardHandlers) {
-  return (
-    <div className="group relative flex flex-col rounded-xl border border-border bg-surface p-3 transition hover:-translate-y-0.5 hover:border-accent hover:shadow-[0_10px_26px_rgba(40,40,80,0.09)]">
-      <div className="absolute right-2 top-2 z-10 opacity-60 transition group-hover:opacity-100">
-        <NoteCardMenu note={note} onCopy={onCopy} onDelete={onDelete} onPdf={onPdf} />
-      </div>
-      <Link href={`/editor/${note.id}`} className="flex flex-col">
-        <div className="aspect-[3/4] overflow-hidden rounded-md border border-border">
-          <NoteCover noteId={note.id} />
-        </div>
-        <div className="mt-2 truncate text-sm font-medium">{note.title}</div>
-        <div className="text-xs text-muted">{new Date(note.updatedAt).toLocaleDateString()}</div>
-      </Link>
-      <div className="mt-1.5 flex flex-wrap items-center gap-1">
-        {note.tags.map((tag) => (
-          <span key={tag} className="group/tag inline-flex items-center gap-0.5 rounded-full bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent">
-            {tag}
-            <button onClick={() => onRemoveTag(note, tag)} title="Remove tag" className="hidden leading-none hover:text-foreground group-hover/tag:inline-flex">
-              <Icon name="close" size={10} />
-            </button>
-          </span>
-        ))}
-        <button onClick={() => onAddTag(note)} title="Add tag" className="rounded-full border border-dashed border-border px-1.5 py-0.5 text-[10px] text-muted hover:border-accent hover:text-accent">
-          + tag
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function DeletedCard({
-  note,
-  onRestore,
-  onPurge,
-}: {
-  note: NoteMeta;
-  onRestore: (id: string) => void;
-  onPurge: (id: string) => void;
-}) {
-  return (
-    <div className="flex flex-col rounded-xl border border-border bg-surface p-3">
-      <div className="aspect-[3/4] overflow-hidden rounded-md border border-border opacity-70">
-        <NoteCover noteId={note.id} />
-      </div>
-      <div className="mt-2 truncate text-sm font-medium">{note.title}</div>
-      <div className="text-xs text-muted">
-        Deleted {note.deletedAt ? new Date(note.deletedAt).toLocaleDateString() : ""}
-      </div>
-      <div className="mt-2 flex gap-1.5">
-        <button
-          onClick={() => onRestore(note.id)}
-          className="flex-1 rounded-md border border-border px-2 py-1 text-xs hover:border-accent hover:text-accent"
-        >
-          Restore
-        </button>
-        <button
-          onClick={() => onPurge(note.id)}
-          title="Delete permanently"
-          className="rounded-md border border-border px-2 py-1 text-xs text-muted hover:border-red-500 hover:text-red-500"
-        >
-          Delete
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function TagChip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button
-      onClick={onClick}
-      className={`rounded-full px-2.5 py-0.5 text-xs transition ${
-        active ? "bg-accent text-white" : "border border-border text-muted hover:border-accent"
-      }`}
-    >
-      {children}
-    </button>
-  );
-}
-
-function SideHead({
-  children,
-  onAdd,
-  addLabel,
-}: {
-  children: React.ReactNode;
-  onAdd?: () => void;
-  addLabel?: string;
-}) {
-  return (
-    <div className="mb-1.5 mt-5 flex items-center px-2.5 first:mt-1">
-      <span className="text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted">{children}</span>
-      {onAdd && (
-        <button onClick={onAdd} title={addLabel} className="ml-auto grid h-5 w-5 place-items-center rounded text-base leading-none text-muted hover:text-accent">
-          +
-        </button>
-      )}
-    </div>
-  );
-}
-
-function SideItem({
-  active,
-  onClick,
-  onDelete,
-  children,
-}: {
-  active?: boolean;
-  onClick: () => void;
-  onDelete?: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className={`group flex items-center rounded-[7px] ${active ? "bg-accent-soft" : "hover:bg-foreground/[0.04]"}`}>
-      <button
-        onClick={onClick}
-        className={`flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-2 text-left text-[13px] ${active ? "text-accent" : "text-foreground"}`}
-      >
-        {children}
-      </button>
-      {onDelete && (
-        <button
-          onClick={onDelete}
-          title="Delete"
-          className="mr-1 grid h-6 w-6 shrink-0 place-items-center text-muted opacity-0 transition hover:text-red-500 group-hover:opacity-100"
-        >
-          <Icon name="close" size={13} />
-        </button>
-      )}
-    </div>
-  );
-}
-
-function Empty({ children }: { children: React.ReactNode }) {
-  return <p className="px-2 py-4 text-sm text-muted">{children}</p>;
 }

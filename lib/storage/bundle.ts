@@ -50,6 +50,24 @@ export function remapTreeAssetIds(
   };
 }
 
+/**
+ * Rewrite self-referential note links (`note://<oldId>…`) to the imported
+ * note's new id, so a copy's internal section links point at the copy, not
+ * back at the original. Block ids are preserved by import, so `#fragment`
+ * targets keep working. Ids are UUIDs — a plain string replace is safe.
+ */
+export function remapSelfNoteLinks(
+  tree: DocumentTree,
+  oldNoteId: EntityId,
+  newNoteId: EntityId,
+): DocumentTree {
+  if (oldNoteId === newNoteId) return tree;
+  const raw = JSON.stringify(tree);
+  const needle = `note://${oldNoteId}`;
+  if (!raw.includes(needle)) return tree;
+  return JSON.parse(raw.split(needle).join(`note://${newNoteId}`)) as DocumentTree;
+}
+
 /** Deep-clone a block, remapping `attrs.assetId` on image blocks throughout. */
 function remapBlockAssetIds(block: Block, idMap: Map<EntityId, EntityId>): Block {
   const next: Block = { ...block };

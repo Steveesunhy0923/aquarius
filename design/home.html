@@ -1,0 +1,71 @@
+<!doctype html><html><head><meta charset="utf-8">
+<link rel="stylesheet" href="kit.css">
+<style>
+ .search{flex:1;max-width:440px}
+ .card .cover .k{font-size:19px;font-weight:600}
+</style></head>
+<body>
+<div class="shell">
+ <div class="topbar">
+   <span class="brand">Aquarius</span>
+   <span class="field search"><span data-ic="search" style="width:16px;height:16px"></span><span class="ph">Search title, tag, or content…</span></span>
+   <span class="spacer"></span>
+   <span class="btn primary"><span data-ic="newnote" style="width:15px;height:15px"></span>New note</span>
+   <span class="iconbtn bord"><span data-ic="settings" style="width:18px;height:18px"></span></span>
+   <span class="av" style="width:30px;height:30px;background:#5b5bd6">S</span>
+ </div>
+ <div class="body">
+   <div class="sidebar">
+     <div class="side-h">Subjects <span class="spacer"></span><span data-ic="newnote" style="width:13px;height:13px;color:var(--faint)"></span></div>
+     <div class="side-i on"><span data-ic="subjects" style="width:17px;height:17px"></span>Calculus<small>12</small></div>
+     <div class="side-i"><span data-ic="subjects" style="width:17px;height:17px"></span>Linear Algebra<small>7</small></div>
+     <div class="side-i"><span data-ic="subjects" style="width:17px;height:17px"></span>Physics<small>5</small></div>
+     <div class="side-h">Notebooks</div>
+     <div class="side-i on"><span data-ic="notebooks" style="width:17px;height:17px"></span>Derivatives<small>8</small></div>
+     <div class="side-i"><span data-ic="notebooks" style="width:17px;height:17px"></span>Integrals<small>6</small></div>
+     <div class="side-i"><span data-ic="notebooks" style="width:17px;height:17px"></span>Series &amp; Sequences<small>4</small></div>
+     <div class="side-h">Library</div>
+     <div class="side-i"><span data-ic="uploadcloud" style="width:17px;height:17px"></span>Shared with me</div>
+     <div class="side-i"><span data-ic="import" style="width:17px;height:17px"></span>Import a note</div>
+     <div class="side-i"><span data-ic="trash" style="width:17px;height:17px"></span>Trash</div>
+   </div>
+   <div class="main">
+     <div class="crumb">Calculus / Derivatives</div>
+     <div class="h-row">
+       <h1>Derivatives</h1>
+       <span class="spacer"></span>
+       <span class="chip on">All</span><span class="chip">exam</span><span class="chip">proof</span>
+       <span class="iconbtn bord"><span data-ic="more" style="width:18px;height:18px"></span></span>
+     </div>
+     <div class="cards" id="cards"></div>
+   </div>
+ </div>
+</div>
+<script src="icons.js"></script>
+<script>
+const NOTES=[
+ ["Mean Value Theorem","edited 2h ago · proof","∑","#5b5bd6",["proof","exam"],true],
+ ["The Chain Rule","edited yesterday","ƒ","#3fa392",["rules"],false],
+ ["Implicit Differentiation","edited 3d ago","∂","#7c5bd6",["practice"],false],
+ ["L'Hôpital's Rule","edited 3d ago · 2 figures","∞","#c2924a",["limits","exam"],false],
+ ["Related Rates","edited last week","△","#c2607a",["word-problems"],false],
+ ["Optimization","edited last week · 4 figures","∇","#5b6b8a",["exam"],true],
+ ["Linear Approximation","edited 2 weeks ago","≈","#3fa392",["intro"],false],
+ ["Newton's Method","draft","xₙ","#5b5bd6",["numerical"],false],
+];
+function card(n,i){
+ const hue=n[3];
+ const cover=`background:linear-gradient(135deg, color-mix(in srgb, ${hue} 13%, #fff), color-mix(in srgb, ${hue} 5%, #fff))`;
+ const shared=n[5]?`<div class="cshare"><span class="av" style="background:#5b5bd6">S</span><span class="av" style="background:#3fa392">E</span></div>`:'';
+ return `<div class="card ${i===1?'hover':''}">
+   <div class="cover" style="${cover}">
+     <span class="accent-bar" style="background:${hue}"></span>
+     <span class="k" style="color:${hue}">${n[2]}</span>${shared}
+   </div>
+   <div class="b"><div class="t">${n[0]}</div><div class="m">${n[1]}</div>
+   <div class="tg">${n[4].map(t=>`<span class="chip">${t}</span>`).join('')}</div></div></div>`;
+}
+document.getElementById('cards').innerHTML=NOTES.map(card).join('');
+hydrate();
+</script>
+</body></html>

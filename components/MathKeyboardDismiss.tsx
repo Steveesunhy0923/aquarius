@@ -11,6 +11,7 @@
  * type so this file never imports (and eagerly bundles) `mathlive`.
  */
 
+import { Icon } from "@/components/Icon";
 import { useEffect, useState } from "react";
 
 interface VKbd extends EventTarget {
@@ -70,9 +71,10 @@ export function MathKeyboardDismiss() {
       onMouseDown={(e) => e.preventDefault()} // keep field focus; don't blur-exit
       onClick={() => vkbd()?.hide()}
       style={{ position: "fixed", right: 16, bottom: bottom + 8, zIndex: 2147483647 }}
-      className="rounded-full border border-border bg-surface px-3 py-1.5 text-xs font-medium text-foreground shadow-lg hover:border-accent"
+      className="flex items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-1.5 text-xs font-medium text-foreground shadow-lg hover:border-accent"
     >
-      Hide keyboard ✕
+      Hide keyboard
+      <Icon name="close" size={12} />
     </button>
   );
 }

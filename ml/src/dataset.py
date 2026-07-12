@@ -32,11 +32,17 @@ def load_corrections(jsonl_path: str | Path) -> list[tuple[list[dict], str]]:
     """Parse serve.py's collected.jsonl into (strokes, label) pairs."""
     samples: list[tuple[list[dict], str]] = []
     with Path(jsonl_path).open("r", encoding="utf-8") as f:
-        for line in f:
+        for lineno, line in enumerate(f, 1):
             line = line.strip()
             if not line:
                 continue
-            rec = json.loads(line)
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                # a crash mid-append can truncate the final line — skip, don't
+                # kill a training launch over one bad correction
+                print(f"WARNING: skipping malformed corrections line {lineno} in {jsonl_path}")
+                continue
             label = (rec.get("label") or "").strip()
             strokes = [s for s in rec.get("strokes", []) if s.get("x")]
             if label and strokes:

@@ -1492,7 +1492,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
                   <button onClick={() => endEdit(b.id)} className="ml-auto rounded border border-border px-2 py-0.5">Done</button>
                 </div>
                 <textarea value={listItems(b).join("\n")} autoFocus onChange={(e) => setListText(b.id, e.target.value)} placeholder="One item per line…" rows={Math.max(2, listItems(b).length)} className="w-full resize-none bg-transparent text-sm outline-none" />
-                <div className="mt-2 border-t border-border pt-2"><BlockView block={b} /></div>
+                <div className="pointer-events-none mt-2 border-t border-border pt-2"><BlockView block={b} /></div>
               </div>
             ) : (
               <button onClick={() => { setSelected(null); setEditingId(b.id); }} className="w-full rounded-md px-2 py-1 text-left"><BlockView block={b} /></button>

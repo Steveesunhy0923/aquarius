@@ -310,12 +310,15 @@ export function builtinPresets(): Preset[] {
   return presets;
 }
 
-/** Materialize a preset: concatenate its stack with fresh block ids. */
-export function presetTree(p: Preset): DocumentTree {
+/** Materialize an ordered module stack: concatenate with fresh block ids. */
+export function stackTree(stack: Module[]): DocumentTree {
   const t = emptyDocument("flow");
-  t.blocks = p.stack.flatMap((m) => freshBlocks(m.blocks));
+  t.blocks = stack.flatMap((m) => freshBlocks(m.blocks));
   return t;
 }
+
+/** Materialize a preset from its stack. */
+export const presetTree = (p: Preset): DocumentTree => stackTree(p.stack);
 
 // ─── User-saved modules (localStorage, like saved templates) ──────────────────
 

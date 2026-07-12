@@ -2,24 +2,35 @@
 
 import { BlockView } from "@/components/BlockView";
 import { Icon } from "@/components/Icon";
+import { placeCard, useHoverCard } from "@/components/ui/hovercard";
 import { NOTE_LINK_EVENT, noteLinkUrl, parseNoteHref } from "@/lib/blocks/notelink";
 import { sectionRange } from "@/lib/blocks/outline";
 import type { Block } from "@/lib/blocks/types";
 import { getStore } from "@/lib/storage";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 
 /**
  * NoteLink — an in-prose link to another note (`note://id`, optionally
  * `#headingBlockId` for one section). Click opens the note (the editor route
  * intercepts same-note/section jumps via NOTE_LINK_EVENT; otherwise we
- * navigate); hovering ~a third of a second shows a live preview card of the
- * note — or just the linked section.
+ * navigate); hovering ~a third of a second shows a Google-Docs-style preview
+ * card: the note rendered on a miniature page, portrait or landscape to match
+ * the note's own page layout — or just the linked section.
  */
 
 // ── tiny preview cache (per session, short TTL so edits show up) ──────────────
-type Fetched = { title: string; blocks: Block[] } | { missing: true };
+type Fetched =
+  | {
+      title: string;
+      blocks: Block[];
+      /** The note's own page layout — decides the card's orientation. */
+      layout: "vertical" | "horizontal";
+      background?: string;
+      foreground?: string;
+    }
+  | { missing: true };
 const cache = new Map<string, { at: number; data: Fetched }>();
 const TTL = 8_000;
 const MISS_TTL = 2_000; // failures/deletions retry quickly (could be transient)
@@ -33,7 +44,15 @@ async function fetchNote(noteId: string): Promise<Fetched> {
     const [pkg, meta] = await Promise.all([store.openNote(noteId), store.getNoteMeta(noteId)]);
     // The cloud store answers a deleted/inaccessible note with an empty
     // package and no meta (it never throws) — treat metaless as missing.
-    data = meta ? { title: meta.title || "Untitled", blocks: pkg.tree.blocks } : { missing: true };
+    data = meta
+      ? {
+          title: meta.title || "Untitled",
+          blocks: pkg.tree.blocks,
+          layout: pkg.tree.style?.pageLayout === "horizontal" ? "horizontal" : "vertical",
+          background: pkg.tree.style?.background,
+          foreground: pkg.tree.style?.foreground,
+        }
+      : { missing: true };
   } catch {
     data = { missing: true };
   }
@@ -41,41 +60,20 @@ async function fetchNote(noteId: string): Promise<Fetched> {
   return data;
 }
 
-const HOVER_OPEN_MS = 350;
-const HOVER_CLOSE_MS = 200;
-
 export function NoteLink({ href, text }: { href: string; text: string }) {
   const router = useRouter();
   const target = parseNoteHref(href);
-  const anchorRef = useRef<HTMLAnchorElement>(null);
-  const openTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [preview, setPreview] = useState<{ x: number; y: number; above: boolean } | null>(null);
   const [note, setNote] = useState<Fetched | null>(null);
-  useEffect(() => () => {
-    if (openTimer.current) clearTimeout(openTimer.current);
-    if (closeTimer.current) clearTimeout(closeTimer.current);
-  }, []);
+  const { anchorRef, rect, armOpen, armClose, cancel } = useHoverCard(() => {
+    if (target) void fetchNote(target.noteId).then(setNote);
+  });
   // React reuses this instance when only the href segment changes (index keys)
   // — never show the previous target's fetched content.
   useEffect(() => {
     setNote(null);
-    setPreview(null);
-  }, [href]);
-  // The card is anchored to a point-in-time rect; any scroll drifts it, so dismiss.
-  useEffect(() => {
-    if (!preview) return;
-    const close = () => setPreview(null);
-    window.addEventListener("scroll", close, { capture: true, passive: true });
-    return () => window.removeEventListener("scroll", close, { capture: true });
-  }, [preview]);
+    cancel();
+  }, [href, cancel]);
   if (!target) return <span>{text}</span>;
-
-  /** Cancel both hover timers (click/navigation must not pop a late preview). */
-  function clearTimers() {
-    if (openTimer.current) { clearTimeout(openTimer.current); openTimer.current = null; }
-    if (closeTimer.current) { clearTimeout(closeTimer.current); closeTimer.current = null; }
-  }
 
   function navigate() {
     if (!target) return;
@@ -88,27 +86,6 @@ export function NoteLink({ href, text }: { href: string; text: string }) {
     if (window.dispatchEvent(ev)) router.push(noteLinkUrl(target));
   }
 
-  function openPreview() {
-    const rect = anchorRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const W = 340;
-    const H = 300;
-    const x = Math.max(8, Math.min(rect.left, window.innerWidth - W - 8));
-    const above = window.innerHeight - rect.bottom < H + 16 && rect.top > H + 16;
-    const y = above ? rect.top - 8 : rect.bottom + 8;
-    setPreview({ x, y, above });
-    if (target) void fetchNote(target.noteId).then(setNote);
-  }
-
-  const armOpen = () => {
-    if (closeTimer.current) { clearTimeout(closeTimer.current); closeTimer.current = null; }
-    if (!preview && !openTimer.current) openTimer.current = setTimeout(() => { openTimer.current = null; openPreview(); }, HOVER_OPEN_MS);
-  };
-  const armClose = () => {
-    if (openTimer.current) { clearTimeout(openTimer.current); openTimer.current = null; }
-    if (preview && !closeTimer.current) closeTimer.current = setTimeout(() => { closeTimer.current = null; setPreview(null); }, HOVER_CLOSE_MS);
-  };
-
   return (
     <>
       <a
@@ -120,8 +97,7 @@ export function NoteLink({ href, text }: { href: string; text: string }) {
           // href is a real app route.
           if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
           e.preventDefault();
-          clearTimers();
-          setPreview(null);
+          cancel();
           navigate();
         }}
         onMouseEnter={armOpen}
@@ -133,14 +109,14 @@ export function NoteLink({ href, text }: { href: string; text: string }) {
       </a>
       {/* Portal: links live inside <p>/<button> where a <div> card would be
           invalid DOM (hydration warnings); the card is fixed-positioned anyway. */}
-      {preview && createPortal(
+      {rect && createPortal(
         <PreviewCard
           target={target}
           note={note}
-          pos={preview}
+          rect={rect}
           onEnter={armOpen}
           onLeave={armClose}
-          onOpen={() => { setPreview(null); navigate(); }}
+          onOpen={() => { cancel(); navigate(); }}
         />,
         document.body,
       )}
@@ -148,10 +124,10 @@ export function NoteLink({ href, text }: { href: string; text: string }) {
   );
 }
 
-function PreviewCard({ target, note, pos, onEnter, onLeave, onOpen }: {
+function PreviewCard({ target, note, rect, onEnter, onLeave, onOpen }: {
   target: { noteId: string; blockId?: string };
   note: Fetched | null;
-  pos: { x: number; y: number; above: boolean };
+  rect: DOMRect;
   onEnter: () => void;
   onLeave: () => void;
   onOpen: () => void;
@@ -161,11 +137,15 @@ function PreviewCard({ target, note, pos, onEnter, onLeave, onOpen }: {
   let blocks: Block[] = [];
   let missing = false;
   let sectionGone = false;
+  let layout: "vertical" | "horizontal" = "vertical";
+  let pageStyle: { background?: string; foreground?: string } = {};
   if (note) {
     if ("missing" in note) missing = true;
     else {
       title = note.title;
       blocks = note.blocks;
+      layout = note.layout;
+      pageStyle = { background: note.background, foreground: note.foreground };
       if (target.blockId) {
         const range = sectionRange(blocks, target.blockId);
         if (range) {
@@ -175,16 +155,24 @@ function PreviewCard({ target, note, pos, onEnter, onLeave, onOpen }: {
           sectionGone = true; // deleted/demoted heading — fall back to the note
         }
       }
-      blocks = blocks.slice(0, 10);
+      blocks = blocks.slice(0, 12);
     }
   }
+  // The card follows the note's page layout: vertical notes preview as a
+  // portrait mini-page, horizontal ones as a wide landscape card.
+  const wide = layout === "horizontal" && !missing;
+  const width = wide ? 480 : 300;
+  const empty = blocks.length === 0;
+
   return (
     <div
       onMouseEnter={onEnter}
       onMouseLeave={onLeave}
       onClick={(e) => { e.stopPropagation(); onOpen(); }}
-      className="print-hide fixed z-[80] w-[340px] cursor-pointer overflow-hidden rounded-lg border border-border bg-surface shadow-2xl"
-      style={{ left: pos.x, top: pos.above ? undefined : pos.y, bottom: pos.above ? window.innerHeight - pos.y : undefined }}
+      className="print-hide fixed z-80 cursor-pointer overflow-hidden rounded-lg border border-border bg-surface shadow-2xl"
+      // Placement uses the max card footprint (480×430) so the side/position is
+      // stable whether the fetch resolves to a portrait or landscape card.
+      style={{ width, ...placeCard(rect, 480, 430) }}
     >
       <div className="flex items-center gap-1.5 border-b border-border-soft px-3 py-2 text-sm">
         <Icon name="pagesize" size={14} className="shrink-0 text-muted" />
@@ -193,23 +181,34 @@ function PreviewCard({ target, note, pos, onEnter, onLeave, onOpen }: {
           <span className="min-w-0 truncate text-xs text-muted">› {sectionName}</span>
         )}
       </div>
-      <div className="max-h-56 overflow-hidden bg-background px-3 py-2">
+      <div className="bg-background p-3">
         {sectionGone && (
-          <p className="mb-1 rounded bg-amber-500/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-400">
+          <p className="mb-2 rounded bg-amber-500/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-400">
             The linked section no longer exists — showing the note instead.
           </p>
         )}
-        {missing ? (
-          <p className="py-4 text-center text-xs text-muted">This note may have been deleted, or it lives in another account.</p>
-        ) : !note ? (
-          <p className="py-4 text-center text-xs text-muted">Loading preview…</p>
-        ) : blocks.length === 0 ? (
-          <p className="py-4 text-center text-xs text-muted">{sectionName ? "This section is empty." : "This note is empty."}</p>
+        {missing || !note || empty ? (
+          <p className="py-6 text-center text-xs text-muted">
+            {missing
+              ? "This note may have been deleted, or it lives in another account."
+              : !note
+                ? "Loading preview…"
+                : sectionName
+                  ? "This section is empty."
+                  : "This note is empty."}
+          </p>
         ) : (
-          <div className="pointer-events-none origin-top-left scale-[0.8] space-y-1 [width:125%]">
-            {blocks.map((b) => (
-              <div key={b.id}><BlockView block={b} /></div>
-            ))}
+          // The miniature page: the note's own surface (poster backgrounds and
+          // all), clipped to the layout's aspect.
+          <div
+            className={`overflow-hidden rounded-md border border-border-soft shadow-sm ${wide ? "h-44" : "h-80"}`}
+            style={{ background: pageStyle.background || "var(--surface)", color: pageStyle.foreground || undefined }}
+          >
+            <div className={`pointer-events-none origin-top-left space-y-1 p-3 ${wide ? "scale-[0.75] w-[133%]" : "scale-[0.7] w-[143%]"}`}>
+              {blocks.map((b) => (
+                <div key={b.id}><BlockView block={b} /></div>
+              ))}
+            </div>
           </div>
         )}
       </div>

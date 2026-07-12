@@ -1,6 +1,6 @@
 {
   "name": "aquarius",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "private": true,
   "description": "Aquarius — a WYSIWYG math note editor. LaTeX is the output format, not the input format.",
   "scripts": {

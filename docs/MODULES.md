@@ -4,10 +4,14 @@ Living status doc for the "modular notes" initiative. Update as slices land.
 
 ## Current version
 
+- **Aquarius 0.6.1** — released from `ui-graphite-redesign`: presets as editable stacks
+  (module chips on the Note-layout cards), Google-Docs-style orientation-aware link
+  previews for note + external links (`/api/unfurl`), and the ML workstream's XL cloud
+  training + text mode (Apple Vision OCR) in the /ink lab.
 - **Aquarius 0.6.0** — released from `ui-graphite-redesign`: the Graphite UI restyle,
   modular notes (catalog + presets-as-stacks + slash-insert + save-section + module
   manager/builder), wiki-style note links, the /ink handwriting lab, and the Capacitor
-  iOS shell scaffolding. `package.json` now tracks the release version (0.6.0).
+  iOS shell scaffolding. `package.json` now tracks the release version.
 
 ## Current goal
 
@@ -66,10 +70,19 @@ presets + custom templates + modules into one underlying thing.
    deleted meanwhile). Closing a dirty builder asks before discarding. `ui/Dialog` now closes
    the *topmost* dialog on Escape (stacked-dialog aware) and ignores drag-releases on the scrim.
 
+5. ✅ **Presets as editable stacks (UI)** *(0.6.1)* — the Designs dialog's
+   "Note layouts" cards are now `PresetCard`s (`DesignPicker`): each preset shows its module
+   stack as chips — click a chip to tick a module in/out (drawn `check` icon; excluded chips
+   render dashed/dimmed with a `+`), drag chips to reorder (same HTML5 pattern as the sidebar
+   outline), and the card's preview re-materializes live from the current stack
+   (`stackTree()` in `lib/templates/modules.ts`, which `presetTree()` now delegates to).
+   A **Reset** affordance appears once the stack is modified; with every chip off the card
+   shows a "Nothing to insert" placeholder and disables **Use this template**. Applying
+   inserts exactly the customized stack through the existing add/replace flow. Verified
+   end-to-end in a real browser (toggle, drag-reorder, apply order, reset, all-off).
+
 ## Todo next
 
-- **Presets as editable stacks (UI)** — the data model is ready (`Preset.stack`); show the
-  module chips in the DesignPicker before applying: check/uncheck + drag to reorder, then insert.
 - **Fillable fields** — replace the literal `___` / `**Course:** ___` convention with named
   `{{field}}` tokens that prompt once on insert or Tab-through like a snippet. (`Module.fields`
   is reserved for this; design decision: where the token lives in the `attrs.runs` model.)
@@ -142,6 +155,40 @@ targets a section (heading block ids are stable across renames). Rides the ordin
   them; a link clicked in split-pane B to a third note replaces pane B; the toolbar path uses
   the text selection as the label; `[[` only triggers on a genuinely typed bracket.
 - Later ideas: backlinks panel, link autocomplete while typing `[[query`, rename-aware labels.
+
+## Update (0.6.1) — Google-Docs-style, orientation-aware previews
+
+Hover previews were redesigned for **both link kinds**, and external links got previews for
+the first time:
+
+- **Note links** (`NoteLink`): the card now renders the note on a **miniature page** carrying
+  the note's own background/foreground (posters preview correctly), and the card's
+  orientation follows the note's layout — `style.pageLayout: "horizontal"` → wide 480px
+  landscape card, default vertical → 300px portrait card. Section previews unchanged.
+- **External links** (new `components/ExternalLink.tsx`, replaces the plain `<a>` in
+  `BlockView`): hovering shows the target page's Open Graph card — cover image, title,
+  description, favicon + site name. Card orientation follows the **cover image's aspect**:
+  landscape cover → wide banner card (420px), portrait cover → tall card (264px),
+  square/no image → compact row (360px). Unfurl failure (offline, static build, bot-blocked
+  site) degrades to a compact domain + URL card. Clicks now stop propagating (no
+  click-to-edit underneath), matching NoteLink.
+- **`app/api/unfurl` (first API route)**: server-side metadata fetch (browsers can't read
+  cross-origin pages) — SSRF-guarded (public hosts only, every redirect hop re-validated;
+  the extracted **og:image + favicon URLs are re-validated too**, so a page can't aim the
+  reader's browser at a LAN address on hover), 6s timeout, 512KB fetch cap, `<head>`-only
+  parse capped at 128KB with **bounded** tag regexes (no catastrophic backtracking on hostile
+  HTML), `Cache-Control: public, max-age=3600`. Best-effort by design: clients treat any
+  failure as "no preview". Card `<img>`s (and the client-side aspect probe) use
+  `referrerPolicy="no-referrer"`.
+- **Shared plumbing**: `components/ui/hovercard.ts` — `useHoverCard` (350ms open / 200ms
+  close-grace timers, scroll dismiss, stable callbacks) + `placeCard` viewport clamping,
+  extracted from NoteLink and reused by both link components.
+- Verified in a real browser: 18 assertions across wide/tall/compact/fallback external cards
+  and horizontal/vertical note cards; unfurl route live-tested incl. SSRF rejections. A
+  4-dimension adversarial review followed; 6 confirmed findings fixed (regex-DoS via bounded
+  head parse, entity-decode crash-guard, image/favicon SSRF re-validation + no-referrer,
+  `placeCard` viewport clamp, stable card placement so a growing card doesn't self-dismiss,
+  list-editor preview made `pointer-events-none`).
 
 ---
 
@@ -216,3 +263,25 @@ label" → edit with live preview → Save → HTTP 200, confirmation shown, JSO
   LAN-IP treatment as the dev server (or the eventual on-device CoreML plugin writing locally).
 - **Review UI** — list/replay/delete collected samples before training on them.
 - **Dedup / provenance** — the raw model guess is stored as `predicted` for error analysis.
+
+---
+
+# Handwritten words → text (text mode) — decision record 2026-07-12
+
+**User requirement (recorded verbatim in spirit, saved for later):** written-text handwriting
+recognition ("actual words", not math) shall be integrated into the note-taking sections in a
+convenient fashion, **limited to the iPad version only**. The dev session (desktop browser)
+still exposes it for demonstration/testing — the iPad-only restriction applies to the shipped
+product surface, not to the lab.
+
+- **Engine**: Apple Vision (`VNRecognizeTextRequest`) — on macOS in dev via the recognition
+  server (`ml/src/text_ocr.py`), and natively on-device in the eventual iPad build. Same engine
+  family both places, so dev-session behavior is representative. No training required; strokes
+  are rasterized (`ml/src/render.py`) and OCR'd.
+- **Shipped now (dev/lab)**: the `/ink` lab's Text mode works end-to-end (was a 501);
+  plain-text results render as text, not KaTeX; text corrections flow into `/collect` with
+  `mode:"text"` like math ones.
+- **Saved for later (the iPad-only editor integration)**: a convenient words-input surface in
+  the note editor (e.g. the ink sheet gaining a Text mode that inserts recognized words as
+  paragraph prose at the caret), gated to the Capacitor/iPad build (platform check), plus the
+  native PencilKit/Vision plugin path from IPAD_APP_PLAN.md. Not built on desktop by design.

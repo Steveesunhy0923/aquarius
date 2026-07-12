@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { BlockView } from "@/components/BlockView";
 import { Icon } from "@/components/Icon";
 import { ModuleEditorDialog } from "@/components/ModuleEditorDialog";
@@ -9,12 +9,15 @@ import { uiConfirm } from "@/components/ui/dialogs";
 import type { Block, DocumentTree } from "@/lib/blocks/types";
 import {
   builtinModules,
+  builtinPresets,
   deleteSavedModule,
   listSavedModules,
   saveModule,
+  stackTree,
   updateModule,
   MODULE_CATEGORY_NAMES,
   type Module,
+  type Preset,
 } from "@/lib/templates/modules";
 import {
   BUILTIN_BACKGROUNDS,
@@ -82,10 +85,89 @@ function TemplateCard({
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+/** A note layout as its editable module stack: chips toggle modules in and out
+ *  and drag to reorder; the preview tracks the current stack. "Use this
+ *  template" inserts exactly what the preview shows. */
+function PresetCard({ preset, onUse }: { preset: Preset; onUse: (tree: DocumentTree) => void }) {
+  const [items, setItems] = useState(() => preset.stack.map((module) => ({ module, on: true })));
+  const dragFrom = useRef<number | null>(null);
+  const modified = items.some((it, i) => !it.on || it.module !== preset.stack[i]);
+  const tree = useMemo(() => stackTree(items.filter((it) => it.on).map((it) => it.module)), [items]);
+
+  const toggle = (i: number) => setItems((prev) => prev.map((it, j) => (j === i ? { ...it, on: !it.on } : it)));
+  const move = (from: number, to: number) =>
+    setItems((prev) => {
+      if (from === to) return prev;
+      const next = [...prev];
+      const [it] = next.splice(from, 1);
+      next.splice(to, 0, it);
+      return next;
+    });
+
+  return (
+    <div className="flex flex-col rounded-lg border border-border bg-surface p-3">
+      {tree.blocks.length === 0 ? (
+        <div className="grid h-36 place-items-center rounded-md border border-dashed border-border text-xs text-muted">
+          Nothing to insert — tick a module below.
+        </div>
+      ) : (
+        <Preview tree={tree} />
+      )}
+      <div className="mt-2 flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="truncate font-medium">{preset.name}</p>
+          <p className="mt-0.5 text-xs text-muted">{preset.scenario}</p>
+        </div>
+        {modified && (
+          <button
+            onClick={() => setItems(preset.stack.map((module) => ({ module, on: true })))}
+            className="shrink-0 text-xs text-muted underline decoration-dashed underline-offset-2 hover:text-accent"
+          >
+            Reset
+          </button>
+        )}
+      </div>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {items.map((it, i) => (
+          <button
+            key={it.module.id}
+            draggable
+            onDragStart={(e) => { e.dataTransfer.setData("text/plain", ""); dragFrom.current = i; }}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault();
+              if (dragFrom.current !== null) move(dragFrom.current, i);
+              dragFrom.current = null;
+            }}
+            onDragEnd={() => { dragFrom.current = null; }}
+            onClick={() => toggle(i)}
+            aria-pressed={it.on}
+            title={`${it.on ? "Click to leave out" : "Click to include"} · drag to reorder`}
+            className={`flex cursor-grab items-center gap-1 rounded-full border px-2 py-0.5 text-xs transition active:cursor-grabbing ${
+              it.on ? "border-border bg-background" : "border-dashed border-border text-muted hover:text-foreground"
+            }`}
+          >
+            <Icon name={it.on ? "check" : "plus"} size={11} className={it.on ? "text-accent" : undefined} />
+            <span className="max-w-36 truncate">{it.module.name}</span>
+          </button>
+        ))}
+      </div>
+      <button
+        onClick={() => onUse(stackTree(items.filter((it) => it.on).map((it) => it.module)))}
+        disabled={tree.blocks.length === 0}
+        className="mt-3 rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
+      >
+        Use this template
+      </button>
+    </div>
+  );
+}
+
+function Section({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
   return (
     <div className="mt-6 first:mt-0">
-      <DialogSection className="mb-2">{title}</DialogSection>
+      <DialogSection className={hint ? "mb-1" : "mb-2"}>{title}</DialogSection>
+      {hint && <p className="mb-2 text-xs text-muted">{hint}</p>}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">{children}</div>
     </div>
   );
@@ -112,7 +194,7 @@ export function DesignPicker({
   onClose: () => void;
 }) {
   const [tab, setTab] = useState<(typeof TABS)[number]["id"]>("template");
-  const builtins = useMemo(() => BUILTIN_TEMPLATES.map((t) => ({ ...t, tree: t.build() })), []);
+  const posters = useMemo(() => BUILTIN_TEMPLATES.filter((t) => t.category === "poster").map((t) => ({ ...t, tree: t.build() })), []);
   const [saved, setSaved] = useState<SavedTemplate[]>(() => listSavedTemplates());
   const [name, setName] = useState("");
 
@@ -191,14 +273,14 @@ export function DesignPicker({
               </button>
             </div>
 
-            <Section title="Note layouts">
-              {builtins.filter((t) => t.category === "note").map((t) => (
-                <TemplateCard key={t.id} name={t.name} scenario={t.scenario} tree={t.tree} onUse={() => onApply(t.build())} />
+            <Section title="Note layouts" hint="Each layout is a stack of modules — tick chips off or drag them into a new order before using it.">
+              {builtinPresets().map((p) => (
+                <PresetCard key={p.id} preset={p} onUse={onApply} />
               ))}
             </Section>
 
             <Section title="Posters">
-              {builtins.filter((t) => t.category === "poster").map((t) => (
+              {posters.map((t) => (
                 <TemplateCard key={t.id} name={t.name} scenario={t.scenario} tree={t.tree} onUse={() => onApply(t.build())} />
               ))}
             </Section>

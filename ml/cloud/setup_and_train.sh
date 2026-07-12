@@ -30,7 +30,9 @@ SUDO=""
 [ "$(id -u)" -ne 0 ] && SUDO="sudo"
 
 banner "1/6 system packages (python3-venv, rsync, tmux)"
-if ! python3 -m venv --help >/dev/null 2>&1; then
+# real venv-creation probe: `python3 -m venv --help` succeeds even when
+# Ubuntu's ensurepip package is missing, so actually try creating one
+if ! python3 -m venv "$(mktemp -d)/probe" >/dev/null 2>&1; then
   $SUDO apt-get update -y
   $SUDO apt-get install -y python3 python3-venv python3-pip
 fi
@@ -42,10 +44,18 @@ echo "python3: $(python3 --version)"
 
 banner "2/6 venv + python deps -> $VENV"
 mkdir -p "$RUN_DIR"
-[ -x "$PY" ] || python3 -m venv "$VENV"
+# --system-site-packages: cloud GPU templates (RunPod/Lambda) preinstall a
+# CUDA-matched torch system-wide — reuse it instead of downloading multi-GB
+# wheels again. torch is only pip-installed if it's genuinely absent.
+[ -x "$PY" ] || python3 -m venv --system-site-packages "$VENV"
 "$VENV/bin/pip" install --upgrade pip -q
-# default PyPI torch wheels bundle CUDA on linux x86_64
-"$VENV/bin/pip" install torch numpy pillow tqdm requests
+if ! "$PY" -c 'import torch' >/dev/null 2>&1; then
+  echo "no preinstalled torch found — installing (CUDA wheels, several GB)"
+  "$VENV/bin/pip" install torch
+else
+  echo "reusing preinstalled torch: $("$PY" -c 'import torch; print(torch.__version__)')"
+fi
+"$VENV/bin/pip" install -q numpy pillow tqdm requests
 "$PY" - <<'PYEOF'
 import torch
 print(f"torch {torch.__version__}, cuda available: {torch.cuda.is_available()}")
@@ -60,32 +70,43 @@ if [ "$ML_SRC" = "$ML_RUN" ]; then
   echo "already running from $ML_RUN — skipping copy"
 else
   mkdir -p "$ML_RUN"
-  if command -v rsync >/dev/null 2>&1; then
-    rsync -a \
-      --exclude '.venv' --exclude '__pycache__' --exclude '*.mlpackage' \
-      --exclude 'data/mathwriting-2024*' --exclude 'checkpoints/*.pt' \
-      "$ML_SRC/" "$ML_RUN/"
-  else
-    cp -R "$ML_SRC/." "$ML_RUN/"
-  fi
+  # rsync only — a cp fallback can't honor the excludes and a re-run would
+  # clobber the half-trained cloud checkpoints with stale local ones
+  command -v rsync >/dev/null 2>&1 || { echo "ERROR: rsync is required (apt-get install rsync)"; exit 1; }
+  rsync -a \
+    --exclude '.venv' --exclude '__pycache__' --exclude '*.mlpackage' \
+    --exclude 'data/mathwriting-2024*' --exclude 'checkpoints/*.pt' \
+    "$ML_SRC/" "$ML_RUN/"
   echo "copied $ML_SRC -> $ML_RUN"
 fi
 cd "$ML_RUN"
 
-banner "4/6 dataset (full MathWriting, ~2.9 GB download)"
-"$PY" data/download_mathwriting.py --full
+banner "4/6 dataset (full MathWriting)"
+# a dataset pre-staged next to RUN_DIR (or by hand) wins over a fresh download
 DATA_ROOT="data/mathwriting-2024"
+for candidate in "$RUN_DIR/data/mathwriting-2024" "$ML_RUN/data/mathwriting-2024"; do
+  if [ -d "$candidate/train" ] && [ "$(ls "$candidate/train" | head -1000 | wc -l)" -ge 1000 ]; then
+    DATA_ROOT="$candidate"
+    echo "using pre-staged dataset: $DATA_ROOT"
+    break
+  fi
+done
+if [ ! -d "$DATA_ROOT/train" ]; then
+  echo "no pre-staged dataset — downloading (~2.9 GB)"
+  "$PY" data/download_mathwriting.py --full
+  DATA_ROOT="data/mathwriting-2024"
+fi
 
 banner "5/6 vocab"
 VOCAB="checkpoints/vocab_full.json"
 if [ -f "$VOCAB" ]; then
   echo "vocab already built: $VOCAB"
 else
-  "$PY" - <<'PYEOF'
-import sys
+  DATA_ROOT="$DATA_ROOT" "$PY" - <<'PYEOF'
+import os, sys
 sys.path.insert(0, ".")
 from src.latex_tokenizer import build_vocab_from_split
-tok = build_vocab_from_split("data/mathwriting-2024/train")
+tok = build_vocab_from_split(os.environ["DATA_ROOT"] + "/train")
 tok.save("checkpoints/vocab_full.json")
 print(f"vocab: {len(tok)} tokens -> checkpoints/vocab_full.json")
 PYEOF

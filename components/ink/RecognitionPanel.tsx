@@ -39,6 +39,9 @@ export function useRecognition(strokes: Stroke[], strokeSeq: number) {
   // it against their live strokeSeq to detect a stale recognition (ink changed
   // after the request went out, or a debounce/re-convert is still pending).
   const [resultSeq, setResultSeq] = useState<number | null>(null);
+  // Which MODE produced the current result: "text" results are plain words and
+  // must not be typeset through KaTeX.
+  const [resultMode, setResultMode] = useState<RecognitionMode>("math");
   const [error, setError] = useState<string | null>(null);
   const [offline, setOffline] = useState(false);
 
@@ -55,6 +58,7 @@ export function useRecognition(strokes: Stroke[], strokeSeq: number) {
     const ink = strokesRef.current;
     if (ink.length === 0) return;
     const seqAtRequest = seqRef.current;
+    const modeAtRequest = modeRef.current;
     abortRef.current?.abort(); // supersede any in-flight request
     const ac = new AbortController();
     abortRef.current = ac;
@@ -87,6 +91,7 @@ export function useRecognition(strokes: Stroke[], strokeSeq: number) {
           confidence: typeof body.confidence === "number" ? body.confidence : 0,
         });
         setResultSeq(seqAtRequest);
+        setResultMode(modeAtRequest);
       }
     } catch (err) {
       if ((err as Error)?.name === "AbortError") return; // superseded or cleared
@@ -143,8 +148,8 @@ export function useRecognition(strokes: Stroke[], strokeSeq: number) {
   }, []);
 
   return {
-    mode, setMode, auto, setAuto, busy, result, resultSeq, error, offline, convert, collect,
-    collectedCount, hasInk: strokes.length > 0,
+    mode, setMode, auto, setAuto, busy, result, resultSeq, resultMode, error, offline, convert,
+    collect, collectedCount, hasInk: strokes.length > 0,
   };
 }
 
@@ -248,7 +253,13 @@ export function RecognitionPanel({ rec }: { rec: Recognition }) {
         ) : result ? (
           <>
             <div className="overflow-x-auto py-1">
-              {result.latex ? <Katex latex={result.latex} display /> : <p className="text-sm text-faint">(empty result)</p>}
+              {!result.latex ? (
+                <p className="text-sm text-faint">(empty result)</p>
+              ) : rec.resultMode === "text" ? (
+                <p className="whitespace-pre-wrap text-center text-lg">{result.latex}</p>
+              ) : (
+                <Katex latex={result.latex} display />
+              )}
             </div>
             <div className="mt-2 flex items-center gap-2">
               <code className="min-w-0 flex-1 overflow-x-auto whitespace-pre rounded-md border border-border-soft bg-background px-2.5 py-1.5 font-mono text-xs text-muted">
@@ -321,11 +332,12 @@ function Correction({ rec, guess }: { rec: Recognition; guess: string }) {
     );
   }
 
+  const isText = rec.resultMode === "text";
   const valid = label.trim().length > 0;
   return (
     <div className="mt-2.5 rounded-md border border-accent/40 bg-accent-soft/40 p-2.5">
       <label className="mb-1.5 block text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted">
-        Correct LaTeX
+        {isText ? "Correct text" : "Correct LaTeX"}
       </label>
       <input
         autoFocus
@@ -336,11 +348,17 @@ function Correction({ rec, guess }: { rec: Recognition; guess: string }) {
           if (e.key === "Escape") { e.preventDefault(); setOpen(false); }
         }}
         spellCheck={false}
-        placeholder="e.g. \frac{x}{2} + 1"
+        placeholder={isText ? "e.g. Hello world" : "e.g. \\frac{x}{2} + 1"}
         className="w-full rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-sm outline-none focus:border-accent"
       />
       <div className="mt-2 min-h-8 overflow-x-auto rounded-md border border-border-soft bg-surface px-2.5 py-1.5">
-        {valid ? <Katex latex={label} display /> : <span className="text-xs text-faint">preview</span>}
+        {!valid ? (
+          <span className="text-xs text-faint">preview</span>
+        ) : isText ? (
+          <p className="whitespace-pre-wrap text-sm">{label}</p>
+        ) : (
+          <Katex latex={label} display />
+        )}
       </div>
       <div className="mt-2 flex items-center justify-end gap-2">
         <button onClick={() => setOpen(false)} className="rounded-md border border-border px-3 py-1 text-xs text-muted hover:bg-foreground/[0.04]">

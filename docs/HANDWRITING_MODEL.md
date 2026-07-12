@@ -22,7 +22,7 @@ Convert Apple Pencil ink into LaTeX, Notability-style but LaTeX-native:
 | Track | Approach | Why |
 |---|---|---|
 | Math | **Custom model**, trained on MathWriting (§3) | No open on-device math recognizer exists; Apple has none (verified — see §2a); this is the differentiating feature |
-| Plain text | **Apple Vision framework** on-device recognition | Ships with iPadOS; reads neat handwriting on-device (~70–85% on print-style, weaker on cursive); training our own would take years to match |
+| Plain text | **Apple Vision framework** — ✅ LIVE in dev (2026-07-12): `ml/src/text_ocr.py` via pyobjc on macOS; iPad ships the same engine on-device | Ships with iPadOS; reads neat handwriting on-device (~70–85% on print-style, weaker on cursive); training our own would take years to match |
 | Fallback | MyScript iink SDK (commercial) | Does ink-math→LaTeX today; on-device pricing is sales-gated, cloud is 2,000 free requests/mo then $10/1k. The buy option if custom quality stalls |
 
 ### 2a. What Apple provides (verified against Apple docs, 2026-07)
@@ -243,6 +243,59 @@ Metrics: CER on MathWriting valid/test; ExpRate on CROHME 2023 for comparison wi
   edit-box survival across sheet + input focus, inline popover on diverged insert, sheet
   persistence + reset, absolute positioning). One dev-only flake diagnosed as Next.js Fast
   Refresh reloading during MathLive's first lazy compile — not an app bug.
+
+### 2026-07-12 — Step 9: S2-XL cloud training launched ✅ (running)
+- **Training stack upgraded** for cloud GPUs, all verified locally before any paid compute:
+  CUDA autocast (bf16) + GradScaler fallback, `--model-size xl` (16.4M params: 384/8/6/1536),
+  `--synthetic` (396k extra samples), `--augment` (stroke-level: rotate/shear/scale/jitter +
+  random pen width, worker-safe per-sample RNG — [ml/src/augment.py](../ml/src/augment.py)),
+  `--corrections` mix-in (user-collected ink, oversampled), warmup+cosine LR, `--resume`,
+  best-validation checkpoint keeping, grad accumulation. Runbook: [ml/cloud/README.md](../ml/cloud/README.md).
+- **Quality gates before launch**: 7-item local verification suite (backward compat, all new
+  flags, resume incl. old checkpoints, corrections, augment determinism, script syntax) +
+  an independent adversarial code review (verdict: core trainer ship-worthy; three bootstrap-
+  script findings + a per-step `.item()` GPU-sync stall — **all fixed**, sync now batched per
+  flush) + a real CUDA/AMP smoke on the target GPU.
+- **The run**: RunPod RTX 4090 (24 GB, 32 cores, $0.35–0.70/hr), driven entirely over SSH.
+  625,910 samples (train + synthetic + corrections ×32), batch 128 bf16, 150,000 steps
+  (~30 epochs), validate + checkpoint every 2,000 steps → `xl.pt` / `xl_best.pt`.
+  Measured ~0.15 s/step (data-pipeline-bound at ~850 renders/s; GPU ~50%), **ETA ≈ 6–7 h,
+  cost ≈ $3–5**. Remote monitor reports 20k-step milestones/errors. `serve.py` already
+  prefers `xl.pt` on the Mac once fetched (`ml/cloud/fetch_checkpoint.sh`).
+
+### 2026-07-12 — Step 10: text mode (written words → text) live in dev ✅
+- **[ml/src/text_ocr.py](../ml/src/text_ocr.py)**: strokes → OCR-scale raster (256px, ink-cropped,
+  pen ≈9% of letter height — Vision ignores hairlines; empirically 24px on 256px letters reads
+  `HELLO` at 1.0 while 10–14px reads nothing) → `VNRecognizeTextRequest` via pyobjc. Same Apple
+  engine family the iPad will run on-device, so dev behavior is representative.
+- **[ml/serve.py](../ml/serve.py)** text mode now real (was 501): plain words ride the `latex`
+  field of the shared contract; graceful 501 remains on non-macOS (e.g. the training pod).
+- **Lab UI**: text-mode results and correction previews render as words, not KaTeX
+  (`resultMode` tracked in `useRecognition`); text corrections flow into `/collect` with
+  `mode:"text"`.
+- **Verified in the dev session**: drew HELLO in block strokes on `/ink` (Text mode) → panel
+  shows `HELLO` at 100%. Editor integration of text input is deliberately deferred —
+  **iPad-only per the decision record in [MODULES.md](MODULES.md)**.
+
+### 2026-07-12 — Step 11: operator normalization (`sin\theta` → `\sin\theta`) ✅
+- User-reported: recognized trig/log/lim functions came back as bare letters (`sin\theta`),
+  typeset as italic variable products. Root cause is MathWriting's **label convention** (the
+  dataset itself writes `log`, not `\log`) — so retraining, including the XL run, would NOT
+  fix it. Fixed deterministically at serve time instead:
+  [ml/src/latex_normalize.py](../ml/src/latex_normalize.py) rewrites ~30 standard operator
+  letter-runs into `\operators` with letter/backslash boundary guards (`missing`, `s_{index}`,
+  already-escaped `\sin` all untouched; idempotent; 9 unit cases + end-to-end verified on a
+  real `log`-containing sample). Applies to the current model AND the incoming XL model.
+- **Expanded to 50 operators** (user request): amsmath set (`mod`→`\bmod` for `a≡b (mod n)`,
+  `\hom`, `\injlim`, `\projlim`, `\argmin`, `\argmax`) + `\operatorname{…}` forms for names
+  KaTeX lacks builtins for (`sech csch arccot arcsec arccsc sgn curl div grad rank trace lcm
+  erf` — each would otherwise be a KaTeX parse error). Every mapping validated against the
+  installed KaTeX (50/50 render).
+- **Boundary fix** (user-reported: `ln x` / `log x` stayed italic): the decoder emits letter
+  runs with NO spaces (`logx`, `nlogn`), so letter-boundary guards were dropped — this pass
+  sees only math-mode decoder output, never prose. Escaped commands are protected by
+  consuming whole `\command` atoms first (else `\arcsin`'s tail would become `\arc\sin`).
+  `lnx`→`\ln x`, `nlogn`→`n\log n`; 18 unit cases, idempotent, e2e verified.
 
 ## 7. Serving & deployment
 

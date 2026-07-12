@@ -2,6 +2,7 @@
 
 import { AsyncImage, ImageEmpty } from "@/components/AsyncImage";
 import { GraphView } from "@/components/GraphView";
+import { ExternalLink } from "@/components/ExternalLink";
 import { NoteLink } from "@/components/NoteLink";
 import { TableView } from "@/components/TableView";
 import { blockToKatex } from "@/lib/blocks";
@@ -185,18 +186,7 @@ function renderRuns(block: Block): ReactNode {
 function renderFormatted(text: string): ReactNode {
   return parseFormat(text).map((s, i) => {
     if (s.href && isNoteHref(s.href)) return <NoteLink key={i} href={s.href} text={s.text} />;
-    if (s.href)
-      return (
-        <a
-          key={i}
-          href={s.href}
-          target="_blank"
-          rel="noreferrer"
-          className="text-accent underline"
-        >
-          {s.text}
-        </a>
-      );
+    if (s.href) return <ExternalLink key={i} href={s.href} text={s.text} />;
     if (s.highlight)
       return (
         <mark key={i} style={{ background: s.highlight, color: "inherit" }}>

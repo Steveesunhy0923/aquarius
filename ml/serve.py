@@ -33,9 +33,11 @@ from pydantic import BaseModel, Field
 ML_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(ML_DIR))
 
+from src.latex_normalize import normalize_operators  # noqa: E402
 from src.latex_tokenizer import Tokenizer  # noqa: E402
 from src.model import InkToLatex  # noqa: E402
 from src.render import render_strokes, strokes_to_array  # noqa: E402
+from src.text_ocr import VisionUnavailable, recognize_text  # noqa: E402
 
 def _default_checkpoint() -> Path:
     """Prefer the best trained model available: xl.pt (cloud S2-XL run) over
@@ -108,19 +110,29 @@ def health():
 
 @app.post("/recognize", response_model=RecognizeResponse)
 def recognize(req: RecognizeRequest):
-    if req.mode == "text":
-        raise HTTPException(
-            status_code=501,
-            detail="text mode not implemented yet — will use Apple Vision on-device",
-        )
     strokes = [{"x": s.x, "y": s.y, "t": s.t} for s in req.strokes if s.x]
     if not strokes:
         return RecognizeResponse(latex="", confidence=0.0)
 
+    if req.mode == "text":
+        # Handwritten WORDS via Apple Vision (macOS dev; iPad ships the same
+        # engine on-device — see docs/MODULES.md decision record). The plain
+        # text rides the `latex` field of the shared contract.
+        try:
+            text, confidence = recognize_text(strokes)
+        except VisionUnavailable:
+            raise HTTPException(
+                status_code=501,
+                detail="text mode needs Apple Vision (macOS dev server / iPad on-device)",
+            )
+        return RecognizeResponse(latex=text, confidence=confidence)
+
     image = torch.from_numpy(strokes_to_array(strokes)).unsqueeze(0).to(DEVICE)
     with torch.no_grad():
         seqs, mean_logp = MODEL.greedy_decode(image, max_len=160)
-    latex = TOKENIZER.decode(seqs[0])
+    # MathWriting labels write operators as bare letters (log, sin, lim …) so
+    # the model does too — reconstruct proper \operators deterministically.
+    latex = normalize_operators(TOKENIZER.decode(seqs[0]))
     confidence = float(torch.exp(mean_logp[0]).clamp(0.0, 1.0))
     return RecognizeResponse(latex=latex, confidence=confidence)
 

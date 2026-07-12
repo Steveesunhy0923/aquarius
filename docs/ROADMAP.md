@@ -2,6 +2,18 @@
 
 ## Release record
 
+- **0.6.1 — Editable preset stacks + link previews + ML training** (branch
+  `ui-graphite-redesign`). **Presets as editable stacks**: the Designs dialog's Note-layout
+  cards show each preset's module stack as chips — tick modules in/out, drag to reorder,
+  live preview, then insert exactly that stack (`PresetCard` in `DesignPicker`,
+  `stackTree()` in `lib/templates/modules.ts`). **Orientation-aware link previews**
+  (Google-Docs style): note links preview as a miniature page following the note's
+  `pageLayout` (portrait/landscape card); external links unfurl via the new SSRF-hardened
+  `/api/unfurl` route (first API route) into cards shaped by the page's cover-image aspect,
+  with graceful no-preview fallback; shared hover plumbing in `components/ui/hovercard.ts`.
+  **ML workstream**: S2-XL cloud training stack + RunPod run (bf16, augmentation,
+  corrections mix-in), and /ink text mode via Apple Vision OCR (`ml/src/text_ocr.py`);
+  details in `docs/HANDWRITING_MODEL.md`.
 - **0.6.0 — Graphite + modular notes + note links** (branch `ui-graphite-redesign`).
   The Graphite hand-drawn UI restyle (drawn icon set, redesigned library/home, editor
   chrome split into `DocStyleBar`/`SymbolToolbar`/`ToolbarControls`/`EditBox`, new

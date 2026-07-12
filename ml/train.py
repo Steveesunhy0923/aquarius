@@ -214,7 +214,10 @@ def main() -> int:
             valid_ds = MathWritingDataset(data_root, "valid", tokenizer, max_len=args.max_len)
             valid_loader = DataLoader(
                 valid_ds, batch_size=args.batch_size, shuffle=True,
-                num_workers=args.num_workers, collate_fn=collate_fn, drop_last=True,
+                num_workers=args.num_workers, collate_fn=collate_fn,
+                # drop_last on a split smaller than one batch would yield an
+                # empty loader — and an infinite spin in the repeat() chain.
+                drop_last=len(valid_ds) >= args.batch_size,
             )
             print(f"valid samples: {len(valid_ds)}", flush=True)
         except FileNotFoundError:
@@ -272,7 +275,8 @@ def main() -> int:
     best_out = out.with_name(out.stem + "_best.pt")
     # Incremental loss log so progress is watchable during a long run (not just at the end).
     # Columns: step \t loss \t lr  (first two unchanged for existing parsers).
-    log_mode = "a" if start_step > 0 else "w"
+    # Any --resume appends (even a weights-only one) so a prior run's curve is never wiped.
+    log_mode = "a" if args.resume else "w"
     loss_file = out.with_name(out.stem + "_loss.txt")
     loss_fp = loss_file.open(log_mode)
     valid_file = out.with_name(out.stem + "_valid.txt")
@@ -280,12 +284,30 @@ def main() -> int:
 
     first_loss = None
     last_loss = float("nan")
+    # Losses are kept on-device and materialized in one .item()/tolist() sync
+    # per flush (every 10 steps) — a per-step .item() would stall the CPU on
+    # each forward and leave the GPU idle in the Python gap.
+    pending: list[tuple[int, torch.Tensor, float]] = []  # (step, mean micro-loss, lr)
+
+    def flush_losses() -> None:
+        nonlocal first_loss, last_loss
+        if not pending:
+            return
+        vals = torch.stack([t for _, t, _ in pending]).tolist()
+        for (s, _, lr), v in zip(pending, vals):
+            loss_fp.write(f"{s}\t{v:.6f}\t{lr:.6e}\n")
+        loss_fp.flush()
+        if first_loss is None:
+            first_loss = vals[0]
+        last_loss = vals[-1]
+        pending.clear()
+
     model.train()
     t0 = time.time()
     steps_this_run = 0
     for step in range(start_step + 1, args.steps + 1):
         opt.zero_grad(set_to_none=True)
-        micro_losses = 0.0
+        micro_sum: torch.Tensor | None = None
         for _ in range(args.accum):
             images, tokens = next(batches)
             images = images.to(device, non_blocking=use_cuda)
@@ -298,7 +320,7 @@ def main() -> int:
                     tokens[:, 1:].reshape(-1),
                     ignore_index=tokenizer.pad_id,
                 )
-            micro_losses += loss.item()
+            micro_sum = loss.detach() if micro_sum is None else micro_sum + loss.detach()
             if args.accum > 1:
                 loss = loss / args.accum
             if scaler is not None:
@@ -317,12 +339,9 @@ def main() -> int:
         sched.step()
 
         steps_this_run += 1
-        last_loss = micro_losses / args.accum
-        if first_loss is None:
-            first_loss = last_loss
-        loss_fp.write(f"{step}\t{last_loss:.6f}\t{cur_lr:.6e}\n")
+        pending.append((step, micro_sum / args.accum, cur_lr))
         if step % 10 == 0 or steps_this_run == 1:
-            loss_fp.flush()
+            flush_losses()
             rate = (time.time() - t0) / steps_this_run
             eta = rate * (args.steps - step)
             print(f"step {step:5d}/{args.steps}  loss {last_loss:.4f}  lr {cur_lr:.2e}  "
@@ -344,6 +363,7 @@ def main() -> int:
                             optimizer=opt, scheduler=sched, step=step, best_valid=best_valid)
             print(f"  ↳ checkpoint saved: {out} (step {step})", flush=True)
 
+    flush_losses()  # steps since the last 10-step boundary
     wall = time.time() - t0
     if steps_this_run:
         print(f"done: {steps_this_run} steps in {wall/60:.1f}m "

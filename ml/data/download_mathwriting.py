@@ -72,16 +72,22 @@ def main() -> int:
     url = FULL_URL if args.full else EXCERPT_URL
     archive = DATA_DIR / url.rsplit("/", 1)[-1]
     marker = DATA_DIR / archive.name.removesuffix(".tgz")
+    # written only after a COMPLETE extractall — a dir that merely exists may
+    # be a partial extraction from an interrupted earlier run
+    complete = marker / ".extract-complete"
 
-    if marker.is_dir() and any(marker.iterdir()):
+    if complete.exists():
         print(f"already extracted: {marker}")
         return 0
+    if marker.is_dir():
+        print(f"found INCOMPLETE extraction at {marker} — re-extracting")
 
     download(url, archive)
     extract(archive, DATA_DIR)
 
     if marker.is_dir():
         n = sum(1 for _ in marker.rglob("*.inkml"))
+        complete.touch()
         print(f"extracted {n} .inkml files under {marker}")
     return 0
 

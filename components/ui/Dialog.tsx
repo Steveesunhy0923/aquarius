@@ -2,10 +2,7 @@
 
 import { useEffect, useRef, type ReactNode } from "react";
 import { Icon } from "@/components/Icon";
-
-const CLOSE_BTN = "grid h-8 w-8 place-items-center rounded-md text-muted hover:bg-foreground/[0.05] hover:text-foreground";
-const SECTION = "text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted";
-const SELECT = "appearance-none rounded-md border border-border bg-surface py-1.5 pl-3 pr-8 text-sm outline-none hover:border-accent focus:border-accent";
+import { CLOSE_BTN, EYEBROW as SECTION, SELECT } from "@/components/ui/primitives";
 
 // Escape closes the TOPMOST dialog only: mounted dialogs stack their tokens,
 // and the top one swallows the event (capture phase, like SymbolPicker) so it
@@ -64,7 +61,7 @@ export function Dialog({
         if (wasScrim && e.target === e.currentTarget) onClose();
       }}
     >
-      <div className={`w-full ${maxWidth} overflow-hidden rounded-xl border border-border bg-surface shadow-2xl`} onClick={(e) => e.stopPropagation()}>
+      <div className={`w-full ${maxWidth} overflow-hidden rounded-modal border border-border bg-surface shadow-modal`} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-border-soft px-5 py-4">
           <h2 className="text-base font-semibold">{title}</h2>
           <button onClick={onClose} aria-label="Close" className={CLOSE_BTN}>

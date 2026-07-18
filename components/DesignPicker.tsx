@@ -72,7 +72,7 @@ function TemplateCard({
             onClick={onDelete}
             title="Delete template"
             aria-label="Delete template"
-            className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-muted hover:bg-red-500/10 hover:text-red-500"
+            className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-muted hover:bg-danger/10 hover:text-danger"
           >
             <Icon name="trash" size={16} />
           </button>
@@ -354,7 +354,7 @@ function ModulesTab() {
               <Icon name={m.icon} size={15} className="shrink-0 text-muted" />
               <p className="min-w-0 flex-1 truncate font-medium">{m.name}</p>
               <button onClick={() => setEditor({ module: listSavedModules().find((x) => x.id === m.id) ?? m })} title="Edit module" aria-label="Edit module" className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-muted hover:bg-foreground/[0.05] hover:text-foreground"><Icon name="editformula" size={15} /></button>
-              <button onClick={() => void remove(m)} title="Delete module" aria-label="Delete module" className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-muted hover:bg-red-500/10 hover:text-red-500"><Icon name="trash" size={15} /></button>
+              <button onClick={() => void remove(m)} title="Delete module" aria-label="Delete module" className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-muted hover:bg-danger/10 hover:text-danger"><Icon name="trash" size={15} /></button>
             </div>
           </div>
         ))}

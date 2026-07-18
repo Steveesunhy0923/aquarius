@@ -6,11 +6,12 @@ import { Menu, MenuItem } from "@/components/ui/Menu";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { isDefaultUsername, setUsername, validateUsername } from "@/lib/profile/profile";
 import { AuthDialog } from "./AuthDialog";
+import { BTN_PRIMARY_SM as PRIMARY, BTN_SM, EYEBROW as SECTION } from "@/components/ui/primitives";
 
-const SECTION = "text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted";
 const LINK = "text-xs text-muted hover:text-accent";
-const INPUT = "min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent";
-const PRIMARY = "rounded-md bg-accent px-3 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50";
+// Inline field: shares its flex row with a Save/Set button, so `min-w-0 flex-1`
+// (not the block `FIELD`'s `w-full`).
+const INPUT = "min-w-0 flex-1 rounded-control border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent";
 const RULE = "my-1 h-px bg-border-soft";
 
 /**
@@ -28,7 +29,7 @@ export function AccountMenu() {
   if (!user) {
     return (
       <>
-        <button onClick={() => setDialog(true)} className="rounded-lg border border-border px-3 py-1.5 text-sm hover:border-accent">
+        <button onClick={() => setDialog(true)} className={BTN_SM}>
           Sign in
         </button>
         {dialog && <AuthDialog onClose={() => setDialog(false)} />}
@@ -59,7 +60,7 @@ export function AccountMenu() {
             ) : (
               initial
             )}
-            {needsUsername && <span className="absolute -right-0 -top-0 h-2 w-2 rounded-full bg-amber-500" />}
+            {needsUsername && <span className="absolute -right-0 -top-0 h-2 w-2 rounded-full bg-warning" />}
           </span>
           <span className="max-w-[10rem] truncate">{username}</span>
           <Icon name="chevron" size={12} className="text-muted" />
@@ -124,7 +125,7 @@ function UsernameForm({ current, highlight, onSaved }: { current: string; highli
 
   return (
     <div>
-      {highlight && <p className="mb-1 text-xs text-amber-600">Pick a username so others can share with you.</p>}
+      {highlight && <p className="mb-1 text-xs text-warning">Pick a username so others can share with you.</p>}
       <div className="flex items-center gap-1.5">
         <span className="text-sm text-muted">@</span>
         <input
@@ -136,7 +137,7 @@ function UsernameForm({ current, highlight, onSaved }: { current: string; highli
         />
         <button onClick={save} disabled={busy} className={PRIMARY}>Save</button>
       </div>
-      {err && <p className="mt-1 text-xs text-red-500">{err}</p>}
+      {err && <p className="mt-1 text-xs text-danger">{err}</p>}
     </div>
   );
 }
@@ -146,7 +147,7 @@ function ProviderRow({ label, linked, onLink }: { label: string; linked: boolean
     <div className="flex items-center justify-between text-sm">
       <span>{label}</span>
       {linked ? (
-        <span className="text-xs text-emerald-600">Linked</span>
+        <span className="text-xs text-success">Linked</span>
       ) : (
         <button onClick={() => void onLink()} className={LINK}>Link</button>
       )}
@@ -164,7 +165,7 @@ function PasswordRow({ linked, onSet }: { linked: boolean; onSet: (pw: string) =
     return (
       <div className="flex items-center justify-between text-sm">
         <span>Email &amp; password</span>
-        <span className="text-xs text-emerald-600">Linked</span>
+        <span className="text-xs text-success">Linked</span>
       </div>
     );
   }

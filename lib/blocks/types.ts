@@ -84,6 +84,10 @@ export interface Block {
 
 /** Loosely-typed bag of block-specific attributes. Documented per block type. */
 export interface BlockAttrs {
+  // math: chemistry identity — a \ce{…} formula edited via the chem field (not
+  // MathLive). Stored so the chem/math editors never mis-claim each other's
+  // blocks (mirrors the structural-editor `editor` flag). See lib/blocks/chem.ts.
+  kind?: "chem";
   // bigop
   op?: "sum" | "prod" | "lim" | "coprod" | "bigcup" | "bigcap";
   // matrix

@@ -3,6 +3,7 @@
 import { Icon } from "@/components/Icon";
 import { renderItem, renderPoint, SceneBase } from "@/components/GraphView";
 import { uiConfirm } from "@/components/ui/dialogs";
+import { EYEBROW } from "@/components/ui/primitives";
 import {
   buildScene,
   defaultGraph,
@@ -46,12 +47,12 @@ const HEAD_BTN_BASE =
   "grid h-9 w-9 place-items-center rounded-md transition disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-muted";
 const HEAD_BTN_HOVER = "text-muted hover:bg-foreground/[0.06] hover:text-foreground";
 const HEAD_BTN = `${HEAD_BTN_BASE} ${HEAD_BTN_HOVER}`;
-const TOOL_BTN_BASE = "flex h-9 items-center gap-1.5 rounded-md px-2.5 text-sm transition";
-const SEG = "inline-flex rounded-lg border border-border p-0.5 text-xs";
+const TOOL_BTN_BASE = "flex h-9 items-center gap-1.5 rounded-control px-2.5 text-sm transition";
+const SEG = "inline-flex rounded-control border border-border p-0.5 text-xs";
 const segBtn = (on: boolean) =>
   `rounded-md px-2 py-1 transition ${on ? "bg-foreground text-background" : "text-muted hover:text-foreground"}`;
-const SECTION = "mb-1.5 text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted";
-const DANGER_BTN = "w-full rounded-md border border-border px-3 py-1.5 text-sm text-red-500 hover:border-red-500";
+const SECTION = `mb-1.5 ${EYEBROW}`;
+const DANGER_BTN = "w-full rounded-control border border-border px-3 py-1.5 text-sm text-danger hover:border-danger";
 
 type DragState =
   | { mode: "point"; id: string }
@@ -629,7 +630,7 @@ export function GraphEditor({
                   onChange={(e) => setFuncExpr(e.target.value)}
                   placeholder={data.coords === "polar" ? "1 + cos(theta)" : "sin(x)"}
                   className={`w-full rounded-md border bg-background px-2 py-1 font-mono text-sm outline-none ${
-                    isValidExpr(funcExpr, ["x", "theta", "t"]) ? "border-border focus:border-accent" : "border-red-500"
+                    isValidExpr(funcExpr, ["x", "theta", "t"]) ? "border-border focus:border-accent" : "border-danger"
                   }`}
                 />
                 <div className="mt-1.5 flex items-center gap-1 text-xs">

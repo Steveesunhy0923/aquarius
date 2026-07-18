@@ -46,7 +46,7 @@ export default function AuthCallback() {
     <div className="grid min-h-screen place-items-center p-8 text-sm text-muted">
       {error ? (
         <div className="max-w-sm text-center">
-          <p className="mb-2 font-medium text-red-500">Sign-in failed</p>
+          <p className="mb-2 font-medium text-danger">Sign-in failed</p>
           <p className="mb-4">{error}</p>
           <button onClick={() => router.replace("/")} className="rounded border border-border px-3 py-1.5 hover:border-accent">
             Back to library

@@ -30,7 +30,7 @@ export function TemplateApplyDialog({
           Don’t show this again
         </label>
         <div className="mt-4 flex items-center justify-end gap-2">
-          <button onClick={() => onReplace(dontAsk)} className="rounded-md border border-border px-3 py-1.5 text-sm hover:border-red-500 hover:text-red-500">
+          <button onClick={() => onReplace(dontAsk)} className="rounded-md border border-border px-3 py-1.5 text-sm hover:border-danger hover:text-danger">
             No, replace
           </button>
           <button onClick={() => onAdd(dontAsk)} className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:opacity-90">

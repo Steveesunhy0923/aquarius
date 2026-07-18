@@ -69,7 +69,7 @@ export function NoteCardMenu({
 
 export function NoteCard({ note, onDelete, onCopy, onPdf, onAddTag, onRemoveTag }: { note: NoteMeta } & CardHandlers) {
   return (
-    <div className="group relative flex flex-col rounded-xl border border-border bg-surface p-3 transition hover:-translate-y-0.5 hover:border-accent hover:shadow-[0_10px_26px_rgba(40,40,80,0.09)]">
+    <div className="group relative flex flex-col rounded-card border border-border bg-surface p-3 transition hover:-translate-y-0.5 hover:border-accent hover:shadow-card">
       <div className="absolute right-2 top-2 z-10 opacity-60 transition group-hover:opacity-100">
         <NoteCardMenu note={note} onCopy={onCopy} onDelete={onDelete} onPdf={onPdf} />
       </div>
@@ -141,7 +141,7 @@ export function DeletedCard({
         <button
           onClick={() => onPurge(note.id)}
           title="Delete permanently"
-          className="rounded-md border border-border px-2 py-1 text-xs text-muted hover:border-red-500 hover:text-red-500"
+          className="rounded-md border border-border px-2 py-1 text-xs text-muted hover:border-danger hover:text-danger"
         >
           Delete
         </button>

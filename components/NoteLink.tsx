@@ -183,7 +183,7 @@ function PreviewCard({ target, note, rect, onEnter, onLeave, onOpen }: {
       </div>
       <div className="bg-background p-3">
         {sectionGone && (
-          <p className="mb-2 rounded bg-amber-500/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-400">
+          <p className="mb-2 rounded bg-warning/10 px-2 py-1 text-[11px] text-warning">
             The linked section no longer exists — showing the note instead.
           </p>
         )}

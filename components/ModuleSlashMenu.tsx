@@ -67,7 +67,7 @@ export function ModuleSlashMenu({ query, modules, active, onHover, onPick, onEdi
                   onClick={(e) => { e.stopPropagation(); onDelete(m); }}
                   title="Delete this saved module"
                   aria-label="Delete this saved module"
-                  className="grid shrink-0 place-items-center rounded px-0.5 text-muted hover:text-red-500"
+                  className="grid shrink-0 place-items-center rounded px-0.5 text-muted hover:text-danger"
                 >
                   <Icon name="close" size={13} />
                 </button>

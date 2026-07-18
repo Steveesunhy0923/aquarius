@@ -14,6 +14,7 @@ import {
   type Collaborator,
   type Role,
 } from "@/lib/sharing/sharing";
+import { BTN_PRIMARY } from "@/components/ui/primitives";
 
 // Deterministic, pleasant avatar tint from a name, so each collaborator reads
 // as a distinct person at a glance.
@@ -99,11 +100,11 @@ export function ShareDialog({ noteId, access, onClose }: { noteId: string; acces
                 />
               </div>
               <RoleSelect value={role} onChange={setRole} ariaLabel="Role for the new collaborator" />
-              <button onClick={share} disabled={busy || !username.trim()} className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50">
+              <button onClick={share} disabled={busy || !username.trim()} className={BTN_PRIMARY}>
                 Share
               </button>
             </div>
-            {err && <p className="mt-2 text-xs text-red-500">{err}</p>}
+            {err && <p className="mt-2 text-xs text-danger">{err}</p>}
 
             <DialogSection className="mb-2.5 mt-5">People with access</DialogSection>
             <ul className="space-y-2.5">
@@ -133,7 +134,7 @@ export function ShareDialog({ noteId, access, onClose }: { noteId: string; acces
                     onClick={async () => { await removeCollaborator(noteId, c.userId); await refresh(); }}
                     title={`Remove @${c.username}`}
                     aria-label={`Remove @${c.username}`}
-                    className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-muted hover:bg-red-500/10 hover:text-red-500"
+                    className="grid h-8 w-8 shrink-0 place-items-center rounded-control text-muted hover:bg-danger/10 hover:text-danger"
                   >
                     <Icon name="close" size={15} />
                   </button>

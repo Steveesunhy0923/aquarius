@@ -15,7 +15,8 @@ export const viewport: Viewport = {
   initialScale: 1,
   // PWA / iPad: lock zoom for a native-feel editor surface.
   maximumScale: 1,
-  themeColor: "#4f46e5",
+  // Matches --accent so the mobile browser chrome tints to the app accent.
+  themeColor: "#5b5bd6",
 };
 
 // Apply the saved theme before first paint (no flash of the wrong palette).

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ceInner, wrapCe } from "./chem";
+import { ceInner, isChemBlock, tagChem, wrapCe } from "./chem";
 import { documentToLatex } from "./serialize";
 import { displayFromSource, paragraphFromSource } from "./source";
 import { emptyDocument } from "./types";
@@ -51,6 +51,25 @@ describe("ceInner", () => {
     for (const src of ["H2O", "SO4^2-", "CaCO3 ->[\\Delta] CaO + CO2 ^", "Fe^{3+}"]) {
       expect(ceInner(wrapCe(src))).toBe(src);
     }
+  });
+});
+
+describe("chem block identity (attrs.kind)", () => {
+  it("tagChem stamps attrs.kind = 'chem' and preserves other attrs", () => {
+    expect(tagChem(displayFromSource("\\ce{H2O}")).attrs?.kind).toBe("chem");
+    expect(tagChem({ id: "x", type: "math", attrs: { assetId: "a" } }).attrs).toEqual({
+      assetId: "a",
+      kind: "chem",
+    });
+  });
+  it("isChemBlock reads the stored tag, not the LaTeX string", () => {
+    // Tagged chem block → chem (identity is stored, can't be mis-sniffed).
+    expect(isChemBlock(tagChem(displayFromSource("\\ce{H2O}")))).toBe(true);
+    // Untagged pure-\ce block is NOT chem by tag — the editor's legacy path uses
+    // ceInner for old notes, but the tag itself must stay string-independent.
+    expect(isChemBlock(displayFromSource("\\ce{H2O}"))).toBe(false);
+    // Only math blocks can be chemistry, tag or not.
+    expect(isChemBlock({ id: "p", type: "text", value: "hi", attrs: { kind: "chem" } })).toBe(false);
   });
 });
 

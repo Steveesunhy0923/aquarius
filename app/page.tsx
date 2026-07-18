@@ -482,7 +482,7 @@ export default function LibraryPage() {
                   Recently Deleted
                 </h2>
                 {deleted.length > 0 && (
-                  <button onClick={emptyTrash} className="rounded-md border border-border px-3 py-1.5 text-sm text-muted hover:border-red-500 hover:text-red-500">
+                  <button onClick={emptyTrash} className="rounded-md border border-border px-3 py-1.5 text-sm text-muted hover:border-danger hover:text-danger">
                     Empty
                   </button>
                 )}

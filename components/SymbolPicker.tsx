@@ -3,10 +3,13 @@
 import { Icon } from "@/components/Icon";
 import { Katex } from "@/components/Katex";
 import { previewLatex } from "@/lib/blocks/source";
+import { CLOSE_BTN, EYEBROW } from "@/components/ui/primitives";
 import { SYMBOLS, type SymbolEntry } from "@/lib/symbols";
 import { useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
 
-const CLOSE_BTN = "grid h-8 w-8 place-items-center rounded-md text-muted hover:bg-foreground/[0.05] hover:text-foreground";
+/** mhchem entries (\ce / \pu) are literal — never run them through previewLatex,
+ *  whose empty-brace / leading-sup rewrites would corrupt chemistry. */
+const isMhchem = (latex: string) => /^\\(?:ce|pu)\{/.test(latex.trim());
 
 /**
  * Modal that browses the symbol/function library, grouped by category, and
@@ -99,7 +102,7 @@ export function SymbolPicker({
       onClick={onClose}
     >
       <div
-        className="mt-12 flex max-h-[78vh] w-full max-w-2xl flex-col rounded-xl border border-border bg-surface shadow-2xl"
+        className="mt-12 flex max-h-[78vh] w-full max-w-2xl flex-col rounded-modal border border-border bg-surface shadow-modal"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-3 border-b border-border-soft px-5 py-4">
@@ -114,7 +117,7 @@ export function SymbolPicker({
               onChange={(e) => setQ(e.target.value)}
               onMouseDown={onNavMouseDown}
               placeholder={searchPlaceholder}
-              className="w-full rounded-lg border border-border bg-background py-2 pl-9 pr-8 text-sm outline-none focus:border-accent"
+              className="w-full rounded-control border border-border bg-background py-2 pl-9 pr-8 text-sm outline-none focus:border-accent"
             />
             {q && (
               <button
@@ -154,7 +157,7 @@ export function SymbolPicker({
         <div className="overflow-y-auto p-3">
           {groups.map((g) => (
             <section key={g.category} className="mb-4 last:mb-0">
-              <h3 className="mb-1.5 text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted">
+              <h3 className={`mb-1.5 ${EYEBROW}`}>
                 {g.category}
               </h3>
               <div className="grid grid-cols-[repeat(auto-fill,minmax(118px,1fr))] gap-1">
@@ -173,7 +176,7 @@ export function SymbolPicker({
                         structural fragment) clips inside its cell instead of
                         overlapping its neighbors. */}
                     <span className="max-w-full overflow-hidden text-lg">
-                      <Katex latex={previewLatex(s.latex)} />
+                      <Katex latex={isMhchem(s.latex) ? s.latex : previewLatex(s.latex)} />
                     </span>
                     <span className="w-full truncate text-center text-[11px] text-muted">
                       {s.name}

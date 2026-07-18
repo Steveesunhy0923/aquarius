@@ -43,7 +43,7 @@ export function PresenceAvatars({
         })}
       </div>
       <span
-        className={`ml-2 h-2 w-2 rounded-full ${connected ? "bg-emerald-500" : "bg-muted"}`}
+        className={`ml-2 h-2 w-2 rounded-full ${connected ? "bg-success" : "bg-muted"}`}
         aria-hidden
       />
     </div>

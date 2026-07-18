@@ -2,10 +2,9 @@
 
 import { Icon } from "@/components/Icon";
 import { TableView } from "@/components/TableView";
+import { CLOSE_BTN } from "@/components/ui/primitives";
 import { TABLE_STYLES, demoRows, type TableStyle } from "@/lib/blocks/tables";
 import { useEffect } from "react";
-
-const CLOSE_BTN = "grid h-8 w-8 place-items-center rounded-md text-muted hover:bg-foreground/[0.05] hover:text-foreground";
 
 /**
  * Modal gallery of common LaTeX table styles, each shown as a small live demo.
@@ -34,7 +33,7 @@ export function TablePicker({
       onClick={onClose}
     >
       <div
-        className="mt-10 flex max-h-[80vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-2xl"
+        className="mt-10 flex max-h-[80vh] w-full max-w-3xl flex-col overflow-hidden rounded-modal border border-border bg-surface shadow-modal"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-border-soft px-5 py-4">
@@ -49,7 +48,7 @@ export function TablePicker({
               <button
                 key={s.id}
                 onClick={() => onPick(s.id)}
-                className="flex flex-col items-start gap-2 rounded-xl border border-border bg-surface p-3 text-left transition hover:border-accent hover:shadow-[0_10px_26px_rgba(40,40,80,0.09)]"
+                className="flex flex-col items-start gap-2 rounded-card border border-border bg-surface p-3 text-left transition hover:border-accent hover:shadow-card"
               >
                 <div className="text-sm font-medium">{s.name}</div>
                 <div className="text-xs text-muted">{s.description}</div>

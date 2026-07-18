@@ -12,6 +12,7 @@ import { makeTableBlock, tableAlign, tableItems, TABLE_STYLES, type TableStyle }
 import type { Block } from "@/lib/blocks/types";
 import { freshBlocks } from "@/lib/templates/modules";
 import { uiConfirm } from "@/components/ui/dialogs";
+import { BTN, BTN_PRIMARY, FIELD_SM as FIELD } from "@/components/ui/primitives";
 import { useMemo, useRef, useState } from "react";
 
 /**
@@ -111,7 +112,6 @@ const partHasContent = (p: Part): boolean => {
 
 const HEADING_OPTIONS = ([1, 2, 3, 4] as const).map((l) => ({ id: String(l), label: HEADING_NAMES[l] }));
 const TABLE_OPTIONS = TABLE_STYLES.map((s) => ({ id: s.id, label: s.name }));
-const FIELD = "w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-sm outline-none focus:border-accent";
 
 /** The "add a part" palette: label + factory. */
 const ADD_PARTS: { label: string; icon: IconName; make: () => Part }[] = [
@@ -206,7 +206,7 @@ export function ModuleEditorDialog({ initial, create, onSave, onClose, zIndex = 
                   <div className="min-w-0 flex-1">
                     <PartEditor part={p} onPatch={(fn) => patch(p.key, fn)} />
                   </div>
-                  <button onClick={() => remove(p.key)} title="Remove part" aria-label="Remove part" className="mt-1 grid place-items-center px-1 text-faint hover:text-red-500"><Icon name="trash" size={15} /></button>
+                  <button onClick={() => remove(p.key)} title="Remove part" aria-label="Remove part" className="mt-1 grid place-items-center px-1 text-faint hover:text-danger"><Icon name="trash" size={15} /></button>
                 </div>
               ))}
               {parts.length === 0 && (
@@ -248,8 +248,8 @@ export function ModuleEditorDialog({ initial, create, onSave, onClose, zIndex = 
       <div className="flex items-center justify-between gap-2 border-t border-border-soft px-5 py-3">
         <p className="text-xs text-muted">Insert modules anywhere by typing <span className="font-mono">/</span> in a paragraph.</p>
         <div className="flex gap-2">
-          <button onClick={() => void requestClose()} className="rounded-md border border-border px-4 py-2 text-sm hover:bg-foreground/[0.04]">Cancel</button>
-          <button onClick={save} disabled={!canSave} className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50">
+          <button onClick={() => void requestClose()} className={BTN}>Cancel</button>
+          <button onClick={save} disabled={!canSave} className={BTN_PRIMARY}>
             {isNew ? "Create module" : "Save changes"}
           </button>
         </div>

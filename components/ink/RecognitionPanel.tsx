@@ -249,7 +249,7 @@ export function RecognitionPanel({ rec }: { rec: Recognition }) {
             <code className="rounded bg-foreground/[0.06] px-1.5 py-0.5 font-mono text-xs">{OFFLINE_CMD}</code>
           </p>
         ) : error ? (
-          <p className="text-sm text-red-500">{error}</p>
+          <p className="text-sm text-danger">{error}</p>
         ) : result ? (
           <>
             <div className="overflow-x-auto py-1">
@@ -326,7 +326,7 @@ function Correction({ rec, guess }: { rec: Recognition; guess: string }) {
           Not right? Fix the label
         </button>
         {savedAt !== null && (
-          <span className="text-green-600">✓ Saved for training · {savedAt} collected</span>
+          <span className="text-success">✓ Saved for training · {savedAt} collected</span>
         )}
       </div>
     );

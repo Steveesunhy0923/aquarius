@@ -1,10 +1,8 @@
 "use client";
 
 import { Dialog } from "@/components/ui/Dialog";
+import { EYEBROW, FIELD_SM as FIELD } from "@/components/ui/primitives";
 import { useRef, useState } from "react";
-
-const FIELD =
-  "w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-sm outline-none focus:border-accent";
 
 /**
  * "Fill in the fields" prompt shown when an inserted module/template contains
@@ -41,7 +39,7 @@ export function ModuleFieldsDialog({ name, fields, onSubmit, onCancel }: {
         <div className="flex max-h-80 flex-col gap-2.5 overflow-y-auto">
           {fields.map((f, i) => (
             <label key={f} className="block">
-              <span className="mb-1 block text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted">{f}</span>
+              <span className={`mb-1 block ${EYEBROW}`}>{f}</span>
               <input
                 autoFocus={i === 0}
                 value={values[f] ?? ""}

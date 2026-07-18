@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Icon } from "@/components/Icon";
+import { Dialog } from "@/components/ui/Dialog";
+import { BTN_PRIMARY_SM as PRIMARY, FIELD } from "@/components/ui/primitives";
 import { useAuth } from "@/lib/auth/AuthProvider";
 
 /** Sign-in / sign-up modal: Google OAuth + email & password. */
@@ -41,22 +42,12 @@ export function AuthDialog({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-foreground/25 p-4" onClick={onClose}>
-      <div
-        className="w-full max-w-sm rounded-xl border border-border bg-surface p-6 shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-base font-semibold">{mode === "in" ? "Sign in" : "Create account"}</h2>
-          <button onClick={onClose} aria-label="Close" className="grid h-8 w-8 place-items-center rounded-md text-muted hover:bg-foreground/[0.05] hover:text-foreground">
-            <Icon name="close" size={16} />
-          </button>
-        </div>
-
+    <Dialog title={mode === "in" ? "Sign in" : "Create account"} onClose={onClose} maxWidth="max-w-sm">
+      <div className="px-5 py-4">
         <button
           onClick={() => run(signInWithGoogle)}
           disabled={busy}
-          className="mb-4 flex w-full items-center justify-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium hover:border-accent disabled:opacity-50"
+          className="mb-4 flex w-full items-center justify-center gap-2 rounded-control border border-border px-3 py-2 text-sm font-medium hover:border-accent disabled:opacity-50"
         >
           <GoogleMark /> Continue with Google
         </button>
@@ -73,7 +64,7 @@ export function AuthDialog({ onClose }: { onClose: () => void }) {
             onChange={(e) => setEmail(e.target.value)}
             placeholder="you@example.com"
             autoComplete="email"
-            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent"
+            className={FIELD}
           />
           <input
             type="password"
@@ -83,17 +74,13 @@ export function AuthDialog({ onClose }: { onClose: () => void }) {
             onChange={(e) => setPassword(e.target.value)}
             placeholder="Password"
             autoComplete={mode === "in" ? "current-password" : "new-password"}
-            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent"
+            className={FIELD}
           />
 
-          {err && <p className="text-xs text-red-500">{err}</p>}
-          {info && <p className="text-xs text-emerald-600">{info}</p>}
+          {err && <p className="text-xs text-danger">{err}</p>}
+          {info && <p className="text-xs text-success">{info}</p>}
 
-          <button
-            type="submit"
-            disabled={busy}
-            className="w-full rounded-lg bg-accent px-3 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
-          >
+          <button type="submit" disabled={busy} className={`w-full ${PRIMARY}`}>
             {busy ? "Please wait…" : mode === "in" ? "Sign in" : "Create account"}
           </button>
         </form>
@@ -122,7 +109,7 @@ export function AuthDialog({ onClose }: { onClose: () => void }) {
           )}
         </div>
       </div>
-    </div>
+    </Dialog>
   );
 }
 

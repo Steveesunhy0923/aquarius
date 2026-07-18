@@ -7,7 +7,13 @@
  * EDITOR: chemistry is edited as plain mhchem source ("2H2 + O2 -> 2H2O",
  * "SO4^2-", "(aq)") in a text field with a live preview, not in MathLive.
  * These helpers convert between the stored LaTeX and that editable source.
+ *
+ * Chemistry identity is also STORED on the block (`attrs.kind = "chem"`) so the
+ * chem and math editors never mis-claim each other's blocks — `ceInner` is only
+ * the legacy/inline detector for untagged content.
  */
+
+import type { Block } from "@/lib/blocks/types";
 
 /** Wrap mhchem source for storage; empty source stays empty so an abandoned
  *  chemistry block counts as empty and gets auto-removed on exit. */
@@ -47,4 +53,18 @@ export function ceInner(latex: string): string | null {
   // chemistry editor (the next commit's wrapCe re-closes it) instead of
   // stranding the user in the math editor with a broken machine-added \ce{.
   return s.slice(open + 1);
+}
+
+/** True when a block is an explicit chemistry formula — identity is STORED
+ *  (attrs.kind = "chem"), not sniffed from the LaTeX. New \ce blocks are tagged
+ *  at authoring time (see the editor's addBlock/commit). */
+export function isChemBlock(block: Block): boolean {
+  return block.type === "math" && block.attrs?.kind === "chem";
+}
+
+/** Tag a math block as a chemistry formula so it always reopens in the chem
+ *  editor (and a math formula is never sniffed into it). Mirrors the
+ *  structural-editor tag in lib/matheditor/structural.ts. */
+export function tagChem(block: Block): Block {
+  return { ...block, attrs: { ...(block.attrs ?? {}), kind: "chem" } };
 }

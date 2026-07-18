@@ -59,7 +59,7 @@ export function MenuItem({
     <button
       onClick={(e) => { e.preventDefault(); onClick?.(); }}
       disabled={disabled}
-      className={`block w-full rounded px-2 py-1.5 text-left hover:bg-foreground/[0.06] ${danger ? "text-red-500" : ""}`}
+      className={`block w-full rounded px-2 py-1.5 text-left hover:bg-foreground/[0.06] ${danger ? "text-danger" : ""}`}
     >
       {children}
     </button>

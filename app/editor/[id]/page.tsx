@@ -46,7 +46,7 @@ import { NoteLinkPicker, type NoteLinkPick } from "@/components/NoteLinkPicker";
 import { makeNoteHref, NOTE_LINK_EVENT, type NoteLinkTarget } from "@/lib/blocks/notelink";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { documentToLatex } from "@/lib/blocks";
-import { ceInner, wrapCe } from "@/lib/blocks/chem";
+import { ceInner, isChemBlock, tagChem, wrapCe } from "@/lib/blocks/chem";
 import { CHEM_SYMBOLS } from "@/lib/chemsymbols";
 import { emptyDocument } from "@/lib/blocks/types";
 import { calloutColorOf, withCalloutColor } from "@/lib/blocks/callouts";
@@ -682,7 +682,9 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     if (!editingId) return;
     const next = editingPara
       ? withCalloutColor(paragraphFromSource(text, editingId), c)
-      : displayFromSource(editingChem ? wrapCe(text) : text, editingId);
+      : editingChem
+        ? tagChem(displayFromSource(wrapCe(text), editingId))
+        : displayFromSource(text, editingId);
     setBlocks((bs) => bs.map((b) => (b.id === editingId ? next : b)), true); // coalesce keystrokes
   }
   function startEdit(block: Block, forceChem = false) {
@@ -692,12 +694,13 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     setEditingId(block.id);
     setEditingPara(isParagraph(block));
     const source = blockEditSource(block);
-    // A formula that is exactly one \ce{...} opens in the chemistry editor with
-    // its mhchem source as the draft; anything else keeps the math editors.
-    const chemSrc = !isParagraph(block) && block.type === "math" ? ceInner(source) : null;
-    const chem = forceChem || chemSrc != null;
+    // Chemistry identity is STORED (attrs.kind = "chem"): a \ce formula always
+    // reopens in the chem editor, and a math formula is never sniffed into it.
+    // Legacy notes (no kind tag) fall back to detecting a single pure \ce{…}.
+    const legacyChem = !isParagraph(block) && block.type === "math" && block.attrs?.kind == null;
+    const chem = forceChem || isChemBlock(block) || (legacyChem && ceInner(source) != null);
     setEditingChem(chem);
-    setDraft(chem ? chemSrc ?? "" : source);
+    setDraft(chem ? (ceInner(source) ?? "") : source);
     setColor(calloutColorOf(block));
   }
   function startEditHeading(block: Block) {
@@ -712,14 +715,15 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   }
 
   function addBlock(block: Block, edit = true, chem = false) {
+    const tagged = chem ? tagChem(block) : block; // store chem identity, don't sniff it later
     setBlocks((bs) => {
       const anchor = editingId ?? selected?.id ?? null;
       const at = anchor ? bs.findIndex((b) => b.id === anchor) + 1 : bs.length;
       const next = [...bs];
-      next.splice(at <= 0 ? bs.length : at, 0, block);
+      next.splice(at <= 0 ? bs.length : at, 0, tagged);
       return next;
     });
-    if (edit) startEdit(block, chem);
+    if (edit) startEdit(tagged, chem);
     else setEditingId(null);
   }
   /** Slash-insert: rebuild the edited paragraph without its `/query` and splice
@@ -1327,7 +1331,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
         {readOnly
           ? <span className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm text-muted"><Icon name="lock" size={15} />{access === "commenter" ? "Comment only" : "View only"}</span>
           : <button onClick={save} title={saving ? "Saving…" : saved ? "Saved — up to date" : "Unsaved changes — click to save now"} aria-label={saving ? "Saving" : saved ? "Saved" : "Save now"} className={`grid h-9 w-9 place-items-center rounded-md transition ${saving ? "animate-pulse text-accent" : saved ? `${HEAD_BTN_HOVER}` : "text-accent hover:bg-accent-soft"}`}><Icon name="save" size={18} /></button>}
-        {onClose && <button onClick={onClose} title="Close this pane" aria-label="Close pane" className="grid h-9 w-9 place-items-center rounded-md text-muted transition hover:bg-red-500/10 hover:text-red-500"><Icon name="close" size={17} /></button>}
+        {onClose && <button onClick={onClose} title="Close this pane" aria-label="Close pane" className="grid h-9 w-9 place-items-center rounded-md text-muted transition hover:bg-danger/10 hover:text-danger"><Icon name="close" size={17} /></button>}
       </header>
 
       {/* Block tools — hidden in read-only (viewer/commenter) mode */}
@@ -1415,7 +1419,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
       )}
 
       {readOnly && (
-        <div className="print-hide flex items-center justify-center gap-1.5 border-b border-border bg-amber-500/10 px-6 py-2 text-center text-sm text-amber-700 dark:text-amber-400">
+        <div className="print-hide flex items-center justify-center gap-1.5 border-b border-border bg-warning/10 px-6 py-2 text-center text-sm text-warning">
           <Icon name="lock" size={14} /> You have {access === "commenter" ? "comment-only" : "view-only"} access to this shared document — your changes won’t be saved.
         </div>
       )}
@@ -1689,7 +1693,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
           )}
         </div>
 
-        <button onClick={() => deleteBlock(b.id)} title="Delete block" aria-label="Delete block" className="mt-1 grid place-items-center px-1 text-faint opacity-0 transition hover:text-red-500 group-hover:opacity-100"><Icon name="trash" size={16} /></button>
+        <button onClick={() => deleteBlock(b.id)} title="Delete block" aria-label="Delete block" className="mt-1 grid place-items-center px-1 text-faint opacity-0 transition hover:text-danger group-hover:opacity-100"><Icon name="trash" size={16} /></button>
       </div>
     );
   }

@@ -1,6 +1,6 @@
 "use client";
 
-import { Icon, type IconName } from "@/components/Icon";
+import { Icon } from "@/components/Icon";
 import { Katex } from "@/components/Katex";
 import { SymbolPicker } from "@/components/SymbolPicker";
 import { ICON_BTN } from "@/components/ToolbarControls";
@@ -10,14 +10,6 @@ import { useEffect, useState, type MouseEvent, type ReactNode } from "react";
 const SYM_KEY = "aquarius.symbols";
 // Fixed default structures (no longer user-editable).
 const DEFAULT_TB1 = ["\\frac{}{}", "\\sqrt{}", "^{}", "\\sum_{}^{}", "\\int_{}^{}", "\\sin", "\\cos", "\\neq", "\\pi", "\\alpha"];
-/** Structure inserts that get a drawn icon instead of a KaTeX preview. */
-const STRUCT_ICON: Record<string, IconName> = {
-  "\\frac{}{}": "fraction",
-  "\\sqrt{}": "sqrt",
-  "^{}": "power",
-  "\\sum_{}^{}": "sum",
-  "\\int_{}^{}": "integral",
-};
 // Human-readable names for the structure buttons, used as their accessible label
 // (the raw LaTeX makes a poor screen-reader announcement).
 const STRUCT_LABEL: Record<string, string> = {
@@ -81,14 +73,11 @@ export function SymbolToolbar({ onInsert, onBrowse, keepFocus, markSticky, leadi
       <div className="print-hide flex flex-wrap items-center justify-center gap-1.5 border-b border-border px-6 py-2">
         {leading}
         {/* Structures — fixed defaults (not user-editable) */}
-        {DEFAULT_TB1.map((latex, i) => {
-          const sIcon = STRUCT_ICON[latex];
-          return (
-            <button key={i} onMouseDown={keepFocus} onClick={() => onInsert(latex)} title={`Insert ${latex}`} aria-label={`Insert ${STRUCT_LABEL[latex] ?? latex}`} className={ICON_BTN}>
-              {sIcon ? <Icon name={sIcon} size={20} /> : <Katex latex={previewLatex(latex)} />}
-            </button>
-          );
-        })}
+        {DEFAULT_TB1.map((latex, i) => (
+          <button key={i} onMouseDown={keepFocus} onClick={() => onInsert(latex)} title={`Insert ${latex}`} aria-label={`Insert ${STRUCT_LABEL[latex] ?? latex}`} className={ICON_BTN}>
+            <Katex latex={previewLatex(latex)} />
+          </button>
+        ))}
         <span className="mx-2 h-7 w-px bg-border" />
         {/* Symbols — eight editable slots; "Edit" lets the user change any of them */}
         {symbols.map((latex, i) => (

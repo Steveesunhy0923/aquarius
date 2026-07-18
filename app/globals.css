@@ -12,6 +12,14 @@
   --accent-soft: #eeeefb;
   --muted: #8a8a93;
   --faint: #b9b9c2;
+  /* Semantic status colors (see docs/MODULES.md UI-cleanup proposal) — use these,
+     not raw palette values like red-500/emerald-600, so status reads consistently. */
+  --danger: #dc2626;
+  --danger-soft: #fef2f2;
+  --success: #16a34a;
+  --success-soft: #ecfdf3;
+  --warning: #b45309;
+  --warning-soft: #fffbeb;
 }
 
 /* Dark palette. Applied by the system preference UNLESS the user forced a theme
@@ -27,6 +35,12 @@
     --accent-soft: #23233a;
     --muted: #9ca3af;
     --faint: #6b7280;
+    --danger: #f87171;
+    --danger-soft: #2a1618;
+    --success: #4ade80;
+    --success-soft: #12251b;
+    --warning: #fbbf24;
+    --warning-soft: #2a2010;
   }
 }
 :root.theme-dark {
@@ -39,6 +53,12 @@
   --accent-soft: #23233a;
   --muted: #9ca3af;
   --faint: #6b7280;
+  --danger: #f87171;
+  --danger-soft: #2a1618;
+  --success: #4ade80;
+  --success-soft: #12251b;
+  --warning: #fbbf24;
+  --warning-soft: #2a2010;
 }
 
 @theme inline {
@@ -51,6 +71,23 @@
   --color-accent-soft: var(--accent-soft);
   --color-muted: var(--muted);
   --color-faint: var(--faint);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+}
+
+/* Non-color design tokens (constant across light/dark). Radius: controls / cards /
+   modals. Shadow: popover / card / modal. See docs/MODULES.md UI-cleanup proposal. */
+@theme {
+  --radius-control: 8px;
+  --radius-card: 12px;
+  --radius-modal: 14px;
+  --shadow-popover: 0 8px 24px -6px rgba(20, 20, 45, 0.16);
+  --shadow-card: 0 1px 2px rgba(20, 20, 45, 0.05), 0 10px 26px -12px rgba(20, 20, 45, 0.12);
+  --shadow-modal: 0 24px 60px -12px rgba(15, 15, 35, 0.32);
 }
 
 html,

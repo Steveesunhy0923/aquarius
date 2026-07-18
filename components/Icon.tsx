@@ -1,112 +1,99 @@
 /**
- * Icon — the Graphite icon set (see design/system.png). One source of truth for
- * every action's glyph, so buttons reference a NAME, not ad-hoc markup.
+ * Icon — one source of truth for every action's glyph, so buttons reference a
+ * NAME, not ad-hoc markup. Glyphs are Lucide (lucide.dev) inlined as raw SVG on a
+ * 24×24 canvas; a handful of math/graph primitives with no Lucide equal are kept
+ * as bespoke strokes in the same visual language (tagged `bespoke` below).
  *
- * Every icon renders as a 24×24 stroke SVG in `currentColor` — text-format
- * letterforms included (drawn strokes, not typed characters). `size` is in px.
- * Designed to be recognizable by shape alone.
+ * Every icon renders as a 24×24 stroke SVG in `currentColor`. `size` is in px;
+ * `strokeWidth` overrides the default. Recognizable by shape alone.
  */
 
 import type { CSSProperties } from "react";
 
-// Line icons — inner SVG markup on a 0 0 24 24 canvas. `text` nodes carry their
-// own fill/stroke so they stay legible under the svg's fill:none / stroke set.
+// Inner SVG markup on a 0 0 24 24 canvas. Nodes with their own fill/stroke carry
+// an inline `style` so they stay legible under the wrapper's fill:none / stroke.
 const PATHS = {
-  search: '<circle cx="11" cy="11" r="6"/><line x1="20" y1="20" x2="15.6" y2="15.6"/>',
-  clearsearch: '<circle cx="12" cy="12" r="8"/><line x1="9.5" y1="9.5" x2="14.5" y2="14.5"/><line x1="14.5" y1="9.5" x2="9.5" y2="14.5"/>',
-  settings: '<line x1="4" y1="8.5" x2="20" y2="8.5"/><line x1="4" y1="15.5" x2="20" y2="15.5"/><circle cx="9" cy="8.5" r="2.3"/><circle cx="15" cy="15.5" r="2.3"/>',
-  more: '<circle cx="5.5" cy="12" r="1.25" style="fill:currentColor"/><circle cx="12" cy="12" r="1.25" style="fill:currentColor"/><circle cx="18.5" cy="12" r="1.25" style="fill:currentColor"/>',
-  newnote: '<path d="M14 3.5H7.5A2 2 0 0 0 5.5 5.5v13A2 2 0 0 0 7.5 20.5h9a2 2 0 0 0 2-2V8z"/><path d="M14 3.5V8h4.5"/><line x1="12" y1="11.5" x2="12" y2="16.5"/><line x1="9.5" y1="14" x2="14.5" y2="14"/>',
-  import: '<line x1="12" y1="4" x2="12" y2="14.5"/><polyline points="8,11 12,15 16,11"/><line x1="5" y1="19" x2="19" y2="19"/>',
-  uploadcloud: '<path d="M7 17.5a3.6 3.6 0 0 1-.3-7.2 5 5 0 0 1 9.7-1.3A3.7 3.7 0 0 1 17 17.5"/><polyline points="9.6,12 12,9.5 14.4,12"/><line x1="12" y1="9.6" x2="12" y2="16"/>',
-  subjects: '<rect x="4" y="4" width="7" height="7" rx="1.6"/><rect x="13" y="4" width="7" height="7" rx="1.6"/><rect x="4" y="13" width="7" height="7" rx="1.6"/><rect x="13" y="13" width="7" height="7" rx="1.6"/>',
-  notebooks: '<rect x="6" y="4" width="13" height="16" rx="1.6"/><line x1="9.3" y1="4" x2="9.3" y2="20"/><line x1="11.6" y1="8.2" x2="16" y2="8.2"/><line x1="11.6" y1="11.6" x2="16" y2="11.6"/>',
-  tag: '<path d="M4.5 12.4l7.4-7.4h4.6a2 2 0 0 1 2 2v4.6l-7.4 7.4z"/><circle cx="15" cy="9" r="1.15" style="fill:currentColor"/>',
-  trash: '<line x1="5" y1="7" x2="19" y2="7"/><path d="M9 7V5.4a1.2 1.2 0 0 1 1.2-1.2h3.6A1.2 1.2 0 0 1 15 5.4V7"/><path d="M7.3 7l.9 11.4a1.4 1.4 0 0 0 1.4 1.3h4.8a1.4 1.4 0 0 0 1.4-1.3L16.7 7"/><line x1="10.6" y1="10.5" x2="10.7" y2="16.5"/><line x1="13.4" y1="10.5" x2="13.3" y2="16.5"/>',
-  highlight: '<path d="M5 19.5h5"/><path d="M13.6 4.9l4.6 4.6-7 7-4.6.7.7-4.6z"/><line x1="12.1" y1="6.4" x2="16.7" y2="11"/>',
-  textcolor: '<path d="M7.5 14l4-9 4 9"/><line x1="8.7" y1="11" x2="14.3" y2="11"/><rect x="6" y="17.5" width="12" height="2.6" rx="1.2" style="fill:currentColor;stroke:none"/>',
-  colorwheel: '<circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="2"/><line x1="12" y1="4.5" x2="12" y2="9.5"/><line x1="19.5" y1="12" x2="14.5" y2="12"/><line x1="12" y1="19.5" x2="12" y2="14.5"/><line x1="4.5" y1="12" x2="9.5" y2="12"/>',
-  // Text formatting — drawn letterforms (see design/format-icons.html); bold gets a heavier stroke via THICK.
-  bold: '<path d="M8 4.5v15"/><path d="M8 4.5h4.6a3.4 3.4 0 0 1 0 6.8H8"/><path d="M8 11.3h5.4a4.1 4.1 0 0 1 0 8.2H8"/>',
-  italic: '<line x1="10.5" y1="5" x2="18" y2="5"/><line x1="6" y1="19" x2="13.5" y2="19"/><line x1="14.5" y1="5" x2="9.5" y2="19"/>',
-  underline: '<path d="M7.5 4v6.5a4.5 4.5 0 0 0 9 0V4"/><line x1="6" y1="20" x2="18" y2="20"/>',
-  strike: '<path d="M16.4 6.6a4.5 4.5 0 0 0-4.2-2.2c-2.3 0-4 1.3-4 3.1 0 1.5 1.1 2.4 3 3"/><path d="M12.9 13.5c1.9.6 3 1.5 3 3 0 1.8-1.7 3.1-4 3.1a4.7 4.7 0 0 1-4.4-2.2"/><line x1="5" y1="12" x2="19" y2="12"/>',
-  paragraph: '<line x1="5.5" y1="5.5" x2="18.5" y2="5.5"/><line x1="5.5" y1="5.5" x2="5.5" y2="8"/><line x1="18.5" y1="5.5" x2="18.5" y2="8"/><line x1="12" y1="5.5" x2="12" y2="19.5"/><line x1="9.5" y1="19.5" x2="14.5" y2="19.5"/>',
-  heading: '<line x1="6.5" y1="4.5" x2="6.5" y2="19.5"/><line x1="17.5" y1="4.5" x2="17.5" y2="19.5"/><line x1="6.5" y1="12" x2="17.5" y2="12"/>',
-  list: '<line x1="9" y1="7" x2="20" y2="7"/><line x1="9" y1="12" x2="20" y2="12"/><line x1="9" y1="17" x2="20" y2="17"/><circle cx="5" cy="7" r="1.1" style="fill:currentColor"/><circle cx="5" cy="12" r="1.1" style="fill:currentColor"/><circle cx="5" cy="17" r="1.1" style="fill:currentColor"/>',
-  listnumber: '<line x1="9" y1="7" x2="20" y2="7"/><line x1="9" y1="12" x2="20" y2="12"/><line x1="9" y1="17" x2="20" y2="17"/><text x="3" y="9.4" font-size="7" style="fill:currentColor;stroke:none">1</text><text x="3" y="14.4" font-size="7" style="fill:currentColor;stroke:none">2</text><text x="3" y="19.4" font-size="7" style="fill:currentColor;stroke:none">3</text>',
-  inlineformula: '<path d="M8.6 5.6c-1.9 1.9-1.9 11 0 12.8"/><path d="M15.4 5.6c1.9 1.9 1.9 11 0 12.8"/><line x1="10.4" y1="12" x2="13.6" y2="12"/><circle cx="12" cy="9.4" r="1" style="fill:currentColor"/><circle cx="12" cy="14.6" r="1" style="fill:currentColor"/>',
-  displayeq: '<polyline points="17,5.5 7,5.5 12,12 7,18.5 17,18.5"/><line x1="17" y1="5.5" x2="17" y2="8.2"/><line x1="17" y1="18.5" x2="17" y2="15.8"/>',
-  functions: '<rect x="3.5" y="3.5" width="17" height="17" rx="4"/><circle cx="8.4" cy="8.4" r="1.15" style="fill:currentColor"/><path d="M13.2 7.2l2.7 2.7M15.9 7.2l-2.7 2.7"/><path d="M6.8 15.4c1.1-1.9 2.2 1.9 3.3 0"/><path d="M13.5 15.3h3.2M15.1 13.7v3.2"/>',
-  choosesymbol: '<rect x="4.5" y="4.5" width="15" height="15" rx="4"/><path d="M12 7.8l1.1 3.1 3.1 1.1-3.1 1.1L12 16.2l-1.1-3.1L7.8 12l3.1-1.1z" style="fill:currentColor;stroke:none"/>',
-  editformula: '<path d="M5 19l.6-3.3 8.8-8.8 2.7 2.7-8.8 8.8z"/><line x1="13.6" y1="7.4" x2="16.3" y2="10.1"/>',
-  // Pencil over a flowing ink wave — the handwriting (ink → LaTeX) input panel.
-  ink: '<path d="M5 15l.6-3.3 8.8-8.8 2.7 2.7-8.8 8.8z"/><line x1="13.6" y1="3.4" x2="16.3" y2="6.1"/><path d="M5.3 19.5c1.5-1.6 3-1.6 4.5 0s3 1.6 4.5 0 3-1.6 4.5 0"/>',
-  // Erlenmeyer flask with a bubble — chemistry input (toolbar switch, new chemical equation).
-  flask: '<path d="M10 4.5v5.2L5.6 17.6A1.7 1.7 0 0 0 7.1 20h9.8a1.7 1.7 0 0 0 1.5-2.4L14 9.7V4.5"/><line x1="8.6" y1="4.5" x2="15.4" y2="4.5"/><line x1="7.4" y1="14.6" x2="16.6" y2="14.6"/><circle cx="11.2" cy="17.2" r=".95" style="fill:currentColor"/>',
-  // Orbits around a nucleus — browse the chemistry symbol library.
-  atom: '<ellipse cx="12" cy="12" rx="8.2" ry="3.4" transform="rotate(-45 12 12)"/><ellipse cx="12" cy="12" rx="8.2" ry="3.4" transform="rotate(45 12 12)"/><circle cx="12" cy="12" r="1.2" style="fill:currentColor"/>',
-  fraction: '<line x1="5" y1="12" x2="19" y2="12"/><rect x="7.5" y="4.8" width="9" height="4.6" rx="1.1"/><rect x="7.5" y="14.6" width="9" height="4.6" rx="1.1"/>',
-  sqrt: '<polyline points="3,13 5.6,18 9,5.5 21,5.5"/><rect x="11" y="8.5" width="7" height="7" rx="1.2"/>',
-  power: '<rect x="4.5" y="9.5" width="8.5" height="8.5" rx="1.4"/><rect x="14.5" y="4.5" width="5" height="5" rx="1.1"/>',
-  integral: '<path d="M7 18.2c0 1.2.9 2 1.8 2 1.1 0 1.7-.9 1.7-2.2V6.2C10.5 4.9 11.1 4 12.2 4c.9 0 1.8.8 1.8 2"/>',
-  sum: '<polyline points="16.5,5.5 7.5,5.5 12,12 7.5,18.5 16.5,18.5"/>',
-  matrix: '<path d="M8 4.5H5.5v15H8"/><path d="M16 4.5h2.5v15H16"/><circle cx="10" cy="9.2" r="1" style="fill:currentColor"/><circle cx="14" cy="9.2" r="1" style="fill:currentColor"/><circle cx="10" cy="14.8" r="1" style="fill:currentColor"/><circle cx="14" cy="14.8" r="1" style="fill:currentColor"/>',
-  image: '<rect x="4" y="5" width="16" height="14" rx="1.8"/><circle cx="9" cy="10" r="1.7"/><path d="M5 17.6l4-3.8 3 2.9 3-2.9 4 3.8"/>',
-  graph: '<polyline points="5,4 5,19 20,19"/><path d="M6.2 16c3.4 0 3.9-9 7.8-9 2.6 0 3 6 5.5 6"/>',
-  link: '<path d="M10 14l4-4"/><path d="M11.5 7.4l1.4-1.4a3.6 3.6 0 0 1 5.1 5.1l-1.9 1.9"/><path d="M12.5 16.6l-1.4 1.4a3.6 3.6 0 0 1-5.1-5.1l1.9-1.9"/>',
-  table: '<rect x="4" y="5" width="16" height="14" rx="1.6"/><line x1="4" y1="10" x2="20" y2="10"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="12" y1="5" x2="12" y2="19"/>',
-  moveup: '<line x1="12" y1="19" x2="12" y2="6.5"/><polyline points="7,11 12,6 17,11"/>',
-  movedown: '<line x1="12" y1="5" x2="12" y2="17.5"/><polyline points="7,13 12,18 17,13"/>',
-  moveleft: '<line x1="19" y1="12" x2="6.5" y2="12"/><polyline points="11,7 6,12 11,17"/>',
-  moveright: '<line x1="5" y1="12" x2="17.5" y2="12"/><polyline points="13,7 18,12 13,17"/>',
-  drag: '<circle cx="9.5" cy="6" r="1.2" style="fill:currentColor"/><circle cx="14.5" cy="6" r="1.2" style="fill:currentColor"/><circle cx="9.5" cy="12" r="1.2" style="fill:currentColor"/><circle cx="14.5" cy="12" r="1.2" style="fill:currentColor"/><circle cx="9.5" cy="18" r="1.2" style="fill:currentColor"/><circle cx="14.5" cy="18" r="1.2" style="fill:currentColor"/>',
-  undo: '<polyline points="9,7 5,11 9,15"/><path d="M5 11h8.5a5 5 0 0 1 0 10H10"/>',
-  redo: '<polyline points="15,7 19,11 15,15"/><path d="M19 11h-8.5a5 5 0 0 0 0 10H14"/>',
-  save: '<path d="M7.4 17.5a3.5 3.5 0 0 1-.5-7 5 5 0 0 1 9.5-1.4 3.6 3.6 0 0 1 1.1 7"/><polyline points="9.5,13.3 11.2,15.1 14.7,11.1"/>',
-  share: '<circle cx="6" cy="12" r="2.4"/><circle cx="17.5" cy="6" r="2.4"/><circle cx="17.5" cy="18" r="2.4"/><line x1="8.1" y1="11" x2="15.4" y2="7"/><line x1="8.1" y1="13" x2="15.4" y2="17"/>',
-  templates: '<path d="M12 4l7.5 3.6-7.5 3.6-7.5-3.6z"/><polyline points="4.5,12 12,15.6 19.5,12"/><polyline points="4.5,15.8 12,19.4 19.5,15.8"/>',
-  // Stacked section bricks with a small plus — a reusable module being slotted in.
-  module: '<rect x="4.5" y="4" width="15" height="5" rx="1.4"/><rect x="4.5" y="11" width="15" height="5" rx="1.4"/><line x1="4.5" y1="19.6" x2="11.5" y2="19.6"/><line x1="16.8" y1="17.4" x2="16.8" y2="21.8"/><line x1="14.6" y1="19.6" x2="19" y2="19.6"/>',
-  // A note with an outgoing arrow — link to another note.
-  notelink: '<path d="M14 3.5H7.5A2 2 0 0 0 5.5 5.5v13A2 2 0 0 0 7.5 20.5h9a2 2 0 0 0 2-2V8z"/><path d="M14 3.5V8h4.5"/><line x1="9.5" y1="16.2" x2="14.3" y2="11.4"/><polyline points="11.2,11.2 14.5,11.2 14.5,14.5"/>',
-  pagesize: '<rect x="6" y="3.5" width="12" height="17" rx="1.6"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="9" y1="11" x2="15" y2="11"/><line x1="9" y1="14" x2="13" y2="14"/>',
-  close: '<line x1="7" y1="7" x2="17" y2="17"/><line x1="17" y1="7" x2="7" y2="17"/>',
-  chevron: '<polyline points="6.5,10 12,15 17.5,10"/>',
-  back: '<polyline points="13,6 7,12 13,18"/><line x1="7" y1="12" x2="20" y2="12"/>',
-  // `</>` — toggles the raw LaTeX source view.
-  code: '<polyline points="8.5,8 4.5,12 8.5,16"/><polyline points="15.5,8 19.5,12 15.5,16"/><line x1="13.6" y1="6" x2="10.4" y2="18"/>',
-  // Tray with an outgoing arrow — export/download (.tex / .aqnote / PDF).
-  export: '<path d="M5 13.5v3.5A1.5 1.5 0 0 0 6.5 18.5h11a1.5 1.5 0 0 0 1.5-1.5v-3.5"/><line x1="12" y1="4" x2="12" y2="14"/><polyline points="8.2,7.4 12,3.7 15.8,7.4"/>',
-  plus: '<line x1="12" y1="6.5" x2="12" y2="17.5"/><line x1="6.5" y1="12" x2="17.5" y2="12"/>',
-  check: '<path d="M5.5 12.8l4.2 4.4 8.8-10"/>',
-  minus: '<line x1="6.5" y1="12" x2="17.5" y2="12"/>',
-  // Padlock — read-only / restricted access badge.
-  lock: '<rect x="5.5" y="10.5" width="13" height="9" rx="2"/><path d="M8.2 10.5V8a3.8 3.8 0 0 1 7.6 0v2.5"/><circle cx="12" cy="14.3" r="1.05" style="fill:currentColor"/><line x1="12" y1="15.1" x2="12" y2="16.7"/>',
-  // Open tray — the library's Uncategorized section (opened shared notes).
-  inbox: '<path d="M6.1 5.6L3.5 12v4.7a1.8 1.8 0 0 0 1.8 1.8h13.4a1.8 1.8 0 0 0 1.8-1.8V12l-2.6-6.4a1.6 1.6 0 0 0-1.5-1H7.6a1.6 1.6 0 0 0-1.5 1z"/><polyline points="3.5,12 8.5,12 10.2,14.5 13.8,14.5 15.5,12 20.5,12"/>',
-  // Graph editor tools, visibility toggles & list markers (see design/graph-tool-icons.html).
-  cursor: '<path d="M6.5 4.5l12 9.7-5.4.9 3 5.6-2.6 1.3-3-5.6-4 3.6z"/>',
-  point: '<circle cx="12" cy="12" r="1.7" style="fill:currentColor;stroke:none"/><line x1="12" y1="4.5" x2="12" y2="8"/><line x1="12" y1="16" x2="12" y2="19.5"/><line x1="4.5" y1="12" x2="8" y2="12"/><line x1="16" y1="12" x2="19.5" y2="12"/>',
-  segment: '<line x1="6.8" y1="17.2" x2="17.2" y2="6.8"/><circle cx="6.2" cy="17.8" r="1.5" style="fill:currentColor;stroke:none"/><circle cx="17.8" cy="6.2" r="1.5" style="fill:currentColor;stroke:none"/>',
-  line: '<line x1="3.5" y1="20.5" x2="20.5" y2="3.5"/><circle cx="9.2" cy="14.8" r="1.4" style="fill:currentColor;stroke:none"/><circle cx="14.8" cy="9.2" r="1.4" style="fill:currentColor;stroke:none"/>',
-  triangle: '<path d="M12 5.2L20 18.8H4z"/>',
-  rectangle: '<rect x="4" y="6.5" width="16" height="11" rx="1"/>',
-  circle: '<circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="1.3" style="fill:currentColor;stroke:none"/>',
-  ellipse: '<ellipse cx="12" cy="12" rx="8.5" ry="5.5"/>',
-  parabola: '<path d="M5 5c1.6 8.4 4 12.6 7 12.6S17.4 13.4 19 5"/>',
-  plot: '<path d="M3.5 16.5C6 16.5 6.5 7 9.5 7s3.5 8 6 8 3-4.5 5-6"/><circle cx="9.5" cy="7" r="1.2" style="fill:currentColor;stroke:none"/><circle cx="15.5" cy="15" r="1.2" style="fill:currentColor;stroke:none"/>',
-  eye: '<path d="M3.5 12C6 7.7 8.9 5.7 12 5.7S18 7.7 20.5 12C18 16.3 15.1 18.3 12 18.3S6 16.3 3.5 12z"/><circle cx="12" cy="12" r="2.6"/>',
-  eyeoff: '<path d="M5.2 8.4A14.5 14.5 0 0 0 3.5 12c2.5 4.3 5.4 6.3 8.5 6.3 1.3 0 2.6-.4 3.8-1.1M9.9 6.1A7.6 7.6 0 0 1 12 5.7c3.1 0 6 2 8.5 6.3a15.5 15.5 0 0 1-2.6 3.3"/><path d="M9.9 9.9a2.8 2.8 0 0 0 4 4"/><line x1="4.5" y1="19.5" x2="19.5" y2="4.5"/>',
-  markerdisc: '<circle cx="12" cy="12" r="3.4" style="fill:currentColor;stroke:none"/>',
-  markercircle: '<circle cx="12" cy="12" r="3.2"/>',
-  markersquare: '<rect x="8.8" y="8.8" width="6.4" height="6.4" rx="0.8" style="fill:currentColor;stroke:none"/>',
+  search: '<path d="m21 21-4.34-4.34" /><circle cx="11" cy="11" r="8" />', // lucide/search
+  clearsearch: '<circle cx="12" cy="12" r="10" /><path d="m15 9-6 6" /><path d="m9 9 6 6" />', // lucide/circle-x
+  settings: '<path d="M10 5H3" /><path d="M12 19H3" /><path d="M14 3v4" /><path d="M16 17v4" /><path d="M21 12h-9" /><path d="M21 19h-5" /><path d="M21 5h-7" /><path d="M8 10v4" /><path d="M8 12H3" />', // lucide/sliders-horizontal
+  more: '<circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /><circle cx="5" cy="12" r="1" />', // lucide/ellipsis
+  newnote: '<path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" /><path d="M14 2v5a1 1 0 0 0 1 1h5" /><path d="M9 15h6" /><path d="M12 18v-6" />', // lucide/file-plus
+  import: '<path d="M12 15V3" /><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="m7 10 5 5 5-5" />', // lucide/download
+  uploadcloud: '<path d="M12 13v8" /><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242" /><path d="m8 17 4-4 4 4" />', // lucide/cloud-upload
+  subjects: '<rect width="7" height="7" x="3" y="3" rx="1" /><rect width="7" height="7" x="14" y="3" rx="1" /><rect width="7" height="7" x="14" y="14" rx="1" /><rect width="7" height="7" x="3" y="14" rx="1" />', // lucide/layout-grid
+  notebooks: '<path d="M2 6h4" /><path d="M2 10h4" /><path d="M2 14h4" /><path d="M2 18h4" /><rect width="16" height="20" x="4" y="2" rx="2" /><path d="M9.5 8h5" /><path d="M9.5 12H16" /><path d="M9.5 16H14" />', // lucide/notebook-text
+  tag: '<path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z" /><circle cx="7.5" cy="7.5" r=".5" fill="currentColor" />', // lucide/tag
+  trash: '<path d="M10 11v6" /><path d="M14 11v6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />', // lucide/trash-2
+  highlight: '<path d="m9 11-6 6v3h9l3-3" /><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4" />', // lucide/highlighter
+  textcolor: '<path d="M4 20h16" /><path d="m6 16 6-12 6 12" /><path d="M8 12h8" />', // lucide/baseline
+  colorwheel: '<path d="M12 22a1 1 0 0 1 0-20 10 9 0 0 1 10 9 5 5 0 0 1-5 5h-2.25a1.75 1.75 0 0 0-1.4 2.8l.3.4a1.75 1.75 0 0 1-1.4 2.8z" /><circle cx="13.5" cy="6.5" r=".5" fill="currentColor" /><circle cx="17.5" cy="10.5" r=".5" fill="currentColor" /><circle cx="6.5" cy="12.5" r=".5" fill="currentColor" /><circle cx="8.5" cy="7.5" r=".5" fill="currentColor" />', // lucide/palette
+  bold: '<path d="M6 12h9a4 4 0 0 1 0 8H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h7a4 4 0 0 1 0 8" />', // lucide/bold
+  italic: '<line x1="19" x2="10" y1="4" y2="4" /><line x1="14" x2="5" y1="20" y2="20" /><line x1="15" x2="9" y1="4" y2="20" />', // lucide/italic
+  underline: '<path d="M6 4v6a6 6 0 0 0 12 0V4" /><line x1="4" x2="20" y1="20" y2="20" />', // lucide/underline
+  strike: '<path d="M16 4H9a3 3 0 0 0-2.83 4" /><path d="M14 12a4 4 0 0 1 0 8H6" /><line x1="4" x2="20" y1="12" y2="12" />', // lucide/strikethrough
+  paragraph: '<path d="M13 4v16" /><path d="M17 4v16" /><path d="M19 4H9.5a4.5 4.5 0 0 0 0 9H13" />', // lucide/pilcrow
+  heading: '<path d="M6 12h12" /><path d="M6 20V4" /><path d="M18 20V4" />', // lucide/heading
+  list: '<path d="M3 5h.01" /><path d="M3 12h.01" /><path d="M3 19h.01" /><path d="M8 5h13" /><path d="M8 12h13" /><path d="M8 19h13" />', // lucide/list
+  listnumber: '<path d="M11 5h10" /><path d="M11 12h10" /><path d="M11 19h10" /><path d="M4 4h1v5" /><path d="M4 9h2" /><path d="M6.5 20H3.4c0-1 2.6-1.925 2.6-3.5a1.5 1.5 0 0 0-2.6-1.02" />', // lucide/list-ordered
+  inlineformula: '<path d="M8 21s-4-3-4-9 4-9 4-9" /><path d="M16 3s4 3 4 9-4 9-4 9" /><line x1="15" x2="9" y1="9" y2="15" /><line x1="9" x2="15" y1="9" y2="15" />', // lucide/variable
+  displayeq: '<rect width="18" height="18" x="3" y="3" rx="2" /><path d="M16 8.9V7H8l4 5-4 5h8v-1.9" />', // lucide/square-sigma
+  functions: '<rect width="18" height="18" x="3" y="3" rx="2" ry="2" /><path d="M9 17c2 0 2.8-1 2.8-2.8V10c0-2 1-3.3 3.2-3" /><path d="M9 11.2h5.7" />', // lucide/square-function
+  choosesymbol: '<path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z" /><path d="M20 2v4" /><path d="M22 4h-4" /><circle cx="4" cy="20" r="2" />', // lucide/sparkles
+  editformula: '<path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z" />', // lucide/square-pen
+  ink: '<path d="M15.707 21.293a1 1 0 0 1-1.414 0l-1.586-1.586a1 1 0 0 1 0-1.414l5.586-5.586a1 1 0 0 1 1.414 0l1.586 1.586a1 1 0 0 1 0 1.414z" /><path d="m18 13-1.375-6.874a1 1 0 0 0-.746-.776L3.235 2.028a1 1 0 0 0-1.207 1.207L5.35 15.879a1 1 0 0 0 .776.746L13 18" /><path d="m2.3 2.3 7.286 7.286" /><circle cx="11" cy="11" r="2" />', // lucide/pen-tool
+  flask: '<path d="M14 2v6a2 2 0 0 0 .245.96l5.51 10.08A2 2 0 0 1 18 22H6a2 2 0 0 1-1.755-2.96l5.51-10.08A2 2 0 0 0 10 8V2" /><path d="M6.453 15h11.094" /><path d="M8.5 2h7" />', // lucide/flask-conical
+  atom: '<circle cx="12" cy="12" r="1" /><path d="M20.2 20.2c2.04-2.03.02-7.36-4.5-11.9-4.54-4.52-9.87-6.54-11.9-4.5-2.04 2.03-.02 7.36 4.5 11.9 4.54 4.52 9.87 6.54 11.9 4.5Z" /><path d="M15.7 15.7c4.52-4.54 6.54-9.87 4.5-11.9-2.03-2.04-7.36-.02-11.9 4.5-4.52 4.54-6.54 9.87-4.5 11.9 2.03 2.04 7.36.02 11.9-4.5Z" />', // lucide/atom
+  fraction: '<line x1="5" y1="12" x2="19" y2="12"/><rect x="7.5" y="4.8" width="9" height="4.6" rx="1.1"/><rect x="7.5" y="14.6" width="9" height="4.6" rx="1.1"/>', // bespoke
+  sqrt: '<polyline points="3,13 5.6,18 9,5.5 21,5.5"/><rect x="11" y="8.5" width="7" height="7" rx="1.2"/>', // bespoke
+  power: '<rect x="4.5" y="9.5" width="8.5" height="8.5" rx="1.4"/><rect x="14.5" y="4.5" width="5" height="5" rx="1.1"/>', // bespoke
+  integral: '<path d="M7 18.2c0 1.2.9 2 1.8 2 1.1 0 1.7-.9 1.7-2.2V6.2C10.5 4.9 11.1 4 12.2 4c.9 0 1.8.8 1.8 2"/>', // bespoke
+  sum: '<path d="M18 7V5a1 1 0 0 0-1-1H6.5a.5.5 0 0 0-.4.8l4.5 6a2 2 0 0 1 0 2.4l-4.5 6a.5.5 0 0 0 .4.8H17a1 1 0 0 0 1-1v-2" />', // lucide/sigma
+  matrix: '<rect width="18" height="18" x="3" y="3" rx="2" /><path d="M3 9h18" /><path d="M3 15h18" /><path d="M9 3v18" /><path d="M15 3v18" />', // lucide/grid-3x3
+  image: '<rect width="18" height="18" x="3" y="3" rx="2" ry="2" /><circle cx="9" cy="9" r="2" /><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />', // lucide/image
+  graph: '<path d="M3 3v16a2 2 0 0 0 2 2h16" /><path d="M7 16c.5-2 1.5-7 4-7 2 0 2 3 4 3 2.5 0 4.5-5 5-7" />', // lucide/chart-spline
+  link: '<path d="M9 17H7A5 5 0 0 1 7 7h2" /><path d="M15 7h2a5 5 0 1 1 0 10h-2" /><line x1="8" x2="16" y1="12" y2="12" />', // lucide/link-2
+  table: '<path d="M12 3v18" /><rect width="18" height="18" x="3" y="3" rx="2" /><path d="M3 9h18" /><path d="M3 15h18" />', // lucide/table
+  moveup: '<path d="m5 12 7-7 7 7" /><path d="M12 19V5" />', // lucide/arrow-up
+  movedown: '<path d="M12 5v14" /><path d="m19 12-7 7-7-7" />', // lucide/arrow-down
+  moveleft: '<path d="m12 19-7-7 7-7" /><path d="M19 12H5" />', // lucide/arrow-left
+  moveright: '<path d="M5 12h14" /><path d="m12 5 7 7-7 7" />', // lucide/arrow-right
+  drag: '<circle cx="9" cy="12" r="1" /><circle cx="9" cy="5" r="1" /><circle cx="9" cy="19" r="1" /><circle cx="15" cy="12" r="1" /><circle cx="15" cy="5" r="1" /><circle cx="15" cy="19" r="1" />', // lucide/grip-vertical
+  undo: '<path d="M9 14 4 9l5-5" /><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11" />', // lucide/undo-2
+  redo: '<path d="m15 14 5-5-5-5" /><path d="M20 9H9.5A5.5 5.5 0 0 0 4 14.5A5.5 5.5 0 0 0 9.5 20H13" />', // lucide/redo-2
+  save: '<path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" /><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7" /><path d="M7 3v4a1 1 0 0 0 1 1h7" />', // lucide/save
+  share: '<circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><line x1="8.59" x2="15.42" y1="13.51" y2="17.49" /><line x1="15.41" x2="8.59" y1="6.51" y2="10.49" />', // lucide/share-2
+  templates: '<rect width="18" height="7" x="3" y="3" rx="1" /><rect width="9" height="7" x="3" y="14" rx="1" /><rect width="5" height="7" x="16" y="14" rx="1" />', // lucide/layout-template
+  module: '<path d="M10 22V7a1 1 0 0 0-1-1H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5a1 1 0 0 0-1-1H2" /><rect x="14" y="2" width="8" height="8" rx="1" />', // lucide/blocks
+  notelink: '<path d="M4 11V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h7" /><path d="M14 2v5a1 1 0 0 0 1 1h5" /><path d="m10 18 3-3-3-3" />', // lucide/file-symlink
+  pagesize: '<rect width="20" height="16" x="2" y="4" rx="2" /><path d="M12 9v11" /><path d="M2 9h13a2 2 0 0 1 2 2v9" />', // lucide/proportions
+  close: '<path d="M18 6 6 18" /><path d="m6 6 12 12" />', // lucide/x
+  chevron: '<path d="m6 9 6 6 6-6" />', // lucide/chevron-down
+  back: '<path d="m12 19-7-7 7-7" /><path d="M19 12H5" />', // lucide/arrow-left
+  code: '<path d="m16 18 6-6-6-6" /><path d="m8 6-6 6 6 6" />', // lucide/code
+  export: '<path d="M4.226 20.925A2 2 0 0 0 6 22h12a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v3.127" /><path d="M14 2v5a1 1 0 0 0 1 1h5" /><path d="m5 11-3 3" /><path d="m5 17-3-3h10" />', // lucide/file-output
+  plus: '<path d="M5 12h14" /><path d="M12 5v14" />', // lucide/plus
+  check: '<path d="M20 6 9 17l-5-5" />', // lucide/check
+  minus: '<path d="M5 12h14" />', // lucide/minus
+  lock: '<rect width="18" height="11" x="3" y="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />', // lucide/lock
+  inbox: '<polyline points="22 12 16 12 14 15 10 15 8 12 2 12" /><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />', // lucide/inbox
+  cursor: '<path d="M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z" />', // lucide/mouse-pointer-2
+  point: '<circle cx="12" cy="12" r="10" /><line x1="22" x2="18" y1="12" y2="12" /><line x1="6" x2="2" y1="12" y2="12" /><line x1="12" x2="12" y1="6" y2="2" /><line x1="12" x2="12" y1="22" y2="18" />', // lucide/crosshair
+  segment: '<line x1="6.8" y1="17.2" x2="17.2" y2="6.8"/><circle cx="6.2" cy="17.8" r="1.5" style="fill:currentColor;stroke:none"/><circle cx="17.8" cy="6.2" r="1.5" style="fill:currentColor;stroke:none"/>', // bespoke
+  line: '<line x1="3.5" y1="20.5" x2="20.5" y2="3.5"/><circle cx="9.2" cy="14.8" r="1.4" style="fill:currentColor;stroke:none"/><circle cx="14.8" cy="9.2" r="1.4" style="fill:currentColor;stroke:none"/>', // bespoke
+  triangle: '<path d="M13.73 4a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />', // lucide/triangle
+  rectangle: '<rect width="20" height="12" x="2" y="6" rx="2" />', // lucide/rectangle-horizontal
+  circle: '<circle cx="12" cy="12" r="10" />', // lucide/circle
+  ellipse: '<ellipse cx="12" cy="12" rx="8.5" ry="5.5"/>', // bespoke
+  parabola: '<path d="M5 5c1.6 8.4 4 12.6 7 12.6S17.4 13.4 19 5"/>', // bespoke
+  plot: '<circle cx="19" cy="5" r="2" /><circle cx="5" cy="19" r="2" /><path d="M5 17A12 12 0 0 1 17 5" />', // lucide/spline
+  eye: '<path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" /><circle cx="12" cy="12" r="3" />', // lucide/eye
+  eyeoff: '<path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49" /><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242" /><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143" /><path d="m2 2 20 20" />', // lucide/eye-off
+  markerdisc: '<circle cx="12" cy="12" r="3.4" style="fill:currentColor;stroke:none"/>', // bespoke
+  markercircle: '<circle cx="12" cy="12" r="3.2"/>', // bespoke
+  markersquare: '<rect x="8.8" y="8.8" width="6.4" height="6.4" rx="0.8" style="fill:currentColor;stroke:none"/>', // bespoke
 } as const;
 
 export type IconName = keyof typeof PATHS;
-
-// Per-name default stroke weight — bold's heavier stroke IS the glyph's meaning.
-const THICK: Partial<Record<IconName, number>> = { bold: 2.3 };
 
 export function Icon({
   name,
@@ -130,7 +117,7 @@ export function Icon({
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth={strokeWidth ?? THICK[name] ?? 1.6}
+      strokeWidth={strokeWidth ?? 1.75}
       strokeLinecap="round"
       strokeLinejoin="round"
       style={style}

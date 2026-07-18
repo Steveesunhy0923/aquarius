@@ -153,14 +153,14 @@ export function InkInsertPanel({
       <div className="flex items-center gap-3 px-4 py-1.5">
         <p className="text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted">Handwrite math</p>
         {rec.busy && <span className="text-xs text-faint">converting…</span>}
-        {flash && <span className="text-xs text-green-600">Inserted ✓</span>}
+        {flash && <span className="text-xs text-success">Inserted ✓</span>}
         {rec.offline && (
           <span className="text-xs text-muted">
             Recognition server offline — start it with{" "}
             <code className="rounded bg-foreground/[0.06] px-1.5 py-0.5 font-mono text-[11px]">{OFFLINE_CMD}</code>
           </span>
         )}
-        {!rec.offline && rec.error && <span className="text-xs text-red-500">{rec.error}</span>}
+        {!rec.offline && rec.error && <span className="text-xs text-danger">{rec.error}</span>}
         <button onClick={onClose} title="Close (Esc)" aria-label="Close handwriting panel" className={`${PANEL_ICON} ml-auto`}>
           <Icon name="close" size={16} />
         </button>

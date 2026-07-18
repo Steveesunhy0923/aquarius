@@ -35,7 +35,7 @@ export function SideItem({
   children: React.ReactNode;
 }) {
   return (
-    <div className={`group flex items-center rounded-[7px] ${active ? "bg-accent-soft" : "hover:bg-foreground/[0.04]"}`}>
+    <div className={`group flex items-center rounded-control ${active ? "bg-accent-soft" : "hover:bg-foreground/[0.04]"}`}>
       <button
         onClick={onClick}
         className={`flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-2 text-left text-[13px] ${active ? "text-accent" : "text-foreground"}`}
@@ -46,7 +46,7 @@ export function SideItem({
         <button
           onClick={onDelete}
           title="Delete"
-          className="mr-1 grid h-6 w-6 shrink-0 place-items-center text-muted opacity-0 transition hover:text-red-500 group-hover:opacity-100"
+          className="mr-1 grid h-6 w-6 shrink-0 place-items-center text-muted opacity-0 transition hover:text-danger group-hover:opacity-100"
         >
           <Icon name="close" size={13} />
         </button>

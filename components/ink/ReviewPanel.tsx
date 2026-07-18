@@ -113,7 +113,7 @@ export function ReviewDialog({ onClose, onCount }: {
                   onClick={() => void remove(s)}
                   title="Delete this sample"
                   aria-label="Delete this sample"
-                  className="shrink-0 rounded-md border border-border px-2 py-1 text-xs text-muted transition hover:border-red-400 hover:text-red-500"
+                  className="shrink-0 rounded-md border border-border px-2 py-1 text-xs text-muted transition hover:border-danger hover:text-danger"
                 >
                   Delete
                 </button>

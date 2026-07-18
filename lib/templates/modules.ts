@@ -11,6 +11,7 @@
  */
 
 import { withCalloutColor } from "@/lib/blocks/callouts";
+import { fillFieldText, scanFieldNames } from "@/lib/blocks/fields";
 import { makeHeading, withHeading, type HeadingLevel } from "@/lib/blocks/headings";
 import { makeList } from "@/lib/blocks/lists";
 import { displayFromSource, paragraphFromSource } from "@/lib/blocks/source";
@@ -60,6 +61,71 @@ export function freshBlock(b: Block): Block {
 /** Deep-clone a fragment with brand-new block ids throughout. */
 export const freshBlocks = (blocks: Block[]): Block[] => blocks.map(freshBlock);
 
+// ─── Fillable fields ({{Name}} tokens in module prose) ────────────────────────
+// Tokens live as literal text in run strings / heading values / list items /
+// table cells (see lib/blocks/fields.ts), so they survive save/round-trips.
+
+/** All `{{field}}` names in a fragment, deduped in first-appearance order. */
+export function moduleFields(blocks: Block[]): string[] {
+  const names: string[] = [];
+  const scanTable = (t: unknown): void => {
+    const d = t as { rows?: string[][]; caption?: string };
+    scanFieldNames(d.caption, names);
+    for (const row of d.rows ?? []) for (const cell of row) scanFieldNames(cell, names);
+  };
+  const visit = (b: Block): void => {
+    scanFieldNames(b.value, names);
+    const runs = b.attrs?.runs as InlineRun[] | undefined;
+    if (Array.isArray(runs)) for (const r of runs) if (r.kind === "text") scanFieldNames(r.text, names);
+    const items = b.attrs?.items as string[] | undefined;
+    if (Array.isArray(items)) for (const it of items) scanFieldNames(it, names);
+    const tables = b.attrs?.tables as unknown[] | undefined;
+    if (Array.isArray(tables)) tables.forEach(scanTable);
+    if (b.slots) for (const kids of Object.values(b.slots)) kids.forEach(visit);
+  };
+  blocks.forEach(visit);
+  return names;
+}
+
+/** Substitute filled field values throughout a fragment. Pure — freshBlock
+ *  shares run/item objects with the memoized catalog, so this never mutates;
+ *  blank values keep their `{{…}}` placeholder. */
+export function fillFields(blocks: Block[], values: Record<string, string>): Block[] {
+  if (!Object.values(values).some((v) => v && v.trim())) return blocks;
+  const fill = (s: string): string => fillFieldText(s, values);
+  const fillTable = (t: unknown): unknown => {
+    const d = t as { rows?: string[][]; caption?: string };
+    return {
+      ...d,
+      ...(typeof d.caption === "string" ? { caption: fill(d.caption) } : null),
+      ...(Array.isArray(d.rows) ? { rows: d.rows.map((row) => row.map(fill)) } : null),
+    };
+  };
+  const visit = (b: Block): Block => {
+    const nb: Block = { ...b };
+    if (typeof b.value === "string") nb.value = fill(b.value);
+    if (b.attrs) {
+      const attrs = { ...b.attrs };
+      const runs = attrs.runs as InlineRun[] | undefined;
+      if (Array.isArray(runs)) {
+        attrs.runs = runs.map((r) => (r.kind === "text" ? { kind: "text" as const, text: fill(r.text) } : r));
+      }
+      const items = attrs.items as string[] | undefined;
+      if (Array.isArray(items)) attrs.items = items.map(fill);
+      const tables = attrs.tables as unknown[] | undefined;
+      if (Array.isArray(tables)) attrs.tables = tables.map(fillTable);
+      nb.attrs = attrs;
+    }
+    if (b.slots) {
+      const slots: Slots = {};
+      for (const [k, kids] of Object.entries(b.slots)) slots[k] = kids.map(visit);
+      nb.slots = slots;
+    }
+    return nb;
+  };
+  return blocks.map(visit);
+}
+
 // ─── The Module type ──────────────────────────────────────────────────────────
 
 export type ModuleCategory = "structural" | "study" | "science" | "planning" | "custom";
@@ -81,9 +147,8 @@ export interface Module {
   description: string;
   /** Extra search terms for the slash-menu filter. */
   keywords?: string[];
-  /** Named `{{field}}` tokens to prompt on insert — reserved for the fillable-
-   *  fields slice (docs/MODULES.md "Todo later"); nothing reads this yet. */
-  fields?: string[];
+  // Fillable `{{field}}` tokens are not declared here — they are scanned from
+  // `blocks` (moduleFields), so save-section and hand-built modules get them free.
   blocks: Block[];
 }
 
@@ -109,7 +174,7 @@ export function builtinModules(): Module[] {
     // Universal / structural
     mod("title-block", "Title block", "heading", "structural", "Document title with a course / date / topic line.", [
       heading(1, "Title"),
-      para("**Course:** ___    **Date:** ___    **Topic:** ___"),
+      para("**Course:** {{Course}}    **Date:** {{Date}}    **Topic:** {{Topic}}"),
     ], ["header", "top"]),
     mod("section", "Section", "paragraph", "structural", "A subtitle with an empty body to write in.", [
       heading(2, "New section"),
@@ -232,7 +297,7 @@ export function builtinPresets(): Preset[] {
       name: "Lecture Notes",
       scenario: "Capture a class: key concepts, a worked example, and a summary.",
       stack: [
-        titleModule("lecture-notes", "Lecture Notes", "**Course:** ___    **Date:** ___    **Topic:** ___"),
+        titleModule("lecture-notes", "Lecture Notes", "**Course:** {{Course}}    **Date:** {{Date}}    **Topic:** {{Topic}}"),
         use("key-concepts"),
         use("worked-example"),
         use("summary"),
@@ -243,7 +308,7 @@ export function builtinPresets(): Preset[] {
       name: "Problem Set",
       scenario: "Homework layout: numbered problems with room to work.",
       stack: [
-        titleModule("problem-set", "Problem Set", "**Name:** ___    **Course:** ___    **Due:** ___"),
+        titleModule("problem-set", "Problem Set", "**Name:** {{Name}}    **Course:** {{Course}}    **Due:** {{Due}}"),
         mod("problem-1", "Problem 1", "displayeq", "study", "A problem with room to work.", [
           heading(2, "Problem 1"),
           para("State the problem here, then show your work."),
@@ -264,7 +329,7 @@ export function builtinPresets(): Preset[] {
       name: "Lab Report",
       scenario: "Objective → materials → procedure → data table → analysis.",
       stack: [
-        titleModule("lab-report", "Lab Report", "**Experiment:** ___    **Date:** ___    **Partners:** ___"),
+        titleModule("lab-report", "Lab Report", "**Experiment:** {{Experiment}}    **Date:** {{Date}}    **Partners:** {{Partners}}"),
         use("objective"),
         use("materials"),
         use("procedure"),
@@ -300,7 +365,7 @@ export function builtinPresets(): Preset[] {
       name: "Cornell Notes",
       scenario: "Cues & questions, a notes column, and a summary at the foot.",
       stack: [
-        titleModule("cornell-notes", "Cornell Notes", "**Topic:** ___    **Date:** ___"),
+        titleModule("cornell-notes", "Cornell Notes", "**Topic:** {{Topic}}    **Date:** {{Date}}"),
         use("cornell-cues"),
         use("notes-column"),
         use("summary"),

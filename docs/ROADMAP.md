@@ -2,6 +2,20 @@
 
 ## Release record
 
+- **0.6.2 — Fillable fields + inline `[[` autocomplete + backlinks + corrections review**
+  (branch `ui-graphite-redesign`, unreleased). **Fillable module fields**: `{{Field}}` tokens in
+  module/preset prose (`lib/blocks/fields.ts`) prompt once on insert (`ModuleFieldsDialog`, wired
+  into both slash-insert and template apply); unfilled tokens render as dashed placeholder chips;
+  scanned via `moduleFields()`, filled purely via `fillFields()`. **Inline note-link
+  autocomplete**: typing `[[` opens a search-as-you-type menu (`NoteLinkMenu`, an `EditBox` state
+  machine mirroring the `/` slash menu) with a "browse / link a section" fallback to the full
+  picker. **Backlinks panel**: a "Linked from" sidebar list backed by a new
+  `LibraryStore.listBacklinks` (local tree-JSON scan; cloud `backlink_note_ids` function,
+  migration `0010`). **Handwriting corrections review**: `serve.py` gained
+  `GET /collect/samples`, `GET /collect/img/{id}`, `DELETE /collect/{id}`, surfaced as a **Review**
+  dialog in the `/ink` lab (thumbnail + label + model-guess + delete). The dataset loader and
+  `--corrections` mix-in flag it feeds were already shipped in 0.6.1's ML work. See
+  `docs/MODULES.md` for the detailed record. Verified end-to-end in a real browser (23 assertions).
 - **0.6.1 — Editable preset stacks + link previews + ML training** (branch
   `ui-graphite-redesign`). **Presets as editable stacks**: the Designs dialog's Note-layout
   cards show each preset's module stack as chips — tick modules in/out, drag to reorder,
@@ -35,6 +49,30 @@
 Status note: some "not started" rows below predate 0.5/0.6 — templates, the symbol
 palette, and the full toolbar exist now; `docs/MODULES.md` supersedes this file for the
 modules initiative.
+
+## Next up (queued 2026-07-12)
+
+The near-term build queue, in priority order:
+
+1. **LaTeX shorthand autocomplete** (V1 step 3, still not started) — typing `\frac` / `/` etc.
+   expands to the matching block rather than a raw string. The last unbuilt piece of the input
+   trio (toolbar + symbol palette exist).
+2. **Real PDF export** (V1 step 6) — tree → LaTeX → typeset PDF (server-side or WASM TeX);
+   today output is browser-print only. Note links already degrade to plain text in export.
+3. **TikZ canvas** (V1 step 10) — the scaffolded `tikz` block (`attrs.shapes`) needs a
+   constrained drawing canvas; reuse the graph block's interactive-SVG→tikzpicture pattern.
+
+### Extra targets (kept for later)
+
+- **Dynamic / smart modules** — Table of Contents (`computeOutline`), Formula index, Flashcards
+  (→ Anki export), Graph module. *(also in `docs/MODULES.md`)*
+- **Per-subject default stacks** — each Subject starts new notes from its own module skeleton;
+  the 0.6.1 editable-stack UI is the editor for it.
+- **Shareable module packs** — move user modules off localStorage; publish/install via cloud +
+  sharing infra; first step toward the template gallery + likes.
+- **iPad text-mode editor integration** — the ink sheet gains a Text mode inserting recognized
+  words as prose at the caret, gated to the Capacitor build, plus the LAN-IP / on-device
+  recognizer endpoint (per the `docs/MODULES.md` decision record).
 
 ## 0.4 — Social platform (in progress)
 

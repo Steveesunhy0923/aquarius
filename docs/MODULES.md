@@ -81,11 +81,31 @@ presets + custom templates + modules into one underlying thing.
    inserts exactly the customized stack through the existing add/replace flow. Verified
    end-to-end in a real browser (toggle, drag-reorder, apply order, reset, all-off).
 
+6. ✅ **Fillable fields (`{{Field}}` tokens)** *(unreleased)* — the literal `___` /
+   `**Course:** ___` convention is now named `{{field}}` tokens. Tokens live as literal text in
+   run strings / heading values / list items / table cells (`lib/blocks/fields.ts` —
+   `splitFieldTokens` / `scanFieldNames` / `fillFieldText`), mirroring the marker-in-string
+   design of `format.ts`, so they survive `freshBlock`, copy/import, and the ModuleEditorDialog
+   round-trip untouched (no `attrs.runs` schema change). `moduleFields()` scans a fragment for
+   its token names (so save-section and hand-built modules get fields for free — `Module.fields`
+   was dropped as redundant); `fillFields()` substitutes values purely (never mutates the
+   memoized catalog). **On insert** (slash-menu `insertModule` **and** preset/template apply
+   `applyTemplate`), a module carrying tokens raises `ModuleFieldsDialog` — one input per field,
+   Enter advances snippet-style, **Skip** leaves tokens as placeholders. **Unfilled tokens
+   render as dashed placeholder chips** (`withFieldChips` in `BlockView`), not literal braces;
+   the built-in title blocks + the 4 preset title lines now use tokens (`Course` / `Date` /
+   `Topic` / `Name` / `Due` / `Experiment` / `Partners`). Unit-tested (`lib/blocks/fields.test.ts`,
+   7 cases) and verified end-to-end in a real browser (slash insert with 2/3 fields filled →
+   values land, blank `Date` shows a chip; preset apply prompts, Skip keeps chips).
+
 ## Todo next
 
-- **Fillable fields** — replace the literal `___` / `**Course:** ___` convention with named
-  `{{field}}` tokens that prompt once on insert or Tab-through like a snippet. (`Module.fields`
-  is reserved for this; design decision: where the token lives in the `attrs.runs` model.)
+- **Per-subject default stack** — each Subject defines a skeleton so new notes in *Physics*
+  start correctly (the editable-stack UI from 0.6.1 is the editor for it).
+- **Dynamic / smart modules** — Table of Contents (bound to `computeOutline`), Formula index
+  (collects display equations), Flashcards (→ Anki export), Graph (interactive graph block).
+- **Shareable module packs** — publish/install packs via cloud + sharing infra (moves user
+  modules off localStorage; first step toward the template gallery).
 
 ## Todo later (all ideas kept)
 
@@ -154,7 +174,30 @@ targets a section (heading block ids are stable across renames). Rides the ordin
 - **Behavior details**: ⌘/Ctrl-click opens a new tab; links into collapsed sections auto-expand
   them; a link clicked in split-pane B to a third note replaces pane B; the toolbar path uses
   the text selection as the label; `[[` only triggers on a genuinely typed bracket.
-- Later ideas: backlinks panel, link autocomplete while typing `[[query`, rename-aware labels.
+- Later ideas: rename-aware labels.
+
+## Update (unreleased) — inline `[[` autocomplete + backlinks panel
+
+- **`[[query` inline autocomplete** (`components/NoteLinkMenu.tsx`): typing `[[` now opens an
+  inline note-search menu below the edit box instead of jumping straight to the modal — a full
+  state machine in `EditBox` mirroring the `/` slash menu (open/refine/dismiss on
+  `onChange`+`onSelect`, keyboard branch in `onKeyDown`, `absolute top-full` menu with
+  `onMouseDown` preventDefault). Results are `listRecentNotes(6)` for an empty query, debounced
+  `searchNotes` (150 ms) otherwise; ↑↓ navigate, Enter links (splices `[title](note://id)` over
+  the verified `[[query` range), Esc dismisses. A trailing **"Browse all notes / link a
+  section…"** row falls back to the existing two-step `NoteLinkPicker` (still the path for
+  section links + the toolbar button). Slash and link menus are mutually exclusive (each
+  suppresses the other).
+- **Backlinks panel** (`EditorSidebar` › `BacklinksPanel`): a "Linked from" list between Files
+  and Sections showing notes that link to the active pane's note; hidden when there are none, a
+  row opens the referrer in split view. Backed by a new `LibraryStore.listBacklinks(noteId)` —
+  local scans tree JSON in one `getAll("notePackages")` (`note://` hrefs are stripped from
+  `latexCache`, so a body search can't find them, per `format.ts`); cloud calls the
+  `backlink_note_ids` Postgres function (**migration `0010_backlinks.sql`**, SECURITY INVOKER so
+  RLS applies), degrading to "no backlinks" if the function isn't deployed yet.
+- Verified end-to-end in a real browser (23-assertion suite): `[[` menu opens with recents,
+  filters on query, picks/splices a link; the target note's backlinks panel lists the referrer
+  and clicking it opens split view.
 
 ## Update (0.6.1) — Google-Docs-style, orientation-aware previews
 
@@ -253,15 +296,27 @@ label" → edit with live preview → Save → HTTP 200, confirmation shown, JSO
 - 8 review findings (focus/Escape/staleness/positioning) were confirmed and fixed post-build;
   details in [HANDWRITING_MODEL.md §6 step 8](HANDWRITING_MODEL.md).
 
+## Closing the loop (status)
+
+- ✅ **Dataset loader + mix-in flag** — already shipped in the S2-XL cloud-training work
+  (Step 9): `load_corrections()` + `MathWritingDataset(corrections_jsonl=…, corrections_repeat=…)`
+  in `ml/src/dataset.py` fold `collected.jsonl` straight into training through the same
+  render+tokenize path (oversampled ×32 by default), driven by `train.py`'s `--corrections` /
+  `--corrections-repeat`. Re-verified: `python -m src.dataset` reports the corrections mixed in.
+- ✅ **Review UI** *(unreleased)* — list/view/delete collected samples before training on them.
+  New `serve.py` routes: `GET /collect/samples` (metadata, newest first), `GET /collect/img/{id}`
+  (the rendered PNG the model trains on, id-validated, `FileResponse`), `DELETE /collect/{id}`
+  (atomic JSONL rewrite under the collect lock + PNG unlink). The `/ink` lab gained a **Review ·
+  N** button opening `ReviewPanel` — each row shows the ink thumbnail, the corrected label
+  (KaTeX/text), the model's original guess (`predicted`), mode/stroke-count/timestamp, and a
+  Delete (confirm dialog). Server routes exercised over curl (collect→list→delete round-trip,
+  id validation 400/404) and the dialog verified in a real browser (count badge, thumbnail
+  loads, "model guessed" line).
+
 ## Todo next (to close the loop)
 
-- **Dataset loader** — teach `ml/src/dataset.py` to fold `collected.jsonl` into training
-  (strokes already match the render path; just parse label + strokes).
-- **Fine-tune / mix-in** — a `train.py` flag to weight collected corrections alongside
-  MathWriting so the model actually learns from them.
 - **On-iPad path** — the endpoint is `127.0.0.1:8787`; for a real iPad it needs the same
   LAN-IP treatment as the dev server (or the eventual on-device CoreML plugin writing locally).
-- **Review UI** — list/replay/delete collected samples before training on them.
 - **Dedup / provenance** — the raw model guess is stored as `predicted` for error analysis.
 
 ---

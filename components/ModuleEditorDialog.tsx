@@ -284,7 +284,7 @@ function PartEditor({ part, onPatch }: { part: Part; onPatch: (fn: (p: Part) => 
         <textarea
           value={part.src}
           onChange={(e) => onPatch((p) => ({ ...(p as typeof part), src: e.target.value }))}
-          placeholder="Text… **bold**, *italic*, \(x^2\) for inline math"
+          placeholder="Text… **bold**, *italic*, \(x^2\) for inline math, {{Field}} for a fill-in blank"
           rows={Math.min(6, Math.max(2, part.src.split("\n").length))}
           className={`${FIELD} resize-none`}
         />

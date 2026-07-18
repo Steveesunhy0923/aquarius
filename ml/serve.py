@@ -10,7 +10,12 @@ API:
                    (MathWriting ink has no pressure channel).
                    -> {"latex": str, "confidence": float 0..1}
                    "text" mode -> 501 (will use Apple Vision on-device).
-  GET  /health     -> {"status":"ok","model":"<checkpoint name>"}
+  GET  /health     -> {"status":"ok","model":"<checkpoint name>","collected":N}
+  POST /collect    save a human-labeled ink sample as training data
+  GET  /collect    -> {"count": N}
+  GET  /collect/samples        list collected samples (no strokes), newest first
+  GET  /collect/img/{id}       the rendered PNG of a collected sample
+  DELETE /collect/{id}         remove a collected sample (JSONL line + PNG)
 CORS: all origins allowed.
 """
 
@@ -18,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import threading
 import uuid
@@ -28,6 +34,7 @@ from typing import Literal
 import torch
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 ML_DIR = Path(__file__).resolve().parent
@@ -191,6 +198,78 @@ def collect(req: CollectRequest):
         count = _corrections_count()
 
     return CollectResponse(ok=True, id=sample_id, count=count)
+
+
+# ── Review: list / view / delete collected samples ──────────────────────────
+
+_SAMPLE_ID_RE = re.compile(r"[0-9a-f]{32}")
+
+
+def _read_records() -> list[dict]:
+    """All JSONL records, oldest first; malformed lines are skipped."""
+    if not CORRECTIONS_JSONL.exists():
+        return []
+    records = []
+    with CORRECTIONS_JSONL.open("r", encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return records
+
+
+@app.get("/collect/samples")
+def collect_samples():
+    """Collected samples for the review UI (metadata only, newest first)."""
+    with _collect_lock:
+        records = _read_records()
+    samples = [
+        {
+            "id": r.get("id"),
+            "ts": r.get("ts"),
+            "label": r.get("label", ""),
+            "predicted": r.get("predicted"),
+            "mode": r.get("mode", "math"),
+            "hasImage": bool(r.get("image")),
+            "strokes": len(r.get("strokes", [])),
+        }
+        for r in reversed(records)
+        if r.get("id")
+    ]
+    return {"count": len(samples), "samples": samples}
+
+
+@app.get("/collect/img/{sample_id}")
+def collect_image(sample_id: str):
+    if not _SAMPLE_ID_RE.fullmatch(sample_id):
+        raise HTTPException(status_code=400, detail="bad sample id")
+    path = CORRECTIONS_IMG_DIR / f"{sample_id}.png"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="no image for this sample")
+    return FileResponse(path, media_type="image/png")
+
+
+@app.delete("/collect/{sample_id}")
+def collect_delete(sample_id: str):
+    """Remove one collected sample: its JSONL line and its PNG."""
+    if not _SAMPLE_ID_RE.fullmatch(sample_id):
+        raise HTTPException(status_code=400, detail="bad sample id")
+    with _collect_lock:
+        records = _read_records()
+        kept = [r for r in records if r.get("id") != sample_id]
+        if len(kept) == len(records):
+            raise HTTPException(status_code=404, detail="unknown sample id")
+        tmp = CORRECTIONS_JSONL.with_suffix(".jsonl.tmp")
+        with tmp.open("w", encoding="utf-8") as f:
+            for r in kept:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        tmp.replace(CORRECTIONS_JSONL)  # atomic — a crash never truncates the data
+        (CORRECTIONS_IMG_DIR / f"{sample_id}.png").unlink(missing_ok=True)
+        count = _corrections_count()
+    return {"ok": True, "count": count}
 
 
 if __name__ == "__main__":

@@ -295,6 +295,19 @@ export class SupabaseLibraryStore implements LibraryStore {
     if (error) throw error;
     return (data as NoteRow[]).map(noteFromRow);
   }
+  async listBacklinks(noteId: EntityId): Promise<NoteMeta[]> {
+    // Postgres-side tree scan via the backlink_note_ids function (migration
+    // 0010) — note:// hrefs are stripped from latex_cache, so only the tree
+    // JSON has them. SECURITY INVOKER: RLS keeps this to readable notes.
+    const { data, error } = await this.sb.rpc("backlink_note_ids", { target: noteId });
+    if (error) return []; // function not deployed yet → degrade to "no backlinks"
+    const ids = (data as { note_id: string }[] | null ?? []).map((r) => r.note_id);
+    if (ids.length === 0) return [];
+    const { data: rows, error: e2 } = await this.sb.from("notes").select("*")
+      .is("deleted_at", null).in("id", ids).order("updated_at", { ascending: false });
+    if (e2) throw e2;
+    return (rows as NoteRow[]).map(noteFromRow);
+  }
 
   // ── Note packages (heavy content) ────────────────────────────────────────────
   async openNote(id: EntityId): Promise<NotePackage> {

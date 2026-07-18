@@ -216,6 +216,13 @@ export interface LibraryStore {
   listDeletedNotes(): Promise<NoteMeta[]>;
   /** Most-recently-updated notes across the whole library (excludes deleted). */
   listRecentNotes(limit?: number): Promise<NoteMeta[]>;
+  /**
+   * Backlinks: notes whose content links to `noteId` (a `note://<noteId>` href
+   * in the tree), excluding the note itself and deleted notes, most-recently-
+   * updated first. Scans tree JSON — note:// hrefs are deliberately stripped
+   * from latexCache (see lib/blocks/format.ts), so a body search can't find them.
+   */
+  listBacklinks(noteId: EntityId): Promise<NoteMeta[]>;
 
   // ── Note packages (heavy content) ──
   openNote(id: EntityId): Promise<NotePackage>;

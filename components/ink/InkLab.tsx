@@ -8,9 +8,10 @@
 
 import { Icon } from "@/components/Icon";
 import Link from "next/link";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { InkCanvas, type InkCanvasHandle } from "./InkCanvas";
 import { AutoToggle, ConvertButton, ModeToggle, RecognitionPanel, useRecognition } from "./RecognitionPanel";
+import { ReviewDialog } from "./ReviewPanel";
 import type { Stroke } from "./strokes";
 
 // Borderless icon button, same feel as the editor's top-bar buttons.
@@ -23,6 +24,22 @@ export function InkLab() {
   const [strokeSeq, setStrokeSeq] = useState(0); // bumps only when a stroke ENDS → drives auto-convert
   const rec = useRecognition(strokes, strokeSeq);
   const empty = strokes.length === 0;
+
+  // Collected-samples review: badge count seeded from the server, kept true
+  // by every save (rec.collectedCount) and by deletes inside the dialog.
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [collected, setCollected] = useState<number | null>(null);
+  useEffect(() => {
+    fetch("http://127.0.0.1:8787/collect")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((b: { count?: number } | null) => {
+        if (typeof b?.count === "number") setCollected(b.count);
+      })
+      .catch(() => {}); // server offline — badge just shows no number
+  }, []);
+  useEffect(() => {
+    if (rec.collectedCount !== null) setCollected(rec.collectedCount);
+  }, [rec.collectedCount]);
 
   return (
     <div className="flex h-dvh flex-col bg-background text-foreground">
@@ -37,6 +54,14 @@ export function InkLab() {
         <span className="hidden text-xs text-muted md:inline">handwriting → LaTeX</span>
 
         <div className="ml-auto flex items-center gap-2">
+          <button
+            onClick={() => setReviewOpen(true)}
+            title="Review the collected training samples"
+            className="h-9 rounded-md border border-border px-3 text-sm text-muted transition hover:border-accent hover:text-foreground"
+          >
+            Review{collected !== null ? ` · ${collected}` : ""}
+          </button>
+          <span className="mx-1 h-5 w-px bg-border" aria-hidden />
           <ModeToggle mode={rec.mode} onMode={rec.setMode} />
           <AutoToggle on={rec.auto} onToggle={() => rec.setAuto(!rec.auto)} />
           <ConvertButton busy={rec.busy} disabled={empty} onClick={() => void rec.convert()} />
@@ -81,6 +106,7 @@ export function InkLab() {
         </div>
         <RecognitionPanel rec={rec} />
       </main>
+      {reviewOpen && <ReviewDialog onClose={() => setReviewOpen(false)} onCount={setCollected} />}
     </div>
   );
 }

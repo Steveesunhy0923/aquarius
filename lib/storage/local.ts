@@ -355,6 +355,24 @@ export class LocalLibraryStore implements LibraryStore {
     return db.get("notes", id);
   }
 
+  async listBacklinks(noteId: EntityId): Promise<NoteMeta[]> {
+    const db = await this.db();
+    // note:// hrefs live only in the tree (stripped from latexCache), so scan
+    // the tree JSON — one getAll, same access pattern as searchNotes' tier 2.
+    const needle = `note://${noteId}`;
+    const pkgs = await db.getAll("notePackages");
+    const ids = new Set(
+      pkgs
+        .filter((p) => p.noteId !== noteId && JSON.stringify(p.tree).includes(needle))
+        .map((p) => p.noteId),
+    );
+    if (ids.size === 0) return [];
+    const notes = await db.getAll("notes");
+    return notes
+      .filter((n) => ids.has(n.id) && !n.deletedAt)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
   async searchNotes(
     query: string,
   ): Promise<{ title: NoteMeta[]; content: NoteMeta[] }> {

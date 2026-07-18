@@ -259,9 +259,15 @@ Metrics: CER on MathWriting valid/test; ExpRate on CROHME 2023 for comparison wi
 - **The run**: RunPod RTX 4090 (24 GB, 32 cores, $0.35–0.70/hr), driven entirely over SSH.
   625,910 samples (train + synthetic + corrections ×32), batch 128 bf16, 150,000 steps
   (~30 epochs), validate + checkpoint every 2,000 steps → `xl.pt` / `xl_best.pt`.
-  Measured ~0.15 s/step (data-pipeline-bound at ~850 renders/s; GPU ~50%), **ETA ≈ 6–7 h,
-  cost ≈ $3–5**. Remote monitor reports 20k-step milestones/errors. `serve.py` already
-  prefers `xl.pt` on the Mac once fetched (`ml/cloud/fetch_checkpoint.sh`).
+  Measured ~0.15 s/step (data-pipeline-bound at ~850 renders/s; GPU ~50%).
+- **RUN COMPLETE (2026-07-13)**: 150k steps in **359.8 min (6.0 h)**, train loss 8.22 → 0.08;
+  validation milestones 0.19 @10k → 0.134 @30k → 0.107 @70k → **best 0.0866 @140k** (44%
+  better than the local model's 0.154). **Final benchmark, 100 unseen test expressions:
+  local 32/100 exact (0.872 sim) → XL 51/100 exact (0.924 sim), +59% relative.** A mid-flight
+  preview @78k (23/50 vs 13/50) had already validated the fetch+eval path. Best checkpoint
+  fetched as `ml/checkpoints/xl.pt` (final-step kept as `xl_final150k.pt`); server swapped and
+  verified live (unseen sample recognized at 1.00 confidence). Operator normalization and
+  correction capture apply unchanged.
 
 ### 2026-07-12 — Step 10: text mode (written words → text) live in dev ✅
 - **[ml/src/text_ocr.py](../ml/src/text_ocr.py)**: strokes → OCR-scale raster (256px, ink-cropped,

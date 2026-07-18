@@ -7,6 +7,7 @@ import { NoteLink } from "@/components/NoteLink";
 import { TableView } from "@/components/TableView";
 import { blockToKatex } from "@/lib/blocks";
 import { boxStyle, calloutColorOf } from "@/lib/blocks/callouts";
+import { splitFieldTokens } from "@/lib/blocks/fields";
 import { parseFormat } from "@/lib/blocks/format";
 import { isNoteHref } from "@/lib/blocks/notelink";
 import { headingAlign, headingLevel } from "@/lib/blocks/headings";
@@ -187,16 +188,35 @@ function renderFormatted(text: string): ReactNode {
   return parseFormat(text).map((s, i) => {
     if (s.href && isNoteHref(s.href)) return <NoteLink key={i} href={s.href} text={s.text} />;
     if (s.href) return <ExternalLink key={i} href={s.href} text={s.text} />;
+    const t = withFieldChips(s.text);
     if (s.highlight)
       return (
         <mark key={i} style={{ background: s.highlight, color: "inherit" }}>
-          {s.text}
+          {t}
         </mark>
       );
-    if (s.bold) return <strong key={i}>{s.text}</strong>;
-    if (s.italic) return <em key={i}>{s.text}</em>;
-    if (s.underline) return <u key={i}>{s.text}</u>;
-    if (s.strike) return <s key={i}>{s.text}</s>;
-    return <span key={i}>{s.text}</span>;
+    if (s.bold) return <strong key={i}>{t}</strong>;
+    if (s.italic) return <em key={i}>{t}</em>;
+    if (s.underline) return <u key={i}>{t}</u>;
+    if (s.strike) return <s key={i}>{t}</s>;
+    return <span key={i}>{t}</span>;
   });
+}
+
+/** Unfilled `{{field}}` tokens render as placeholder chips, not literal braces. */
+function withFieldChips(text: string): ReactNode {
+  if (!text.includes("{{")) return text;
+  return splitFieldTokens(text).map((part, i) =>
+    typeof part === "string" ? (
+      part
+    ) : (
+      <span
+        key={i}
+        className="mx-0.5 rounded border border-dashed border-accent/60 bg-accent-soft/40 px-1 py-px text-[0.85em] text-accent"
+        title="Fill-in field — click the text to edit"
+      >
+        {part.field}
+      </span>
+    ),
+  );
 }

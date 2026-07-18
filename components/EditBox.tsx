@@ -1,13 +1,19 @@
 "use client";
 
 import { BlockView } from "@/components/BlockView";
+import { ChemField } from "@/components/ChemField";
 import { Icon } from "@/components/Icon";
 import { Katex } from "@/components/Katex";
 import { MathField } from "@/components/MathField";
 import { ModuleSlashMenu } from "@/components/ModuleSlashMenu";
+import { NoteLinkMenu } from "@/components/NoteLinkMenu";
 import { CALLOUT_COLORS, isHexColor } from "@/lib/blocks/callouts";
+import { ceInner, wrapCe } from "@/lib/blocks/chem";
+import { makeNoteHref } from "@/lib/blocks/notelink";
 import { inlineMathSpans, replaceInlineMathSpan } from "@/lib/blocks/source";
 import { deleteSavedModule, searchModules, type Module } from "@/lib/templates/modules";
+import { getStore } from "@/lib/storage";
+import type { NoteMeta } from "@/lib/storage/types";
 import type { Block } from "@/lib/blocks/types";
 import {
   forwardRef,
@@ -27,6 +33,8 @@ import {
 export interface EditBoxHandle {
   /** Open the inline-math box editor, optionally seeded with a structure. */
   openMath: (seed: string) => void;
+  /** Open the inline-chemistry editor, optionally seeded with mhchem source. */
+  openChem: (seed: string) => void;
 }
 export const EditBox = forwardRef<EditBoxHandle, {
   taRef: RefObject<HTMLTextAreaElement | null>;
@@ -45,8 +53,9 @@ export const EditBox = forwardRef<EditBoxHandle, {
    *  Like onInsertModule, `cleanedDraft` is the draft minus the `/query` — the
    *  parent commits it (or drops the paragraph) and ends the edit itself. */
   onEditModule?: (m: Module, cleanedDraft: string) => void;
-  /** Typing `[[` opens the note-link picker; [from,to) is the `[[` range the
-   *  parent replaces with the picked link. */
+  /** The inline `[[query` menu's "browse" escape hatch: open the full note-link
+   *  picker; [from,to) is the `[[query` range the parent replaces with the
+   *  picked link. (Typing `[[` itself opens the inline menu, not the picker.) */
   onNoteLink?: (from: number, to: number) => void;
   sticky: MutableRefObject<boolean>;
 }>(function EditBox(
@@ -62,9 +71,13 @@ export const EditBox = forwardRef<EditBoxHandle, {
   // \(…\) span) so the existing commit→paragraphFromSource round-trip is the one
   // source of truth. `initial` seeds the box (a structure picked from the
   // toolbar, or the existing formula being edited); `caret` is where a new
-  // formula will be spliced.
+  // formula will be spliced. `chem` swaps the MathLive box for the chemistry
+  // editor (initial is then mhchem source; the commit re-wraps it in \ce{...},
+  // so the span itself stays ordinary inline math).
   const [mathPopover, setMathPopover] = useState<
-    { mode: "insert"; caret: number; initial: string } | { mode: "edit"; index: number; initial: string } | null
+    | { mode: "insert"; caret: number; initial: string; chem?: boolean }
+    | { mode: "edit"; index: number; initial: string; chem?: boolean }
+    | null
   >(null);
   const spans = para ? inlineMathSpans(draft) : [];
 
@@ -91,8 +104,9 @@ export const EditBox = forwardRef<EditBoxHandle, {
       }
       return;
     }
-    // Opens only for a "/" just typed at the start of a word (never mid-URL).
-    if (caret > 0 && text[caret - 1] === "/" && (caret === 1 || /\s/.test(text[caret - 2]))) {
+    // Opens only for a "/" just typed at the start of a word (never mid-URL),
+    // and never while the note-link menu owns the keyboard.
+    if (!link && caret > 0 && text[caret - 1] === "/" && (caret === 1 || /\s/.test(text[caret - 2]))) {
       setSlash({ start: caret - 1, query: "" });
       setSlashActive(0);
     }
@@ -120,6 +134,95 @@ export const EditBox = forwardRef<EditBoxHandle, {
       setSlash({ start: slash.start, query: q });
       setSlashActive(0);
     }
+  }
+
+  // Note-link autocomplete: typing "[[" opens an inline note search below the
+  // box; the query is the text between the "[[" and the caret. Same machine
+  // shape as the slash menu; `linkActive` ranges over results + the final
+  // "browse" row (which falls back to the full NoteLinkPicker).
+  const [link, setLink] = useState<{ start: number; query: string } | null>(null);
+  const [linkActive, setLinkActive] = useState(0);
+  const [linkNotes, setLinkNotes] = useState<NoteMeta[]>([]);
+  const linkQuery = link ? link.query : null;
+
+  // Async results: recents for an empty query, debounced search otherwise.
+  useEffect(() => {
+    if (linkQuery === null) return;
+    let alive = true;
+    const q = linkQuery.trim();
+    const t = setTimeout(() => {
+      const fetching = q
+        ? getStore().searchNotes(q).then((r) => {
+            const seen = new Set<string>();
+            return [...r.title, ...r.content].filter((n) => !seen.has(n.id) && seen.add(n.id));
+          })
+        : getStore().listRecentNotes(6);
+      fetching
+        .then((list) => { if (alive) setLinkNotes(list.slice(0, 6)); })
+        .catch(() => { if (alive) setLinkNotes([]); });
+    }, q ? 150 : 0);
+    return () => { alive = false; clearTimeout(t); };
+  }, [linkQuery]);
+
+  /** Track the link state across a text change (refine or dismiss; opening
+   *  happens in onChange where "a single typed `[`" can be verified). */
+  function trackLink(text: string, caret: number) {
+    if (!link) return;
+    const q = text.slice(link.start + 2, caret);
+    if (caret < link.start + 2 || text.slice(link.start, link.start + 2) !== "[[" || q.includes("\n") || q.includes("]")) {
+      setLink(null);
+    } else if (q !== link.query) {
+      setLink({ start: link.start, query: q });
+      setLinkActive(0);
+    }
+  }
+
+  // Dismiss after a programmatic draft mutation desyncs the recorded range
+  // (same guard as the slash menu).
+  useEffect(() => {
+    if (!link) return;
+    if (draft.slice(link.start, link.start + 2) !== "[[" || draft.slice(link.start + 2, link.start + 2 + link.query.length) !== link.query) {
+      setLink(null);
+    }
+  }, [draft, link]);
+
+  /** Caret-only moves: re-derive the query or dismiss when leaving the run. */
+  function trackLinkSelect(ta: HTMLTextAreaElement) {
+    if (!link) return;
+    const caret = ta.selectionStart ?? 0;
+    if (ta.selectionEnd !== caret || caret < link.start + 2 || ta.value.slice(link.start, link.start + 2) !== "[[") { setLink(null); return; }
+    const q = ta.value.slice(link.start + 2, caret);
+    if (q.includes("\n") || q.includes("]")) { setLink(null); return; }
+    if (q !== link.query) {
+      setLink({ start: link.start, query: q });
+      setLinkActive(0);
+    }
+  }
+
+  /** Splice `[title](note://id)` over the verified `[[query` range. */
+  function pickNote(n: NoteMeta) {
+    if (!link) return;
+    const cur = taRef.current?.value ?? draft;
+    const end = link.start + 2 + link.query.length;
+    if (cur.slice(link.start, link.start + 2) !== "[[" || cur.slice(link.start + 2, end) !== link.query) { setLink(null); return; }
+    // Square brackets and inline-math delimiters would break the [text](url) marker.
+    const label = (n.title || "Untitled").replace(/\\[()]/g, "").replace(/[[\]]/g, "").trim() || "note";
+    const marker = `[${label}](${makeNoteHref(n.id)})`;
+    const pos = link.start + marker.length;
+    setLink(null);
+    onChange(cur.slice(0, link.start) + marker + cur.slice(end), pos);
+    requestAnimationFrame(() => {
+      const ta = taRef.current;
+      if (ta) { ta.focus(); try { ta.setSelectionRange(pos, pos); } catch { /* noop */ } }
+    });
+  }
+
+  /** The menu's last row: hand the `[[query` range to the full picker. */
+  function browseNotes() {
+    if (!link) return;
+    const { start, query } = link;
+    setLink(null);
+    onNoteLink?.(start, start + 2 + query.length);
   }
 
   /** Hand the module + the draft-without-`/query` to the page (one tree update). */
@@ -158,25 +261,35 @@ export const EditBox = forwardRef<EditBoxHandle, {
     const ta = taRef.current;
     const caret = ta?.selectionStart ?? ta?.value.length ?? 0;
     setSlash(null); // the popover owns the keyboard now
+    setLink(null);
     setMathPopover({ mode: "insert", caret, initial: seed });
   }, [taRef]);
-  useImperativeHandle(ref, () => ({ openMath }), [openMath]);
+  const openChem = useCallback((seed: string) => {
+    const ta = taRef.current;
+    const caret = ta?.selectionStart ?? ta?.value.length ?? 0;
+    setSlash(null);
+    setLink(null);
+    setMathPopover({ mode: "insert", caret, initial: seed, chem: true });
+  }, [taRef]);
+  useImperativeHandle(ref, () => ({ openMath, openChem }), [openMath, openChem]);
 
   function commitMath(latex: string) {
+    // Read the popover state directly (NOT via a setState updater): calling the
+    // parent's onChange inside an updater runs it during render and trips
+    // React's setState-in-render warning.
+    const pop = mathPopover;
+    if (!pop) return;
+    setMathPopover(null);
     const cur = taRef.current?.value ?? draft; // live source (popover doesn't touch the textarea)
-    setMathPopover((pop) => {
-      if (!pop) return null;
-      if (pop.mode === "insert") {
-        if (latex.trim()) {
-          const c = Math.min(pop.caret, cur.length);
-          const ins = `\\(${latex}\\)`;
-          onChange(cur.slice(0, c) + ins + cur.slice(c), c + ins.length);
-        }
-      } else {
-        onChange(replaceInlineMathSpan(cur, pop.index, latex), cur.length);
+    if (pop.mode === "insert") {
+      if (latex.trim()) {
+        const c = Math.min(pop.caret, cur.length);
+        const ins = `\\(${latex}\\)`;
+        onChange(cur.slice(0, c) + ins + cur.slice(c), c + ins.length);
       }
-      return null;
-    });
+    } else {
+      onChange(replaceInlineMathSpan(cur, pop.index, latex), cur.length);
+    }
   }
 
   function onFocusOut(e: FocusEvent<HTMLDivElement>) {
@@ -191,6 +304,21 @@ export const EditBox = forwardRef<EditBoxHandle, {
   // holds focus (a literal tab is meaningless whitespace in LaTeX). Reads the
   // live textarea value, mirroring spliceAtCaret.
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    // Note-link menu open: it owns the navigation keys the same way the slash
+    // menu does below. `linkActive` includes the trailing "browse" row.
+    if (link && !mathPopover && !e.nativeEvent.isComposing) {
+      const last = linkNotes.length; // index of the browse row
+      if (e.key === "Escape") { e.preventDefault(); setLink(null); return; }
+      if (e.key === "ArrowDown") { e.preventDefault(); setLinkActive((a) => Math.min(a + 1, last)); return; }
+      if (e.key === "ArrowUp") { e.preventDefault(); setLinkActive((a) => Math.max(a - 1, 0)); return; }
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const idx = Math.min(linkActive, last);
+        if (idx < linkNotes.length) pickNote(linkNotes[idx]);
+        else browseNotes();
+        return;
+      }
+    }
     // Slash menu open: it owns the navigation keys (Escape closes the MENU, not
     // the block editor — the branch below must run before the exit handling).
     // Skipped while the math popover is up (it owns the keyboard) and during an
@@ -272,12 +400,18 @@ export const EditBox = forwardRef<EditBoxHandle, {
       {para && (
         <div className="mb-2 flex flex-wrap items-center gap-1.5">
           <button onClick={() => openMath("")} title="Insert an inline formula (fill in the boxes)" className="flex items-center gap-1 rounded border border-border px-2 py-0.5 text-xs hover:border-accent"><Icon name="inlineformula" size={14} /> Insert math</button>
+          <button onClick={() => openChem("")} title="Insert inline chemistry (type it naturally, e.g. 2H2 + O2 -> 2H2O)" className="flex items-center gap-1 rounded border border-border px-2 py-0.5 text-xs hover:border-accent"><Icon name="flask" size={14} /> Insert chemistry</button>
           {spans.length > 0 && <span className="ml-1 text-xs text-muted">Formulas (click to edit):</span>}
-          {spans.map((s, i) => (
-            <button key={i} onClick={() => { setSlash(null); setMathPopover({ mode: "edit", index: i, initial: s.latex }); }} title="Edit this formula" className="rounded border border-border px-1.5 py-0.5 hover:border-accent">
-              <Katex latex={s.latex.trim() || "\\square"} />
-            </button>
-          ))}
+          {spans.map((s, i) => {
+            // A pure-\ce span reopens in the chemistry editor (as its source);
+            // anything else reopens in the MathLive box. Same stored form either way.
+            const chemSrc = ceInner(s.latex);
+            return (
+              <button key={i} onClick={() => { setSlash(null); setMathPopover(chemSrc != null ? { mode: "edit", index: i, initial: chemSrc, chem: true } : { mode: "edit", index: i, initial: s.latex }); }} title={chemSrc != null ? "Edit this chemistry formula" : "Edit this formula"} className="rounded border border-border px-1.5 py-0.5 hover:border-accent">
+                <Katex latex={s.latex.trim() || "\\square"} />
+              </button>
+            );
+          })}
         </div>
       )}
       <textarea
@@ -289,20 +423,25 @@ export const EditBox = forwardRef<EditBoxHandle, {
           const text = e.target.value;
           const caret = e.target.selectionStart ?? 0;
           if (para && onInsertModule) trackSlash(text, caret);
-          // "[[" completed by a SINGLE typed "[" (never deletions/cuts/pastes
-          // that happen to end at "[[", never mid-IME) → note-link picker.
-          if (
-            para && onNoteLink &&
-            text.length === draft.length + 1 &&
-            !(e.nativeEvent as InputEvent).isComposing &&
-            caret >= 2 && text[caret - 1] === "[" && text[caret - 2] === "[" &&
-            (caret < 3 || text[caret - 3] !== "[")
-          ) {
-            onNoteLink(caret - 2, caret);
+          if (para && onNoteLink) {
+            trackLink(text, caret);
+            // "[[" completed by a SINGLE typed "[" (never deletions/cuts/pastes
+            // that happen to end at "[[", never mid-IME) → inline note menu.
+            if (
+              !link &&
+              text.length === draft.length + 1 &&
+              !(e.nativeEvent as InputEvent).isComposing &&
+              caret >= 2 && text[caret - 1] === "[" && text[caret - 2] === "[" &&
+              (caret < 3 || text[caret - 3] !== "[")
+            ) {
+              setSlash(null); // "[[" typed into a /query hands the keyboard over
+              setLink({ start: caret - 2, query: "" });
+              setLinkActive(0);
+            }
           }
           onChange(text, caret);
         }}
-        onSelect={(e) => trackSlashSelect(e.currentTarget)}
+        onSelect={(e) => { trackSlashSelect(e.currentTarget); trackLinkSelect(e.currentTarget); }}
         rows={para ? Math.max(2, draft.split("\n").length) : 2}
         placeholder={para ? "Type text… **bold**, *italic*, ƒ for a formula, / for a module, [[ to link a note" : "LaTeX, e.g. \\frac{a}{b}"}
         className="w-full resize-none bg-transparent font-mono text-sm outline-none"
@@ -312,14 +451,29 @@ export const EditBox = forwardRef<EditBoxHandle, {
       <div className="pointer-events-none mt-2 border-t border-border pt-2">
         {draft.trim() ? <BlockView block={previewBlock} /> : <span className="text-xs text-muted">preview</span>}
       </div>
-      {mathPopover && (
-        <InlineMathPopover
-          initial={mathPopover.initial}
-          onCommit={commitMath}
-          onCancel={() => setMathPopover(null)}
-        />
-      )}
-      {slash && !mathPopover && (
+      {mathPopover && (() => {
+        // Key by target: retargeting the popover (clicking another chip while
+        // it is open) must REMOUNT it, or the editor's `latest` ref would keep
+        // the previous target's content and Done would write it into the newly
+        // selected span.
+        const key = `${mathPopover.chem ? "c" : "m"}:${mathPopover.mode === "edit" ? `e${mathPopover.index}` : `i${mathPopover.caret}`}`;
+        return mathPopover.chem ? (
+          <InlineChemPopover
+            key={key}
+            initial={mathPopover.initial}
+            onCommit={commitMath}
+            onCancel={() => setMathPopover(null)}
+          />
+        ) : (
+          <InlineMathPopover
+            key={key}
+            initial={mathPopover.initial}
+            onCommit={commitMath}
+            onCancel={() => setMathPopover(null)}
+          />
+        );
+      })()}
+      {slash && !mathPopover && !link && (
         <ModuleSlashMenu
           query={slash.query}
           modules={slashMatches}
@@ -330,9 +484,41 @@ export const EditBox = forwardRef<EditBoxHandle, {
           onDelete={removeSavedModule}
         />
       )}
+      {link && !mathPopover && (
+        <NoteLinkMenu
+          query={link.query}
+          notes={linkNotes}
+          active={Math.min(linkActive, linkNotes.length)}
+          onHover={setLinkActive}
+          onPick={pickNote}
+          onBrowse={browseNotes}
+        />
+      )}
     </div>
   );
 });
+
+// ─── Inline-chemistry popover — the chemistry twin of InlineMathPopover. ──────
+// `initial` is mhchem source; Done commits the \ce-wrapped LaTeX through the
+// same commitMath path, so the span in the paragraph stays ordinary inline math.
+function InlineChemPopover({ initial, onCommit, onCancel }: {
+  initial: string;
+  onCommit: (latex: string) => void;
+  onCancel: () => void;
+}) {
+  const latest = useRef(initial);
+  const done = () => onCommit(wrapCe(latest.current));
+  return (
+    <div className="absolute left-2 right-2 top-full z-30 mt-1 rounded-md border border-accent bg-surface p-2 shadow-lg">
+      <div className="mb-1 text-xs text-muted">Write the chemistry — formulas, arrows and charges are typed naturally; the ⚗ toolbar inserts here too.</div>
+      <ChemField value={initial} autoFocus onChange={(s) => { latest.current = s; }} onExit={onCancel} onEnter={done} className="block" />
+      <div className="mt-2 flex justify-end gap-2">
+        <button onMouseDown={(e) => e.preventDefault()} onClick={onCancel} className="rounded border border-border px-2.5 py-1 text-xs text-muted hover:border-accent">Cancel</button>
+        <button onMouseDown={(e) => e.preventDefault()} onClick={done} className="rounded bg-accent px-3 py-1 text-xs font-medium text-white">Done</button>
+      </div>
+    </div>
+  );
+}
 
 // ─── Inline-math popover (Desmos-style editor for a formula inside prose) ─────
 function InlineMathPopover({ initial, onCommit, onCancel }: {

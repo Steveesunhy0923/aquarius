@@ -25,6 +25,8 @@ export function SymbolPicker({
   onPick,
   onClose,
   title = "Symbol library",
+  symbols = SYMBOLS,
+  searchPlaceholder = "Search… (e.g. alpha, leq, arrow, integral)",
   closeOnPick = true,
   keepFocus,
   onNavMouseDown,
@@ -33,6 +35,10 @@ export function SymbolPicker({
   onPick: (latex: string) => void;
   onClose: () => void;
   title?: string;
+  /** The catalog to browse — defaults to the math library; the chemistry
+   *  palette passes CHEM_SYMBOLS (parallel system, identical picker). */
+  symbols?: SymbolEntry[];
+  searchPlaceholder?: string;
   closeOnPick?: boolean;
   keepFocus?: (e: ReactMouseEvent) => void;
   onNavMouseDown?: () => void;
@@ -58,9 +64,9 @@ export function SymbolPicker({
 
   const categories = useMemo(() => {
     const seen: string[] = [];
-    for (const s of SYMBOLS) if (!seen.includes(s.category)) seen.push(s.category);
+    for (const s of symbols) if (!seen.includes(s.category)) seen.push(s.category);
     return seen;
-  }, []);
+  }, [symbols]);
 
   // Group the (filtered) library by category, preserving the catalog's order.
   const groups = useMemo(() => {
@@ -73,7 +79,7 @@ export function SymbolPicker({
       s.aliases?.some((a) => a.toLowerCase().includes(term));
 
     const byCat = new Map<string, SymbolEntry[]>();
-    for (const s of SYMBOLS) {
+    for (const s of symbols) {
       if (cat !== "All" && s.category !== cat) continue;
       if (!match(s)) continue;
       const list = byCat.get(s.category) ?? [];
@@ -83,7 +89,7 @@ export function SymbolPicker({
     for (const list of byCat.values())
       list.sort((a, b) => a.name.localeCompare(b.name));
     return [...byCat.entries()].map(([category, items]) => ({ category, items }));
-  }, [q, cat]);
+  }, [q, cat, symbols]);
 
   const total = groups.reduce((n, g) => n + g.items.length, 0);
 
@@ -107,7 +113,7 @@ export function SymbolPicker({
               value={q}
               onChange={(e) => setQ(e.target.value)}
               onMouseDown={onNavMouseDown}
-              placeholder="Search… (e.g. alpha, leq, arrow, integral)"
+              placeholder={searchPlaceholder}
               className="w-full rounded-lg border border-border bg-background py-2 pl-9 pr-8 text-sm outline-none focus:border-accent"
             />
             {q && (
@@ -163,7 +169,10 @@ export function SymbolPicker({
                     title={`${s.name}  ·  ${s.latex}`}
                     className="flex flex-col items-center gap-1 rounded-md border border-transparent p-2 hover:border-accent hover:bg-foreground/5"
                   >
-                    <span className="text-lg">
+                    {/* overflow-hidden: a wide preview (a long \ce reaction, a
+                        structural fragment) clips inside its cell instead of
+                        overlapping its neighbors. */}
+                    <span className="max-w-full overflow-hidden text-lg">
                       <Katex latex={previewLatex(s.latex)} />
                     </span>
                     <span className="w-full truncate text-center text-[11px] text-muted">

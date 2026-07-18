@@ -547,7 +547,40 @@ export function documentToLatex(tree: DocumentTree): string {
     if (!block || typeof block !== "object") continue;
     parts.push(renderTopLevel(block));
   }
-  return parts.join("\n\n");
+  const body = parts.join("\n\n");
+  // Chemistry (\ce/\pu) needs mhchem; flagged once for the whole document since
+  // the commands can appear in any math fragment (unlike the per-figure/table
+  // "% requires" comments, which annotate one specific environment).
+  if (tree.blocks.some((b) => b && typeof b === "object" && usesMhchem(b))) {
+    return `% requires \\usepackage[version=4]{mhchem}\n\n${body}`;
+  }
+  return body;
+}
+
+const MHCHEM_RE = /\\(?:ce|pu)\{/;
+
+/** True when a top-level block's COMPILED LaTeX uses \ce/\pu. Verbatim and
+ *  escaped surfaces (code listings, image-alt comments, table cells, list
+ *  items) can contain the literal characters without needing the package, so
+ *  only real math fragments — and tikz, which compiles as LaTeX — count. */
+function usesMhchem(block: Block): boolean {
+  switch (block.type) {
+    case "code":
+    case "image":
+    case "table":
+    case "graph":
+    case "heading":
+    case "list":
+      return false;
+    case "text": {
+      const runs = block.attrs?.runs as InlineRun[] | undefined;
+      return Boolean(runs?.some((r) => r.kind === "math" && MHCHEM_RE.test(renderMath(r.block))));
+    }
+    case "tikz":
+      return MHCHEM_RE.test(blockToLatex(block));
+    default:
+      return MHCHEM_RE.test(renderMath(block)); // math-typed blocks
+  }
 }
 
 /** Render a top-level block in document context. */

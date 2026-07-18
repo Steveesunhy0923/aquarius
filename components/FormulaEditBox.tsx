@@ -1,5 +1,6 @@
 "use client";
 
+import { ChemField } from "@/components/ChemField";
 import { MathEdit } from "@/components/MathEdit";
 import { MathField } from "@/components/MathField";
 import type { Block } from "@/lib/blocks/types";
@@ -26,6 +27,30 @@ export function FormulaEditBox({
   return (
     <div ref={boxRef} onBlur={onFocusOut} className="rounded-md border border-accent/40 bg-surface p-2">
       <MathField value={draft} onChange={(latex) => onChange(latex, 0)} onExit={onExit} autoFocus className="block text-lg" />
+    </div>
+  );
+}
+
+// ─── Chemistry edit box — mhchem source + live preview in the same chrome. ────
+// The chemistry mirror of FormulaEditBox: `draft` is the mhchem source (the
+// inside of \ce{...}); the page wraps it back into \ce on commit.
+export function ChemFormulaBox({
+  draft, onChange, onExit, sticky,
+}: {
+  draft: string;
+  onChange: (src: string, caret: number) => void;
+  onExit: () => void;
+  sticky: MutableRefObject<boolean>;
+}) {
+  const boxRef = useRef<HTMLDivElement>(null);
+  function onFocusOut(e: FocusEvent<HTMLDivElement>) {
+    if (boxRef.current && e.relatedTarget && boxRef.current.contains(e.relatedTarget as Node)) return;
+    if (sticky.current) { sticky.current = false; return; }
+    onExit();
+  }
+  return (
+    <div ref={boxRef} onBlur={onFocusOut} className="rounded-md border border-accent/40 bg-surface p-2">
+      <ChemField value={draft} onChange={(src) => onChange(src, 0)} onExit={onExit} autoFocus display />
     </div>
   );
 }

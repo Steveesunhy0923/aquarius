@@ -5,7 +5,7 @@ import { Katex } from "@/components/Katex";
 import { SymbolPicker } from "@/components/SymbolPicker";
 import { ICON_BTN } from "@/components/ToolbarControls";
 import { previewLatex } from "@/lib/blocks/source";
-import { useEffect, useState, type MouseEvent } from "react";
+import { useEffect, useState, type MouseEvent, type ReactNode } from "react";
 
 const SYM_KEY = "aquarius.symbols";
 // Fixed default structures (no longer user-editable).
@@ -44,13 +44,15 @@ function readLS(key: string, fallback: string[]): string[] {
 
 /** Functions-and-symbols strip: fixed structure inserts plus eight editable,
  *  localStorage-backed symbol slots and the "browse all" entry point. */
-export function SymbolToolbar({ onInsert, onBrowse, keepFocus, markSticky }: {
+export function SymbolToolbar({ onInsert, onBrowse, keepFocus, markSticky, leading }: {
   onInsert: (latex: string) => void;
   onBrowse: () => void;
   /** Mousedown handler that preserves the editor's focus (sticky semantics). */
   keepFocus: (e: MouseEvent) => void;
   /** Arm the one-shot sticky flag while a block is being edited. */
   markSticky: () => void;
+  /** Rendered first in the strip (the math ⇄ chemistry mode switch). */
+  leading?: ReactNode;
 }) {
   // Eight editable symbol slots (always exactly SYMBOL_COUNT), changed via "Edit".
   const [symbols, setSymbols] = useState<string[]>(() =>
@@ -77,6 +79,7 @@ export function SymbolToolbar({ onInsert, onBrowse, keepFocus, markSticky }: {
   return (
     <>
       <div className="print-hide flex flex-wrap items-center justify-center gap-1.5 border-b border-border px-6 py-2">
+        {leading}
         {/* Structures — fixed defaults (not user-editable) */}
         {DEFAULT_TB1.map((latex, i) => {
           const sIcon = STRUCT_ICON[latex];

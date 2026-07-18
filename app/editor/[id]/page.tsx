@@ -2,13 +2,15 @@
 
 import { BlockView } from "@/components/BlockView";
 import { DocStyleBar } from "@/components/DocStyleBar";
+import { ChemToolbar } from "@/components/ChemToolbar";
+import { activeChemField } from "@/components/ChemField";
 import { EditBox, type EditBoxHandle } from "@/components/EditBox";
 import { EditorSidebar } from "@/components/EditorSidebar";
 import { uiPrompt } from "@/components/ui/dialogs";
 import { ExportMenu } from "@/components/ExportMenu";
 import { FigureBox } from "@/components/FigureBox";
 import { FigureControls } from "@/components/FigureControls";
-import { FormulaEditBox, StructuralFormulaBox } from "@/components/FormulaEditBox";
+import { ChemFormulaBox, FormulaEditBox, StructuralFormulaBox } from "@/components/FormulaEditBox";
 import { GraphEditor } from "@/components/GraphEditor";
 import { ImageRowEditor } from "@/components/ImageRowEditor";
 import { InkInsertPanel } from "@/components/ink/InkInsertPanel";
@@ -37,12 +39,15 @@ import { getMyAccess, listCollaborators, markSharedNoteOpened, type Access } fro
 import { useCollab, type PeerInfo } from "@/lib/collab";
 import { getSettings, setSettings } from "@/lib/settings/settings";
 import { freshTree, saveTemplate, type BuiltInBackground, type SavedTemplate } from "@/lib/templates/templates";
-import { freshBlocks, listSavedModules, recordModuleUse, saveModule, updateModule, type Module } from "@/lib/templates/modules";
+import { fillFields, freshBlocks, listSavedModules, moduleFields, recordModuleUse, saveModule, updateModule, type Module } from "@/lib/templates/modules";
 import { ModuleEditorDialog } from "@/components/ModuleEditorDialog";
+import { ModuleFieldsDialog } from "@/components/ModuleFieldsDialog";
 import { NoteLinkPicker, type NoteLinkPick } from "@/components/NoteLinkPicker";
 import { makeNoteHref, NOTE_LINK_EVENT, type NoteLinkTarget } from "@/lib/blocks/notelink";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { documentToLatex } from "@/lib/blocks";
+import { ceInner, wrapCe } from "@/lib/blocks/chem";
+import { CHEM_SYMBOLS } from "@/lib/chemsymbols";
 import { emptyDocument } from "@/lib/blocks/types";
 import { calloutColorOf, withCalloutColor } from "@/lib/blocks/callouts";
 import { isEmptyBlock, isEmptyDoc } from "@/lib/blocks/empty";
@@ -134,6 +139,10 @@ type Selected = { id: string; index: number; kind: "image" | "table" } | null;
 const IMAGE_ROW: RowItems<ImageItem> = { items: imageItems, withItems: withImages };
 const TABLE_ROW: RowItems<TableData> = { items: tableItems, withItems: withTables };
 
+// Which strip the symbol bar shows (math or chemistry) — persisted like the
+// toolbar's editable slots: a global preference, last write wins across panes.
+const BAR_MODE_KEY = "aquarius.symbolbar";
+
 function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, onSaved, handleRef }: DocProps) {
   const { loading: authLoading, user } = useAuth();
   const [pkg, setPkg] = useState<NotePackage | null>(null);
@@ -144,11 +153,24 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingPara, setEditingPara] = useState(false);
+  // The edited formula is chemistry: `draft` is then the mhchem source (the
+  // inside of \ce{...}) edited in ChemFormulaBox, wrapped back on commit.
+  const [editingChem, setEditingChem] = useState(false);
   const [draft, setDraft] = useState("");
   const [color, setColor] = useState<string | null>(null);
   const [selected, setSelected] = useState<Selected>(null);
 
   const [symbolsOpen, setSymbolsOpen] = useState(false); // the "browse all symbols" picker
+  const [chemOpen, setChemOpen] = useState(false); // the "browse all chemistry" picker
+  // Which strip the symbol bar shows — math (default) or its chemistry mirror.
+  // A lightweight global preference like the toolbar slots (localStorage-backed).
+  const [barMode, setBarModeState] = useState<"math" | "chem">(() =>
+    typeof window !== "undefined" && localStorage.getItem(BAR_MODE_KEY) === "chem" ? "chem" : "math",
+  );
+  function setBarMode(m: "math" | "chem") {
+    setBarModeState(m);
+    if (typeof window !== "undefined") try { localStorage.setItem(BAR_MODE_KEY, m); } catch { /* noop */ }
+  }
   const [tablePicker, setTablePicker] = useState(false);
   const [inkOpen, setInkOpen] = useState(false); // handwriting → LaTeX bottom sheet
   const [templatesOpen, setTemplatesOpen] = useState(false);
@@ -158,6 +180,9 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   // what that range contained at open time (so a stale range never splices
   // blind), and an optional user-selected label (toolbar path).
   const [linkPicker, setLinkPicker] = useState<{ from: number; to: number; expect: string; label?: string } | null>(null);
+  // "Fill in the fields" prompt for a module/template with {{field}} tokens:
+  // holds the pending insertion, run via `proceed` once values are gathered.
+  const [fieldsPrompt, setFieldsPrompt] = useState<{ name: string; fields: string[]; proceed: (values: Record<string, string>) => void } | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
   // Current user's access to this note: "owner" (incl. local/guest), an editor
   // role, or a read-only role. Drives the Share dialog and read-only mode.
@@ -454,20 +479,26 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
    *  keeps the current page style; "replace" swaps in the whole template. */
   function applyTemplate(t: DocumentTree, action: "add" | "replace") {
     if (readOnlyRef.current) return;
-    snapshot(false);
-    setEditingId(null);
-    setSelected(null);
-    const fresh = freshTree(t);
-    setPkg((prev) => {
-      if (!prev) return prev;
-      const tree = action === "add"
-        ? { ...prev.tree, blocks: [...prev.tree.blocks, ...fresh.blocks] }
-        : fresh;
-      return { ...prev, tree };
-    });
-    setSaved(false);
     setTemplatesOpen(false);
     setConfirmTemplate(null);
+    const proceed = (values: Record<string, string>) => {
+      snapshot(false);
+      setEditingId(null);
+      setSelected(null);
+      const fresh = freshTree(t);
+      fresh.blocks = fillFields(fresh.blocks, values);
+      setPkg((prev) => {
+        if (!prev) return prev;
+        const tree = action === "add"
+          ? { ...prev.tree, blocks: [...prev.tree.blocks, ...fresh.blocks] }
+          : fresh;
+        return { ...prev, tree };
+      });
+      setSaved(false);
+    };
+    const fields = moduleFields(t.blocks);
+    if (fields.length === 0) proceed({});
+    else setFieldsPrompt({ name: "This template", fields, proceed });
   }
   /** Entry point from the design picker: apply directly, or ask when the note
    *  already has content (unless Settings has a saved preference). */
@@ -649,16 +680,24 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
 
   function commit(text: string, c: string | null) {
     if (!editingId) return;
-    const next = editingPara ? withCalloutColor(paragraphFromSource(text, editingId), c) : displayFromSource(text, editingId);
+    const next = editingPara
+      ? withCalloutColor(paragraphFromSource(text, editingId), c)
+      : displayFromSource(editingChem ? wrapCe(text) : text, editingId);
     setBlocks((bs) => bs.map((b) => (b.id === editingId ? next : b)), true); // coalesce keystrokes
   }
-  function startEdit(block: Block) {
+  function startEdit(block: Block, forceChem = false) {
     if (readOnlyRef.current) return;
     sticky.current = false; // never let a leftover one-shot absorb this session's first blur
     setSelected(null);
     setEditingId(block.id);
     setEditingPara(isParagraph(block));
-    setDraft(blockEditSource(block));
+    const source = blockEditSource(block);
+    // A formula that is exactly one \ce{...} opens in the chemistry editor with
+    // its mhchem source as the draft; anything else keeps the math editors.
+    const chemSrc = !isParagraph(block) && block.type === "math" ? ceInner(source) : null;
+    const chem = forceChem || chemSrc != null;
+    setEditingChem(chem);
+    setDraft(chem ? chemSrc ?? "" : source);
     setColor(calloutColorOf(block));
   }
   function startEditHeading(block: Block) {
@@ -672,7 +711,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     setSelected({ id: blockId, index, kind });
   }
 
-  function addBlock(block: Block, edit = true) {
+  function addBlock(block: Block, edit = true, chem = false) {
     setBlocks((bs) => {
       const anchor = editingId ?? selected?.id ?? null;
       const at = anchor ? bs.findIndex((b) => b.id === anchor) + 1 : bs.length;
@@ -680,7 +719,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
       next.splice(at <= 0 ? bs.length : at, 0, block);
       return next;
     });
-    if (edit) startEdit(block);
+    if (edit) startEdit(block, chem);
     else setEditingId(null);
   }
   /** Slash-insert: rebuild the edited paragraph without its `/query` and splice
@@ -689,24 +728,33 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   function insertModule(m: Module, cleanedDraft: string) {
     if (readOnlyRef.current) return;
     const anchor = editingId;
-    const fresh = freshBlocks(m.blocks);
-    if (fresh.length === 0) return;
-    setBlocks((bs) => {
-      const i = anchor ? bs.findIndex((b) => b.id === anchor) : -1;
-      if (i < 0 || !anchor) return [...bs, ...fresh];
-      const cleaned = withCalloutColor(paragraphFromSource(cleanedDraft, anchor), color);
-      const next = [...bs];
-      if (isEmptyBlock(cleaned)) next.splice(i, 1, ...fresh);
-      else {
-        next[i] = cleaned;
-        next.splice(i + 1, 0, ...fresh);
-      }
-      return next;
-    });
-    recordModuleUse(m.id);
-    setEditingId(null);
-    setSelected(null);
-    setTimeout(() => scrollToBlock(fresh[0].id), 60);
+    const hostColor = color;
+    const proceed = (values: Record<string, string>) => {
+      const fresh = fillFields(freshBlocks(m.blocks), values);
+      if (fresh.length === 0) return;
+      setBlocks((bs) => {
+        const i = anchor ? bs.findIndex((b) => b.id === anchor) : -1;
+        if (i < 0 || !anchor) return [...bs, ...fresh];
+        const cleaned = withCalloutColor(paragraphFromSource(cleanedDraft, anchor), hostColor);
+        const next = [...bs];
+        if (isEmptyBlock(cleaned)) next.splice(i, 1, ...fresh);
+        else {
+          next[i] = cleaned;
+          next.splice(i + 1, 0, ...fresh);
+        }
+        return next;
+      });
+      recordModuleUse(m.id);
+      setEditingId(null);
+      setSelected(null);
+      setTimeout(() => scrollToBlock(fresh[0].id), 60);
+    };
+    const fields = moduleFields(m.blocks);
+    if (fields.length === 0) { proceed({}); return; }
+    // The dialog steals focus from the edit box once — arm the one-shot sticky
+    // (same pattern as the note-link picker) so the edit session survives it.
+    sticky.current = true;
+    setFieldsPrompt({ name: m.name, fields, proceed });
   }
 
   /** Pencil in the `/` menu: commit the draft without its `/query` (dropping
@@ -814,6 +862,11 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
       if (/_\{#\?\}/.test(snippet) && /\^\{#\?\}/.test(snippet)) field.command("moveToNextPlaceholder");
       return;
     }
+    // A focused chemistry field: embed the math via mhchem's $...$ escape — the
+    // mirror of onInsertChem routing \ce into a focused MathField. Without this
+    // a math-strip click would fall through and clobber the chem edit session.
+    const chem = activeChemField();
+    if (chem) { chem.insert(`$${latex}$`); return; }
     // A focused plain textbox (e.g. a table cell) → splice the raw LaTeX there.
     const textInsert = activeTextInserter();
     if (textInsert) { textInsert(latex); return; }
@@ -825,6 +878,34 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     }
     // Not editing: open a new equation (structural when the beta is on).
     addBlock(getSettings().mathEditorBeta ? structuralEquation(latex) : displayFromSource(latex));
+  }
+  /** Chemistry-toolbar/palette insert — the parallel of onInsert. `latex` is the
+   *  catalog's full form (\ce{...} for species/arrows, plain math for the
+   *  Quantities/Units entries). NO `{}`→placeholder rewriting happens here:
+   *  mhchem braces are literal content, and rewriting would corrupt them. */
+  function onInsertChem(latex: string) {
+    const src = ceInner(latex); // null for non-\ce entries (quantities, \pu units)
+    // A focused chemistry field wins: splice the mhchem source at its caret
+    // (non-\ce entries embed as $math$ — mhchem's math escape).
+    const chem = activeChemField();
+    if (chem) { chem.insert(src ?? `$${latex}$`); return; }
+    // A focused math surface takes the full LaTeX form as-is (MathLive parses
+    // \ce natively; the structural editor stores it as one opaque atom).
+    const me = activeMathEdit();
+    if (me) { me.insert(latex); return; }
+    const field = activeMathField();
+    if (field) { field.insert(latex); return; }
+    // Editing prose: open the inline-chemistry popover seeded with the source
+    // (quantities open the regular inline-math box instead — they ARE math).
+    if (editingId && editingPara) {
+      if (src != null) editBoxRef.current?.openChem(src);
+      else editBoxRef.current?.openMath(latex);
+      return;
+    }
+    // Not editing: chemistry becomes a new chemical-equation block; non-\ce
+    // entries fall through to the math path (structural beta included).
+    if (src != null) addBlock(displayFromSource(latex), true, true);
+    else onInsert(latex);
   }
   /** Replace [from, to) of the editing textarea with `insert`, commit, and
    *  restore focus with the caret after the insertion. */
@@ -866,12 +947,13 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   }
 
   // ── note links ([[ or the toolbar button → picker → [title](note://…)) ─────
-  /** Open the picker to replace the "[[" trigger range. Arms the one-shot
-   *  `sticky` so the picker's focus-steal doesn't exit the edit box. */
+  /** Open the picker to replace the `[[query` trigger range (the inline menu's
+   *  "browse" escape hatch, so the range may be longer than just "[["). Arms
+   *  the one-shot `sticky` so the picker's focus-steal doesn't exit the edit box. */
   function openNoteLinkPicker(from: number, to: number) {
     if (readOnlyRef.current) return;
     sticky.current = true;
-    setLinkPicker({ from, to, expect: "[[" });
+    setLinkPicker({ from, to, expect: taRef.current?.value.slice(from, to) ?? "[[" });
   }
   function toolbarNoteLink() {
     if (!editingId || !editingPara) return;
@@ -1285,13 +1367,37 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
         <ListToolButton ordered={true} open={listMenu === "number"} onToggle={() => setListMenu((m) => (m === "number" ? null : "number"))} onInsert={(marker) => insertList(true, marker)} />
       </div>
 
-      {/* Functions & symbols */}
-      <SymbolToolbar
-        onInsert={onInsert}
-        onBrowse={() => setSymbolsOpen(true)}
-        keepFocus={keepFocus}
-        markSticky={() => { if (editingId) sticky.current = true; }}
-      />
+      {/* Functions & symbols — the strip shows either the math set or its
+          chemistry mirror; the Σ/⚗ switch swaps them (persisted globally). */}
+      {(() => {
+        const barSwitch = (
+          <>
+            <div className="flex items-center overflow-hidden rounded-md border border-border" role="group" aria-label="Symbol bar mode">
+              <button onMouseDown={keepFocus} onClick={() => setBarMode("math")} title="Math symbols" aria-label="Show math symbols" aria-pressed={barMode === "math"} className={`grid h-9 min-w-9 place-items-center px-2 ${barMode === "math" ? "bg-accent-soft text-accent" : "text-muted hover:text-foreground"}`}><Icon name="sum" size={17} /></button>
+              <button onMouseDown={keepFocus} onClick={() => setBarMode("chem")} title="Chemistry symbols" aria-label="Show chemistry symbols" aria-pressed={barMode === "chem"} className={`grid h-9 min-w-9 place-items-center px-2 ${barMode === "chem" ? "bg-accent-soft text-accent" : "text-muted hover:text-foreground"}`}><Icon name="flask" size={17} /></button>
+            </div>
+            <span className="mx-2 h-7 w-px bg-border" />
+          </>
+        );
+        return barMode === "chem" ? (
+          <ChemToolbar
+            onInsert={onInsertChem}
+            onNewEquation={() => addBlock(displayFromSource(""), true, true)}
+            onBrowse={() => setChemOpen(true)}
+            keepFocus={keepFocus}
+            markSticky={() => { if (editingId) sticky.current = true; }}
+            leading={barSwitch}
+          />
+        ) : (
+          <SymbolToolbar
+            onInsert={onInsert}
+            onBrowse={() => setSymbolsOpen(true)}
+            keepFocus={keepFocus}
+            markSticky={() => { if (editingId) sticky.current = true; }}
+            leading={barSwitch}
+          />
+        );
+      })()}
 
       {/* Document settings */}
       {!showSource && (
@@ -1380,13 +1486,26 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
           autoFocusSearch={!editingId}
         />
       )}
+      {chemOpen && (
+        <SymbolPicker
+          title="Chemistry library"
+          symbols={CHEM_SYMBOLS}
+          searchPlaceholder="Search… (e.g. water, sulfate, equilibrium, isotope)"
+          onPick={onInsertChem}
+          onClose={() => setChemOpen(false)}
+          closeOnPick={false}
+          keepFocus={keepFocus}
+          onNavMouseDown={() => { if (editingId) sticky.current = true; }}
+          autoFocusSearch={!editingId}
+        />
+      )}
       {tablePicker && <TablePicker onPick={insertTable} onClose={() => setTablePicker(false)} />}
       {inkOpen && !readOnly && (
         <InkInsertPanel
           onInsert={onInsert}
           onClose={() => setInkOpen(false)}
           markSticky={() => { if (editingId) sticky.current = true; }}
-          suspendEscape={symbolsOpen || tablePicker || templatesOpen || !!confirmTemplate || !!moduleEdit || shareOpen || !!graphEdit}
+          suspendEscape={symbolsOpen || chemOpen || tablePicker || templatesOpen || !!confirmTemplate || !!moduleEdit || shareOpen || !!graphEdit}
         />
       )}
       {graphEdit && (
@@ -1421,6 +1540,14 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
           onAdd={(dontAsk) => { if (dontAsk) setSettings({ templateApplyMode: "add" }); applyTemplate(confirmTemplate, "add"); }}
           onReplace={(dontAsk) => { if (dontAsk) setSettings({ templateApplyMode: "replace" }); applyTemplate(confirmTemplate, "replace"); }}
           onCancel={() => setConfirmTemplate(null)}
+        />
+      )}
+      {fieldsPrompt && (
+        <ModuleFieldsDialog
+          name={fieldsPrompt.name}
+          fields={fieldsPrompt.fields}
+          onSubmit={(values) => { setFieldsPrompt(null); fieldsPrompt.proceed(values); }}
+          onCancel={() => setFieldsPrompt(null)}
         />
       )}
     </main>
@@ -1548,6 +1675,8 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
           ) : b.id === editingId ? (
             editingPara ? (
               <EditBox ref={editBoxRef} taRef={taRef} para={editingPara} draft={draft} color={color} previewBlock={withCalloutColor(paragraphFromSource(draft, b.id), color)} onChange={onDraftChange} onColor={pickColor} onExit={() => endEdit(b.id)} onInsertModule={insertModule} onEditModule={editModule} onNoteLink={openNoteLinkPicker} sticky={sticky} />
+            ) : editingChem ? (
+              <ChemFormulaBox draft={draft} onChange={onDraftChange} onExit={() => endEdit(b.id)} sticky={sticky} />
             ) : getSettings().mathEditorBeta && isStructural(b) ? (
               <StructuralFormulaBox block={b} onChange={(next) => setBlocks((bs) => bs.map((x) => (x.id === b.id ? next : x)), true)} onExit={() => endEdit(b.id)} sticky={sticky} />
             ) : (
@@ -1658,7 +1787,7 @@ export default function EditorPage() {
       </div>
 
       <div className="print-flow flex min-h-0 flex-1">
-        <EditorSidebar currentId={id} secondId={secondId} onOpen={openSecond} outline={activeOutline} handle={activeHandle} notesRev={notesRev} />
+        <EditorSidebar currentId={id} secondId={secondId} activeId={active === "b" && secondId ? secondId : id} onOpen={openSecond} outline={activeOutline} handle={activeHandle} notesRev={notesRev} />
         <div className="print-flow flex min-w-0 flex-1">
           {/* Exactly one of print-flow / print-hide per wrapper, so only the active pane prints. */}
           <div className={`min-w-0 flex-1 overflow-hidden ${!split || active === "a" ? "print-flow" : "print-hide"} ${split ? "border-r border-border" : ""} ${split && active === "a" ? "ring-1 ring-inset ring-accent/50" : ""}`}>

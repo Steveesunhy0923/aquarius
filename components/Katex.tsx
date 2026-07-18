@@ -1,6 +1,10 @@
 "use client";
 
 import katex from "katex";
+// Side-effect import: registers mhchem's \ce / \pu commands on the katex
+// singleton at module load, so chemistry (\ce{2H2 + O2 -> 2H2O}) renders in
+// every surface that goes through this component — which is all of them.
+import "katex/contrib/mhchem";
 import { useMemo } from "react";
 
 /**

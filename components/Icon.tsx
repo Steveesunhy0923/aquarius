@@ -42,6 +42,10 @@ const PATHS = {
   editformula: '<path d="M5 19l.6-3.3 8.8-8.8 2.7 2.7-8.8 8.8z"/><line x1="13.6" y1="7.4" x2="16.3" y2="10.1"/>',
   // Pencil over a flowing ink wave — the handwriting (ink → LaTeX) input panel.
   ink: '<path d="M5 15l.6-3.3 8.8-8.8 2.7 2.7-8.8 8.8z"/><line x1="13.6" y1="3.4" x2="16.3" y2="6.1"/><path d="M5.3 19.5c1.5-1.6 3-1.6 4.5 0s3 1.6 4.5 0 3-1.6 4.5 0"/>',
+  // Erlenmeyer flask with a bubble — chemistry input (toolbar switch, new chemical equation).
+  flask: '<path d="M10 4.5v5.2L5.6 17.6A1.7 1.7 0 0 0 7.1 20h9.8a1.7 1.7 0 0 0 1.5-2.4L14 9.7V4.5"/><line x1="8.6" y1="4.5" x2="15.4" y2="4.5"/><line x1="7.4" y1="14.6" x2="16.6" y2="14.6"/><circle cx="11.2" cy="17.2" r=".95" style="fill:currentColor"/>',
+  // Orbits around a nucleus — browse the chemistry symbol library.
+  atom: '<ellipse cx="12" cy="12" rx="8.2" ry="3.4" transform="rotate(-45 12 12)"/><ellipse cx="12" cy="12" rx="8.2" ry="3.4" transform="rotate(45 12 12)"/><circle cx="12" cy="12" r="1.2" style="fill:currentColor"/>',
   fraction: '<line x1="5" y1="12" x2="19" y2="12"/><rect x="7.5" y="4.8" width="9" height="4.6" rx="1.1"/><rect x="7.5" y="14.6" width="9" height="4.6" rx="1.1"/>',
   sqrt: '<polyline points="3,13 5.6,18 9,5.5 21,5.5"/><rect x="11" y="8.5" width="7" height="7" rx="1.2"/>',
   power: '<rect x="4.5" y="9.5" width="8.5" height="8.5" rx="1.4"/><rect x="14.5" y="4.5" width="5" height="5" rx="1.1"/>',

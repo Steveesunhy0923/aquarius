@@ -23,6 +23,7 @@ Convert Apple Pencil ink into LaTeX, Notability-style but LaTeX-native:
 |---|---|---|
 | Math | **Custom model**, trained on MathWriting (§3) | No open on-device math recognizer exists; Apple has none (verified — see §2a); this is the differentiating feature |
 | Plain text | **Apple Vision framework** — ✅ LIVE in dev (2026-07-12): `ml/src/text_ocr.py` via pyobjc on macOS; iPad ships the same engine on-device | Ships with iPadOS; reads neat handwriting on-device (~70–85% on print-style, weaker on cursive); training our own would take years to match |
+| Chemistry | **Separate `chem` mode** — ✅ LIVE in dev (2026-07-18): decode with the math model (own checkpoint slot `chem.pt` for a future fine-tune), then reinterpret as mhchem via `ml/src/chem_normalize.py` → `\ce{...}` (§9) | Handwritten chemistry is letters/digits/sub-sup/arrows — all in the math vocabulary; what differs is INTERPRETATION (`Sn` is tin, not `\sin`; `H_{2}O` is `H2O`). No public online-stroke chem dataset exists (§9a), so a trained-from-scratch chem model has no data anyway — synthesis is the path |
 | Fallback | MyScript iink SDK (commercial) | Does ink-math→LaTeX today; on-device pricing is sales-gated, cloud is 2,000 free requests/mo then $10/1k. The buy option if custom quality stalls |
 
 ### 2a. What Apple provides (verified against Apple docs, 2026-07)
@@ -303,12 +304,36 @@ Metrics: CER on MathWriting valid/test; ExpRate on CROHME 2023 for comparison wi
   consuming whole `\command` atoms first (else `\arcsin`'s tail would become `\arc\sin`).
   `lnx`→`\ln x`, `nlogn`→`n\log n`; 18 unit cases, idempotent, e2e verified.
 
+### 2026-07-18 — Step 12: chemistry mode — third recognition track ✅
+
+- **Serve**: `mode:"chem"` in the `/recognize`+`/collect` contract; new
+  [ml/src/chem_normalize.py](../ml/src/chem_normalize.py) reinterprets decoded LaTeX as
+  mhchem (`\ce{...}`), with a validated-against-KaTeX rule table (24 self-test cases) and a
+  safe math-LaTeX fallback; own checkpoint slot (`chem.pt`/`INK_CHEM_CHECKPOINT`, shares
+  `xl.pt` until a fine-tune exists); `/health` reports `chemModel`. Details: §9.
+- **UI**: `/ink` mode toggle Math/Chem/Text; editor ink sheet gained the symbol strip's Σ/⚗
+  switch (switching re-recognizes current ink); chem corrections edit mhchem SOURCE and store
+  `\ce{...}` with `mode:"chem"`; recognized `\ce` routes through `onInsertChem` (ceInner check
+  wrapping the sheet's `onInsert`), landing as tagged chem blocks / ChemField splices / inline
+  chem popovers.
+- **Verified end-to-end in headless Chrome (14/14 checks)**: real MathWriting strokes replayed
+  on `/ink` → `mode:"chem"` on the wire → `\ce{X3=2Y1T1Z1X1}` rendered via mhchem KaTeX;
+  correction prefill/wrap round-trip; editor-sheet switch + insert landing in the chemistry
+  editor. Screenshots + full-loop math/chem A-B against the live server; vitest 77/77,
+  typecheck clean.
+- **Data + eval built** (agent-verified, deterministic): chem_corpus/chem_synth/eval_chem +
+  chem_proxy (§9); baselines recorded (proxy 68.4% / synth 32.7% exact — the fine-tune gap).
+- **Test-set research** (54-agent verified sweep, §9a): confirmed NO public online-stroke chem
+  dataset exists; EDU-CHEMC test zip (714 MB) + Chemistry SE `\ce` corpus (126 MB) fetched to
+  `ml/data/chem/external/`; CCNU formulae set needs a manual Baidu download (§8 checklist).
+
 ## 7. Serving & deployment
 
 - **Development**: `cd ml && .venv/bin/python serve.py` → FastAPI at `http://127.0.0.1:8787`.
-  Contract: `POST /recognize` `{strokes:[{x[],y[],t[],p[]}], mode:"math"|"text"}` →
-  `{latex, confidence}`; `GET /health`; text mode returns 501 until it routes to Apple Vision.
-  The ink lab at `/ink` speaks exactly this contract (verified above).
+  Contract: `POST /recognize` `{strokes:[{x[],y[],t[],p[]}], mode:"math"|"text"|"chem"}` →
+  `{latex, confidence}`; `GET /health` (reports both `model` and `chemModel`); text mode runs
+  Apple Vision on macOS (501 elsewhere); chem mode returns `\ce{...}` (math-LaTeX fallback when
+  the ink isn't chemistry-expressible). The ink lab at `/ink` speaks exactly this contract.
 - **Production**: export to CoreML ([ml/export/](../ml/export/)), embed in the Capacitor iOS shell
   behind a small Swift plugin exposing the same contract to the web layer; text mode routes to
   Apple Vision in the same plugin. No user ink ever leaves the device.
@@ -322,3 +347,85 @@ Metrics: CER on MathWriting valid/test; ExpRate on CROHME 2023 for comparison wi
       licensed — legal read vs MyScript license vs synthetic data. See §3 flag.
 - [ ] Try the ink lab on your real iPad + Pencil (plan doc §3b) and tell me how stroke feel
       compares to Notability — latency and palm rejection tuning need human judgment.
+- [ ] **CCNU Handwritten Chemical Formulae** (§9a rank 1, the only real handwritten-formula
+      test set): the Baidu Pan share needs a logged-in Baidu account — grab it manually if
+      you want the offline-image benchmark (37.7 MB, code `f7wb`).
+
+## 9. Chemistry mode (handwriting → \ce) — third recognition track
+
+Chemistry is a separate recognition function beside math and text (shipped 2026-07-18,
+build log Step 12). The user-facing story is in [CHEMISTRY.md](CHEMISTRY.md); the model
+story:
+
+- **Serving**: `mode:"chem"` decodes strokes with the chem checkpoint when one exists
+  (`checkpoints/chem.pt` / `INK_CHEM_CHECKPOINT` — the drop-in slot for a fine-tune),
+  else the shared math model. The decoded LaTeX is then reinterpreted as chemistry by
+  [ml/src/chem_normalize.py](../ml/src/chem_normalize.py) (`latex_to_ce`):
+  `2H_{2}+O_{2}\rightarrow 2H_{2}O` → `\ce{2H2 + O2 -> 2H2O}`. Operator normalization
+  deliberately does NOT run in chem mode (`Sn` is tin, not `\sin`); expressions mhchem
+  can't express fall back to plain math LaTeX. Every conversion rule is validated
+  against the installed KaTeX+mhchem.
+- **Why reuse the math model**: handwritten chemistry is letters, digits,
+  sub/superscripts, parens and arrows — the math vocabulary covers every needed token
+  (verified: all 26+26 letters, digits, `+ - ( ) ^ _ =`, `\rightarrow`,
+  `\rightleftharpoons`, `\cdot`, `\Delta`; missing only `\uparrow`/`\downarrow` gas
+  and precipitate marks). What differs is INTERPRETATION and prior (element runs like
+  `NaCl` vs variable products) — the former is deterministic (chem_normalize), the
+  latter is the chem fine-tune's job.
+- **Synthetic chemistry ink** (no real online data exists — §9a):
+  [ml/src/chem_corpus.py](../ml/src/chem_corpus.py) generates consistent
+  (decoder-LaTeX, mhchem) label pairs from structured recipes — 89 curated real
+  reactions + a seeded random generator over real elements/polyatomic groups, with a
+  consistency gate asserting `latex_to_ce(latex) == ce` for every entry;
+  [ml/src/chem_synth.py](../ml/src/chem_synth.py) stitches real MathWriting symbol
+  inks (6,423 isolated glyphs incl. `\rightleftharpoons`) into equation layouts with
+  sub/sup placement, isotope stacking, jitter/slant, and arc-length timestamps —
+  deterministic per seed. This mirrors the only published recipe for online chem
+  equations (Shen et al., ICDAR 2023 — whose own dataset was never released).
+- **Evaluation**: [ml/eval_chem.py](../ml/eval_chem.py) runs the exact serve-time chem
+  path in-process; metrics: `\ce` exact match, mean char similarity, conversion rate,
+  and raw-decoder similarity (separates stroke-recognition error from chem
+  interpretation error). Two wired test sets, complementary:
+  - `data/chem/synth_test.jsonl` (300 stitched samples, seed 7) — TRUE chemistry
+    labels, synthetic ink.
+  - `data/chem/mathwriting_chem_proxy.jsonl` (126 samples via
+    [ml/src/chem_proxy.py](../ml/src/chem_proxy.py)) — REAL human ink from the
+    MathWriting test split, filtered to chemistry-shaped expressions
+    (element-style shapes required; a bare arrow does not qualify).
+
+  Baselines with `xl.pt` (no chem fine-tune yet), 2026-07-18, after the
+  adversarial-review fixes:
+
+  | test set | \ce exact | mean sim | conversion | raw sim |
+  |---|---|---|---|---|
+  | chem-proxy (real ink) | **69.0%** | 0.919 | 96.0% | 0.951 |
+  | synth (true chem labels) | **37.7%** | 0.750 | 86.0% | 0.878 |
+
+  Honest read: stroke recognition is fine (0.87–0.95 raw similarity); exact match on
+  true chemistry collapses because the math model never saw element runs (`K`→`k`,
+  isotope stacks read bottom-first). That gap is precisely what fine-tuning on
+  chem_synth data into `chem.pt` addresses — the serving slot is already wired.
+
+### 9a. Chemistry test-set survey (verified online 2026-07-18)
+
+54-agent research pass; every claim below was adversarially re-verified at the source.
+**Headline: no public ONLINE-stroke handwritten chemistry dataset exists.** The two
+matching literature datasets (Shen/CVTE ICDAR 2023; Wang LCRNN ICIC 2022) were never
+released — do not chase them (author email is the only route).
+
+| Rank | Dataset | What/modality | Access (verified) | License |
+|---|---|---|---|---|
+| 1 | **CCNU Handwritten Chemical Formulae** | offline images of real handwritten chemical FORMULAS + transcriptions (ICDAR 2019, Zhang Ting group) | Baidu Pan `pan.baidu.com/s/16H3fGauCw-VIdzsVdN8M2w` code `f7wb`, 37.7 MB RAR — needs a Baidu account, no scripted download | academic-research-only, cite |
+| 2 | **EDU-CHEMC** (iFLYTEK/USTC) | ~53k offline images: 2D structures + some reaction equations, SSML labels | public Google Drive; test zip (714,114,400 B) fetched into `ml/data/chem/external/` — see command in build log | none stated; don't redistribute |
+| 3 | **MathWriting chem-proxy** | ONLINE strokes, chem-shaped math | already local; built by `src/chem_proxy.py` → 152 samples | CC BY-NC-SA 4.0 |
+| 4 | **CROHME 2023** | ONLINE strokes, math (regression benchmark for chem mode) | `zenodo.org/records/8428035` CROHME23.zip 1.8 GB (md5 9eb899…) | CC BY-NC-SA 3.0 |
+| 5 | **HWRT** / **Detexify** dumps | ONLINE strokes, isolated symbols incl. harpoons, `\uparrow`/`\downarrow` (absent from MathWriting) | HWRT: Zenodo 50022 tar 140 MB; Detexify: Drive sql.gz 214 MB (needs its `resourcekey`) | ODbL 1.0 (commercial-friendly) |
+| 6 | **DECIMER hand-drawn** (5,088) / **ChemPixCH** (613) | offline hand-drawn 2D STRUCTURES → SMILES | Zenodo 6456306 (CC-BY 4.0) / GitHub mtzgroup (Apache-2.0) | permissive |
+
+Label corpora for synthesis (real-world mhchem distribution): **Chemistry Stack
+Exchange dump** (archive.org, 126 MB 7z, CC BY-SA 4.0 — mine `\ce{...}` from
+Posts.xml; fetched into `ml/data/chem/external/`), **Wikidata P274** (~299k distinct
+formulas, CC0 — the commercially clean source), Lowe **USPTO reactions** (CC0),
+Wikipedia `<chem>` tags. License hygiene: MathWriting/CROHME ink is NC — same caveat
+we already carry (§3); a commercially clean ink stock exists in ODbL Detexify/HWRT +
+CC-BY UJI v2 if ever needed.

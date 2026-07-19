@@ -5,7 +5,7 @@
  *
  *   POST http://127.0.0.1:8787/recognize
  *   { "strokes": [{ "x": [...], "y": [...], "t": [...], "p": [...] }, ...],
- *     "mode": "math" | "text" }
+ *     "mode": "math" | "text" | "chem" }
  *
  * x/y are CSS pixels, t is milliseconds relative to the first recorded point,
  * p is pressure 0..1 (optional on the wire; we always record it — mouse input
@@ -29,7 +29,10 @@ export interface Stroke {
   p: number[];
 }
 
-export type RecognitionMode = "math" | "text";
+/** "chem" recognizes the same ink as chemistry: the server reinterprets the
+ *  decoded expression as mhchem and returns `\ce{...}` (math LaTeX when the
+ *  ink turns out not to be chemistry-expressible). */
+export type RecognitionMode = "math" | "chem" | "text";
 
 /** Request body for POST /recognize. */
 export interface RecognizeRequest {

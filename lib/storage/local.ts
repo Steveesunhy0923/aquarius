@@ -30,6 +30,7 @@ import {
 import { emptyDocument } from "@/lib/blocks/types";
 import type { DocumentTree } from "@/lib/blocks/types";
 import { base64ToBlob, blobToBase64, remapSelfNoteLinks, remapTreeAssetIds } from "./bundle";
+import { AUTO_SNAPSHOT_KEEP } from "./types";
 import type {
   AssetBlob,
   AssetRef,
@@ -42,14 +43,17 @@ import type {
   NoteBundleFile,
   NoteMeta,
   NotePackage,
+  NoteSnapshot,
   Notebook,
+  SnapshotKind,
+  SnapshotMeta,
   Subject,
 } from "./types";
 
 // ─── DB schema (typed) ───────────────────────────────────────────────────────
 
 const DB_NAME = "aquarius";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 interface AquariusDB extends DBSchema {
   subjects: {
@@ -74,6 +78,11 @@ interface AquariusDB extends DBSchema {
   assets: {
     key: EntityId;
     value: AssetBlob;
+    indexes: { "by-note": EntityId };
+  };
+  noteSnapshots: {
+    key: EntityId;
+    value: NoteSnapshot;
     indexes: { "by-note": EntityId };
   };
 }
@@ -106,23 +115,30 @@ export class LocalLibraryStore implements LibraryStore {
   private db(): Promise<IDBPDatabase<AquariusDB>> {
     if (!this.dbPromise) {
       this.dbPromise = openDB<AquariusDB>(DB_NAME, DB_VERSION, {
-        upgrade(db) {
-          const subjects = db.createObjectStore("subjects", { keyPath: "id" });
-          subjects.createIndex("by-order", "order");
+        upgrade(db, oldVersion) {
+          if (oldVersion < 1) {
+            const subjects = db.createObjectStore("subjects", { keyPath: "id" });
+            subjects.createIndex("by-order", "order");
 
-          const notebooks = db.createObjectStore("notebooks", {
-            keyPath: "id",
-          });
-          notebooks.createIndex("by-subject", "subjectId");
+            const notebooks = db.createObjectStore("notebooks", {
+              keyPath: "id",
+            });
+            notebooks.createIndex("by-subject", "subjectId");
 
-          const notes = db.createObjectStore("notes", { keyPath: "id" });
-          notes.createIndex("by-notebook", "notebookId");
-          notes.createIndex("by-subject", "subjectId");
+            const notes = db.createObjectStore("notes", { keyPath: "id" });
+            notes.createIndex("by-notebook", "notebookId");
+            notes.createIndex("by-subject", "subjectId");
 
-          db.createObjectStore("notePackages", { keyPath: "noteId" });
+            db.createObjectStore("notePackages", { keyPath: "noteId" });
 
-          const assets = db.createObjectStore("assets", { keyPath: "id" });
-          assets.createIndex("by-note", "noteId");
+            const assets = db.createObjectStore("assets", { keyPath: "id" });
+            assets.createIndex("by-note", "noteId");
+          }
+          if (oldVersion < 2) {
+            // v2: per-note version history (tree snapshots).
+            const snaps = db.createObjectStore("noteSnapshots", { keyPath: "id" });
+            snaps.createIndex("by-note", "noteId");
+          }
         },
       });
     }
@@ -181,7 +197,7 @@ export class LocalLibraryStore implements LibraryStore {
   async deleteSubject(id: EntityId): Promise<void> {
     const db = await this.db();
     const tx = db.transaction(
-      ["subjects", "notebooks", "notes", "notePackages", "assets"],
+      ["subjects", "notebooks", "notes", "notePackages", "assets", "noteSnapshots"],
       "readwrite",
     );
     // Cascade: subject → its notebooks → their notes → packages → assets.
@@ -285,7 +301,7 @@ export class LocalLibraryStore implements LibraryStore {
   async deleteNotebook(id: EntityId): Promise<void> {
     const db = await this.db();
     const tx = db.transaction(
-      ["notebooks", "notes", "notePackages", "assets"],
+      ["notebooks", "notes", "notePackages", "assets", "noteSnapshots"],
       "readwrite",
     );
     // Cascade: notebook → its notes → packages → assets.
@@ -482,10 +498,10 @@ export class LocalLibraryStore implements LibraryStore {
   async deleteNote(id: EntityId): Promise<void> {
     const db = await this.db();
     const tx = db.transaction(
-      ["notes", "notePackages", "assets"],
+      ["notes", "notePackages", "assets", "noteSnapshots"],
       "readwrite",
     );
-    // Cascade: note meta + its heavy package + this note's asset blobs.
+    // Cascade: note meta + its heavy package + this note's asset blobs + history.
     await this.cascadeDeleteNoteWithin(tx, id);
     await tx.done;
   }
@@ -742,6 +758,68 @@ export class LocalLibraryStore implements LibraryStore {
       await assetStore.delete(key);
     }
     await tx.objectStore("notePackages").delete(noteId);
+    // Snapshots too, when the caller's tx included that store (all permanent-
+    // delete paths do). Guarded so a tx that omitted it doesn't throw.
+    if (Array.from(tx.objectStoreNames).includes("noteSnapshots")) {
+      const snapKeys = await tx.objectStore("noteSnapshots").index("by-note").getAllKeys(noteId);
+      const snapStore = tx.objectStore("noteSnapshots");
+      for (const key of snapKeys) await snapStore.delete(key);
+    }
     await tx.objectStore("notes").delete(noteId);
+  }
+
+  // ── Version history (tree snapshots) ──────────────────────────────────────
+
+  private snapMeta(s: NoteSnapshot): SnapshotMeta {
+    return { id: s.id, noteId: s.noteId, label: s.label, kind: s.kind, createdAt: s.createdAt };
+  }
+
+  async listSnapshots(noteId: EntityId): Promise<SnapshotMeta[]> {
+    const db = await this.db();
+    const all = await db.getAllFromIndex("noteSnapshots", "by-note", noteId);
+    return all.map((s) => this.snapMeta(s)).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  }
+
+  async saveSnapshot(
+    noteId: EntityId,
+    tree: DocumentTree,
+    opts: { label: string; kind: SnapshotKind },
+  ): Promise<SnapshotMeta> {
+    const db = await this.db();
+    const snap: NoteSnapshot = {
+      id: newId(),
+      noteId,
+      label: opts.label,
+      kind: opts.kind,
+      createdAt: now(),
+      // Deep-clone so later edits to the live tree can't mutate the stored version.
+      tree: structuredClone(tree),
+    };
+    await db.put("noteSnapshots", snap);
+    if (opts.kind === "auto") await this.pruneAutoSnapshots(noteId);
+    return this.snapMeta(snap);
+  }
+
+  async getSnapshot(id: EntityId): Promise<NoteSnapshot | undefined> {
+    const db = await this.db();
+    return db.get("noteSnapshots", id);
+  }
+
+  async deleteSnapshot(id: EntityId): Promise<void> {
+    const db = await this.db();
+    await db.delete("noteSnapshots", id);
+  }
+
+  /** Keep only the newest AUTO_SNAPSHOT_KEEP auto snapshots for a note. */
+  private async pruneAutoSnapshots(noteId: EntityId): Promise<void> {
+    const db = await this.db();
+    const autos = (await db.getAllFromIndex("noteSnapshots", "by-note", noteId))
+      .filter((s) => s.kind === "auto")
+      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+    const excess = autos.slice(AUTO_SNAPSHOT_KEEP);
+    if (excess.length === 0) return;
+    const tx = db.transaction("noteSnapshots", "readwrite");
+    for (const s of excess) await tx.store.delete(s.id);
+    await tx.done;
   }
 }

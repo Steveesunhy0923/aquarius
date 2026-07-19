@@ -4,11 +4,13 @@
  * InkInsertPanel — the /ink lab's handwriting → LaTeX flow embedded in the
  * note editor. A fixed bottom sheet (no scrim: the note stays visible and the
  * editing context stays live): write on the canvas, the local recognition
- * server auto-converts the ink after each stroke (math mode only — text mode
- * is a 501 on the server), the result lands in an editable LaTeX line, and
- * Insert hands it to the editor's insertion dispatcher, which routes it to
- * whatever is active — MathLive field, table cell, inline-math box in prose,
- * or a fresh equation block. The sheet stays OPEN after an insert (ink
+ * server auto-converts the ink after each stroke (math or chemistry — the
+ * Σ/⚗ switch mirrors the symbol strip's; text mode stays iPad-only), the
+ * result lands in an editable LaTeX line, and Insert hands it to the editor's
+ * insertion dispatcher, which routes it to whatever is active — MathLive
+ * field, table cell, inline-math box in prose, or a fresh equation block
+ * (chemistry results are a single \ce{...} and route through onInsertChem to
+ * the chem surfaces instead). The sheet stays OPEN after an insert (ink
  * cleared, brief "Inserted ✓" flash) because that's the note-taking rhythm:
  * write, insert, write the next formula.
  *
@@ -54,8 +56,22 @@ export function InkInsertPanel({
   const canvas = useRef<InkCanvasHandle>(null);
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const [strokeSeq, setStrokeSeq] = useState(0); // bumps when a stroke ends (or on undo) → drives auto-convert
-  const rec = useRecognition(strokes, strokeSeq); // mode stays "math", auto stays on
+  const rec = useRecognition(strokes, strokeSeq); // math or chem (Σ/⚗ switch below), auto stays on
   const empty = strokes.length === 0;
+  const chem = rec.mode === "chem";
+
+  // Switching math⇄chem re-recognizes the ink that is already on the canvas —
+  // the sheet has no Convert button, so the switch must act immediately. Runs
+  // post-render, when useRecognition's modeRef already holds the new mode.
+  // EXCEPT when the user has hand-edited the LaTeX line (diverged): a fresh
+  // recognition would silently overwrite their edit with no undo — their text
+  // wins, and the next stroke re-recognizes under the new mode anyway.
+  const convertRef = useRef(rec.convert);
+  convertRef.current = rec.convert;
+  const skipConvertRef = useRef(true);
+  useEffect(() => {
+    if (!skipConvertRef.current) void convertRef.current();
+  }, [rec.mode]);
 
   // The editable LaTeX line. A FRESH recognition resets it (rec.result is a
   // new object per response, and null once the ink is cleared); between
@@ -64,6 +80,8 @@ export function InkInsertPanel({
   // prediction, which gates the silent /collect training sample on Insert.
   const [latex, setLatex] = useState("");
   const [diverged, setDiverged] = useState(false);
+  // Ref assignment runs every render, before the mode-switch effect fires.
+  skipConvertRef.current = empty || diverged;
   const result = rec.result;
   useEffect(() => {
     setLatex(result?.latex ?? "");
@@ -129,8 +147,9 @@ export function InkInsertPanel({
     const tex = latex.trim();
     if (!tex || (stale && !diverged)) return;
     // Manual fix → training data, fire-and-forget. Must run BEFORE clear():
-    // collect() snapshots the ink synchronously on call.
-    if (diverged && result && !stale && tex !== result.latex.trim()) void rec.collect(tex, result.latex);
+    // collect() snapshots the ink synchronously on call. Stamp the mode that
+    // produced the recognition being corrected, not the live toggle.
+    if (diverged && result && !stale && tex !== result.latex.trim()) void rec.collect(tex, result.latex, rec.resultMode);
     onInsert(tex);
     canvas.current?.clear();
     // Explicit reset — the strokes→[] → result→null chain no-ops when result
@@ -151,7 +170,31 @@ export function InkInsertPanel({
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
       <div className="flex items-center gap-3 px-4 py-1.5">
-        <p className="text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted">Handwrite math</p>
+        <p className="text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted">
+          {chem ? "Handwrite chemistry" : "Handwrite math"}
+        </p>
+        {/* Σ/⚗ — the same switch as the symbol strip: recognize the ink as
+            math LaTeX or as a chemical equation (mhchem \ce). */}
+        <div className="flex items-center overflow-hidden rounded-md border border-border" role="group" aria-label="Recognition mode">
+          <button
+            onClick={() => rec.setMode("math")}
+            title="Recognize as math"
+            aria-label="Recognize as math"
+            aria-pressed={!chem}
+            className={`grid h-7 min-w-8 place-items-center px-1.5 ${!chem ? "bg-accent-soft text-accent" : "text-muted hover:text-foreground"}`}
+          >
+            <Icon name="sum" size={15} />
+          </button>
+          <button
+            onClick={() => rec.setMode("chem")}
+            title="Recognize as chemistry"
+            aria-label="Recognize as chemistry"
+            aria-pressed={chem}
+            className={`grid h-7 min-w-8 place-items-center px-1.5 ${chem ? "bg-accent-soft text-accent" : "text-muted hover:text-foreground"}`}
+          >
+            <Icon name="flask" size={15} />
+          </button>
+        </div>
         {rec.busy && <span className="text-xs text-faint">converting…</span>}
         {flash && <span className="text-xs text-success">Inserted ✓</span>}
         {rec.offline && (
@@ -178,7 +221,7 @@ export function InkInsertPanel({
         />
         {empty && (
           <p className="pointer-events-none absolute inset-0 grid place-items-center text-sm text-faint">
-            Write a formula — Apple Pencil, finger, or mouse
+            {chem ? "Write a chemical equation — Apple Pencil, finger, or mouse" : "Write a formula — Apple Pencil, finger, or mouse"}
           </p>
         )}
       </div>

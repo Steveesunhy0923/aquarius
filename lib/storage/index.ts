@@ -55,6 +55,10 @@ function createServerStub(): LibraryStore {
     deleteAsset: reject,
     exportNote: reject,
     importNote: reject,
+    listSnapshots: reject,
+    saveSnapshot: reject,
+    getSnapshot: reject,
+    deleteSnapshot: reject,
   };
 }
 

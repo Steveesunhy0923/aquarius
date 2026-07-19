@@ -240,4 +240,38 @@ export interface LibraryStore {
   // ── Portable bundles (Notability-style single-note export/import) ──
   exportNote(id: EntityId): Promise<NoteBundleFile>;
   importNote(bundle: NoteBundleFile, toNotebookId: EntityId): Promise<NoteMeta>;
+
+  // ── Version history (tree snapshots) ──
+  /** Snapshots for a note, newest first (metadata only — no tree payload). */
+  listSnapshots(noteId: EntityId): Promise<SnapshotMeta[]>;
+  /**
+   * Capture the given tree as a new version. `auto` snapshots are throttled and
+   * pruned by the caller/store (the newest {@link AUTO_SNAPSHOT_KEEP} are kept);
+   * `manual` snapshots are never auto-pruned.
+   */
+  saveSnapshot(noteId: EntityId, tree: DocumentTree, opts: { label: string; kind: SnapshotKind }): Promise<SnapshotMeta>;
+  /** Load one snapshot's full tree (for preview / restore). */
+  getSnapshot(id: EntityId): Promise<NoteSnapshot | undefined>;
+  deleteSnapshot(id: EntityId): Promise<void>;
+}
+
+// ─── Version history ─────────────────────────────────────────────────────────
+
+export type SnapshotKind = "auto" | "manual";
+
+/** How many `auto` snapshots to retain per note (older ones are pruned on save). */
+export const AUTO_SNAPSHOT_KEEP = 40;
+
+export interface SnapshotMeta {
+  id: EntityId;
+  noteId: EntityId;
+  /** Human label — a manual name, or the auto reason ("Autosave", "Before restore"). */
+  label: string;
+  kind: SnapshotKind;
+  createdAt: ISOTimestamp;
+}
+
+/** A snapshot with its full document tree — the restorable payload. */
+export interface NoteSnapshot extends SnapshotMeta {
+  tree: DocumentTree;
 }

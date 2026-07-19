@@ -551,3 +551,66 @@ now that identity is stored); **B4** — the inline math/chem popovers still sha
 state (only one is open at a time). The only remaining hardcoded colors are `GraphEditor`'s
 **canvas** draw fills (2D-context strokes that can't read CSS vars without a dedicated theming
 pass) — left as-is by design.
+
+---
+
+# Editor power features (2026-07-18, verified in a real browser)
+
+Four cross-cutting editor features that build on the pieces the modular-notes /
+collab work already put in place. `tsc` clean, 77 unit tests green (incl. 18 new
+`latexToExpr` tests), and all four exercised in headless Chrome (10/10 assertions,
+zero console errors); the cursor **measurement** algorithm is validated separately.
+
+1. ✅ **⌘K command palette** — one surface unifying the three menus that were
+   separate: jump to a note (the `[[` search), insert a module/preset (the `/`
+   slash menu), and run an editor action. `components/CommandPalette.tsx` is a
+   centered modal (modeled on `SymbolPicker`) with a single fuzzy query, ↑/↓ over a
+   flat list of the visible rows, Enter to run, capture-phase Escape (stacks over
+   the editor). Note-jump uses `getStore().listRecentNotes/searchNotes`; Insert
+   pulls block commands + `searchModules()` + `builtinPresets()` (a preset inserts
+   as one big module); Actions map to editor commands. Editor commands are reached
+   through **`DocHandle`** (`lib/editor/types.ts`), extended with `insertModule` /
+   `runCommand(EditorCommand)` / `canWrite`; the palette is mounted in `EditorPage`
+   wired to the **active pane's** handle. Trigger: ⌘/Ctrl-K (global keydown) or the
+   header **Search ⌘K** button. Read-only notes hide mutating rows. *(Editor-route
+   only for now; a home-page note-jump palette is a natural follow-up.)*
+
+2. ✅ **"Plot this equation"** — a hover **Plot** action on any display formula that
+   parses to `y = f(x)` drops an auto-framed graph block right after it. The bridge
+   is `lib/blocks/latex-expr.ts` `latexToExpr()`: a conservative LaTeX→plain-infix
+   normalizer (frac/root/`^{}`/trig-log family/`|x|`/`y=`-framing) gated by
+   `isValidExpr` so it returns `null` rather than plot something wrong — implicit
+   relations (`x²+y²=1`), multi-var (`E=mc²`) and chem blocks never show the button.
+   `lib/blocks/graph.ts` `fitViewToExpr()` samples the curve and frames the y-range
+   (so `y=x²` on ±5 isn't clipped at 5). Button in `renderBlock`; `plotEquation()`
+   splices a `{kind:"function"}` shape.
+
+3. ✅ **Version history / timeline** — per-note snapshots of the **document tree**
+   (jsonb), so it works for private notes too, not just co-edited ones. New
+   `LibraryStore` methods `listSnapshots / saveSnapshot / getSnapshot /
+   deleteSnapshot` on **both** stores: local IndexedDB (`aquarius` DB bumped to
+   **v2**, new `noteSnapshots` store + cascade cleanup) and cloud (**migration
+   `0011_note_snapshots.sql`** — RLS mirrors `note_packages`: owner full control,
+   collaborators read, editors add/remove their own). Auto snapshots are throttled
+   (`AUTO_VERSION_INTERVAL_MS`, pruned to the newest `AUTO_SNAPSHOT_KEEP`=40);
+   manual "Save version" prompts for a label. `components/HistoryPanel.tsx` is a
+   two-pane dialog (timeline rail + read-only preview + Restore/Delete); **restore**
+   snapshots the current tree first (a version *and* an undo step) so it's
+   reversible. Opened via ⌘K, the toolbar clock button, or `runCommand("openHistory")`.
+   *(The cloud migration must be applied for cloud version history; local needs no
+   migration.)*
+
+4. ✅ **Live collaborator cursors** — extends the existing Supabase-Realtime
+   presence (not Yjs awareness) with a `cursor {blockId,start,end}` on `PeerInfo`,
+   broadcast from a single `selectionchange` listener (covers typing / arrows /
+   clicks across every editor textarea). `components/CollabCursors.tsx` draws a
+   colored caret bar + name flag (Google-Docs style) and a translucent selection
+   highlight in a fixed, pointer-events-none layer, positioned by walking the
+   rendered block's text nodes (`document.createRange` → `getBoundingClientRect`),
+   recomputed on scroll/resize + a low-freq tick. Precise for prose/headings
+   (`measurable`), anchored at the block edge for formulas/tables/images (source vs.
+   rendered offsets diverge there). The old block-outline overlay stays; its name
+   pill now only shows as a fallback for a peer with no caret yet. *(Live two-client
+   sync needs a shared cloud note + auth, so it wasn't driven headlessly; the caret
+   **measurement** was validated in a real browser DOM, and the overlay is inert /
+   error-free when collab is inactive.)*

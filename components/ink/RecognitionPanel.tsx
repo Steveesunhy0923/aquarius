@@ -12,6 +12,7 @@
  */
 
 import { Katex } from "@/components/Katex";
+import { ceInner, wrapCe } from "@/lib/blocks/chem";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { buildCollectRequest, buildRecognizeRequest, type RecognitionMode, type Stroke } from "./strokes";
 
@@ -128,14 +129,18 @@ export function useRecognition(strokes: Stroke[], strokeSeq: number) {
   // training data. Returns the running collected-sample count, or null on
   // failure (e.g. server offline).
   const [collectedCount, setCollectedCount] = useState<number | null>(null);
-  const collect = useCallback(async (label: string, predicted?: string): Promise<number | null> => {
+  // `mode` override: correction capture must stamp the mode that PRODUCED the
+  // result being corrected (resultMode), not the live toggle — flipping the
+  // toggle between recognize and save would otherwise file a \ce{...} label
+  // under mode:"math" and silently misroute it in the training corpora.
+  const collect = useCallback(async (label: string, predicted?: string, mode?: RecognitionMode): Promise<number | null> => {
     const ink = strokesRef.current;
     if (ink.length === 0 || !label.trim()) return null;
     try {
       const res = await fetch(COLLECT_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildCollectRequest(ink, label.trim(), predicted, modeRef.current)),
+        body: JSON.stringify(buildCollectRequest(ink, label.trim(), predicted, mode ?? modeRef.current)),
       });
       if (!res.ok) return null;
       const body = (await res.json()) as { count?: unknown };
@@ -160,7 +165,7 @@ export type Recognition = ReturnType<typeof useRecognition>;
 export function ModeToggle({ mode, onMode }: { mode: RecognitionMode; onMode: (m: RecognitionMode) => void }) {
   return (
     <div className="inline-flex h-9 overflow-hidden rounded-md border border-border text-sm" role="group" aria-label="Recognition mode">
-      {(["math", "text"] as const).map((m) => (
+      {(["math", "chem", "text"] as const).map((m) => (
         <button
           key={m}
           onClick={() => onMode(m)}
@@ -291,24 +296,38 @@ export function RecognitionPanel({ rec }: { rec: Recognition }) {
  * model's guess; the user edits it to the correct LaTeX (with a live preview)
  * and saves. The (ink + correct label) pair is POSTed to /collect as training
  * data. Available on every result, since even a confident answer can be wrong.
+ *
+ * Chem results are corrected as plain mhchem SOURCE ("2H2 + O2 -> 2H2O") —
+ * the app's chemistry editing convention — and stored wrapped as \ce{...},
+ * the same LaTeX form the recognizer returns.
  */
 function Correction({ rec, guess }: { rec: Recognition; guess: string }) {
+  const isChem = rec.resultMode === "chem";
+  // Chem edits the inner mhchem source. A math-FALLBACK guess (server couldn't
+  // express the ink as chemistry, so it's not \ce) prefills EMPTY: prefilling
+  // raw math LaTeX into the mhchem field would get \ce-wrapped on save,
+  // storing corrupt labels like \ce{\sqrt{2}}.
+  const editable = (g: string) => (isChem ? (ceInner(g) ?? "") : g);
+  // What gets stored/previewed: always one balanced \ce{...} — ceInner strips
+  // a (possibly unbalanced-typo) user wrapper, wrapCe re-closes it.
+  const stored = (s: string) => (isChem ? wrapCe(ceInner(s) ?? s) : s.trim());
   const [open, setOpen] = useState(false);
-  const [label, setLabel] = useState(guess);
+  const [label, setLabel] = useState(editable(guess));
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
 
   // A fresh recognition result resets the editor to the new guess.
   useEffect(() => {
     setOpen(false);
-    setLabel(guess);
+    setLabel(editable(guess));
     setSavedAt(null);
-  }, [guess]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- editable is render-stable per resultMode
+  }, [guess, isChem]);
 
   const save = async () => {
     if (!label.trim() || saving) return;
     setSaving(true);
-    const count = await rec.collect(label, guess);
+    const count = await rec.collect(stored(label), guess, rec.resultMode);
     setSaving(false);
     if (count !== null) {
       setSavedAt(count);
@@ -320,7 +339,7 @@ function Correction({ rec, guess }: { rec: Recognition; guess: string }) {
     return (
       <div className="mt-2.5 flex items-center gap-2 text-xs">
         <button
-          onClick={() => { setOpen(true); setLabel(guess); }}
+          onClick={() => { setOpen(true); setLabel(editable(guess)); }}
           className="rounded-md border border-border px-2.5 py-1 text-muted transition hover:border-accent hover:text-foreground"
         >
           Not right? Fix the label
@@ -337,7 +356,7 @@ function Correction({ rec, guess }: { rec: Recognition; guess: string }) {
   return (
     <div className="mt-2.5 rounded-md border border-accent/40 bg-accent-soft/40 p-2.5">
       <label className="mb-1.5 block text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted">
-        {isText ? "Correct text" : "Correct LaTeX"}
+        {isText ? "Correct text" : isChem ? "Correct chemistry (mhchem)" : "Correct LaTeX"}
       </label>
       <input
         autoFocus
@@ -348,7 +367,7 @@ function Correction({ rec, guess }: { rec: Recognition; guess: string }) {
           if (e.key === "Escape") { e.preventDefault(); setOpen(false); }
         }}
         spellCheck={false}
-        placeholder={isText ? "e.g. Hello world" : "e.g. \\frac{x}{2} + 1"}
+        placeholder={isText ? "e.g. Hello world" : isChem ? "e.g. 2H2 + O2 -> 2H2O" : "e.g. \\frac{x}{2} + 1"}
         className="w-full rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-sm outline-none focus:border-accent"
       />
       <div className="mt-2 min-h-8 overflow-x-auto rounded-md border border-border-soft bg-surface px-2.5 py-1.5">
@@ -357,7 +376,7 @@ function Correction({ rec, guess }: { rec: Recognition; guess: string }) {
         ) : isText ? (
           <p className="whitespace-pre-wrap text-sm">{label}</p>
         ) : (
-          <Katex latex={label} display />
+          <Katex latex={stored(label)} display />
         )}
       </div>
       <div className="mt-2 flex items-center justify-end gap-2">

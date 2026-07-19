@@ -227,6 +227,42 @@ export function makeGraphBlock(data: GraphData = defaultGraph()): Block {
 
 export const newGraphId = uid;
 
+/**
+ * Pick a viewing rectangle that frames y = f(x) over [xmin, xmax]. Samples the
+ * function, ignores near-asymptote spikes (|y| > 1e5), and pads the y-range by
+ * 10%. Falls back to the default ±5 window when the function can't be sampled
+ * (empty range, all-infinite, or a degenerate span). Used by "Plot this
+ * equation" so a fresh graph isn't clipped at the default window.
+ */
+export function fitViewToExpr(expr: string, xmin = -5, xmax = 5): GraphView {
+  const fallback: GraphView = { xmin, xmax, ymin: -5, ymax: 5 };
+  const { fn, error } = compileExpr(expr, ["x"]);
+  if (error || !fn) return fallback;
+  let lo = Infinity;
+  let hi = -Infinity;
+  const N = 240;
+  for (let i = 0; i <= N; i++) {
+    const x = xmin + ((xmax - xmin) * i) / N;
+    let y: number;
+    try {
+      y = fn({ x });
+    } catch {
+      continue;
+    }
+    if (Number.isFinite(y) && Math.abs(y) < 1e5) {
+      if (y < lo) lo = y;
+      if (y > hi) hi = y;
+    }
+  }
+  if (!Number.isFinite(lo) || !Number.isFinite(hi)) return fallback;
+  if (hi - lo < 1e-6) {
+    // Flat/constant curve: center it with a small window.
+    return { xmin, xmax, ymin: lo - 5, ymax: hi + 5 };
+  }
+  const pad = (hi - lo) * 0.1;
+  return { xmin, xmax, ymin: lo - pad, ymax: hi + pad };
+}
+
 // ─── Projection (math coords ⇄ screen px) ────────────────────────────────────
 
 export interface Proj {

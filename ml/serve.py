@@ -4,12 +4,17 @@
     cd ml && .venv/bin/uvicorn serve:app --host 127.0.0.1 --port 8787
 
 API:
-  POST /recognize  {"strokes":[{"x":[..],"y":[..],"t":[..],"p":[..]?}], "mode":"math"|"text"}
+  POST /recognize  {"strokes":[{"x":[..],"y":[..],"t":[..],"p":[..]?}], "mode":"math"|"text"|"chem"}
                    x/y are CSS pixels, t is ms from session start. "p" (pressure)
                    may be sent by the web client and is ACCEPTED but IGNORED
                    (MathWriting ink has no pressure channel).
                    -> {"latex": str, "confidence": float 0..1}
                    "text" mode -> 501 (will use Apple Vision on-device).
+                   "chem" mode decodes with the chem checkpoint when one exists
+                   (checkpoints/chem.pt or INK_CHEM_CHECKPOINT), else the shared
+                   math model, then reinterprets the result as chemistry:
+                   mhchem source wrapped as \ce{...} (src/chem_normalize.py);
+                   falls back to plain math LaTeX when not chemistry-expressible.
   GET  /health     -> {"status":"ok","model":"<checkpoint name>","collected":N}
   POST /collect    save a human-labeled ink sample as training data
   GET  /collect    -> {"count": N}
@@ -40,6 +45,7 @@ from pydantic import BaseModel, Field
 ML_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(ML_DIR))
 
+from src.chem_normalize import latex_to_ce  # noqa: E402
 from src.latex_normalize import normalize_operators  # noqa: E402
 from src.latex_tokenizer import Tokenizer  # noqa: E402
 from src.model import InkToLatex  # noqa: E402
@@ -73,8 +79,8 @@ def _corrections_count() -> int:
         return sum(1 for line in f if line.strip())
 
 
-def load_model() -> tuple[InkToLatex, Tokenizer]:
-    ckpt = torch.load(CHECKPOINT, map_location="cpu", weights_only=True)
+def load_model(checkpoint: Path) -> tuple[InkToLatex, Tokenizer]:
+    ckpt = torch.load(checkpoint, map_location="cpu", weights_only=True)
     tokenizer = Tokenizer(ckpt["vocab"])
     model = InkToLatex(**ckpt["config"])
     model.load_state_dict(ckpt["model_state"])
@@ -82,7 +88,20 @@ def load_model() -> tuple[InkToLatex, Tokenizer]:
     return model, tokenizer
 
 
-MODEL, TOKENIZER = load_model()
+MODEL, TOKENIZER = load_model(CHECKPOINT)
+
+# Chemistry gets its own model SLOT: a chem fine-tune (checkpoints/chem.pt or
+# INK_CHEM_CHECKPOINT) is picked up automatically; until one exists, chem mode
+# shares the math model — its output is then reinterpreted by latex_to_ce.
+_chem_env = os.environ.get("INK_CHEM_CHECKPOINT")
+CHEM_CHECKPOINT = (
+    Path(_chem_env) if _chem_env else ML_DIR / "checkpoints" / "chem.pt"
+)
+if CHEM_CHECKPOINT.exists():
+    CHEM_MODEL, CHEM_TOKENIZER = load_model(CHEM_CHECKPOINT)
+else:
+    CHEM_CHECKPOINT = CHECKPOINT
+    CHEM_MODEL, CHEM_TOKENIZER = MODEL, TOKENIZER
 
 app = FastAPI(title="aquarius ink recognizer")
 app.add_middleware(
@@ -102,7 +121,7 @@ class Stroke(BaseModel):
 
 class RecognizeRequest(BaseModel):
     strokes: list[Stroke]
-    mode: Literal["math", "text"] = "math"
+    mode: Literal["math", "text", "chem"] = "math"
 
 
 class RecognizeResponse(BaseModel):
@@ -112,7 +131,12 @@ class RecognizeResponse(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "model": CHECKPOINT.name, "collected": _corrections_count()}
+    return {
+        "status": "ok",
+        "model": CHECKPOINT.name,
+        "chemModel": CHEM_CHECKPOINT.name,
+        "collected": _corrections_count(),
+    }
 
 
 @app.post("/recognize", response_model=RecognizeResponse)
@@ -134,21 +158,33 @@ def recognize(req: RecognizeRequest):
             )
         return RecognizeResponse(latex=text, confidence=confidence)
 
+    model, tokenizer = (CHEM_MODEL, CHEM_TOKENIZER) if req.mode == "chem" else (MODEL, TOKENIZER)
     image = torch.from_numpy(strokes_to_array(strokes)).unsqueeze(0).to(DEVICE)
     with torch.no_grad():
-        seqs, mean_logp = MODEL.greedy_decode(image, max_len=160)
+        seqs, mean_logp = model.greedy_decode(image, max_len=160)
+    decoded = tokenizer.decode(seqs[0])
+    confidence = float(torch.exp(mean_logp[0]).clamp(0.0, 1.0))
+
+    if req.mode == "chem":
+        # Chemistry interpretation: the expression becomes mhchem source
+        # wrapped as \ce{...}, the app's chem storage form. Not chemistry-
+        # expressible -> the RAW decoded LaTeX. No operator normalization on
+        # either path: the user declared this ink chemistry, and `Pr` is
+        # praseodymium, `Sn` is tin — not \Pr / \sin.
+        ce = latex_to_ce(decoded)
+        latex = f"\\ce{{{ce}}}" if ce is not None else decoded
+        return RecognizeResponse(latex=latex, confidence=confidence)
+
     # MathWriting labels write operators as bare letters (log, sin, lim …) so
     # the model does too — reconstruct proper \operators deterministically.
-    latex = normalize_operators(TOKENIZER.decode(seqs[0]))
-    confidence = float(torch.exp(mean_logp[0]).clamp(0.0, 1.0))
-    return RecognizeResponse(latex=latex, confidence=confidence)
+    return RecognizeResponse(latex=normalize_operators(decoded), confidence=confidence)
 
 
 class CollectRequest(BaseModel):
     strokes: list[Stroke]
     label: str = Field(min_length=1)  # the CORRECT LaTeX the user typed
     predicted: str | None = None  # what the model guessed (for error analysis)
-    mode: Literal["math", "text"] = "math"
+    mode: Literal["math", "text", "chem"] = "math"
 
 
 class CollectResponse(BaseModel):

@@ -42,6 +42,8 @@ export interface UseCollab {
   snapshot: () => Uint8Array | null;
   /** Announce which block this user is editing (their "typing line"), for peers. */
   setEditing: (blockId: string | null) => void;
+  /** Announce this user's caret / selection within the edited block, for the cursor overlay. */
+  setCursor: (cursor: PeerInfo["cursor"]) => void;
 }
 
 export interface UseCollabOpts {
@@ -171,5 +173,9 @@ export function useCollab({ noteId, access, enabled, pkg, applyRemoteTree }: Use
     providerRef.current?.updatePresence({ editingId: blockId });
   }, []);
 
-  return { peers, connected, active, pushLocalTree, snapshot, setEditing };
+  const setCursor = useCallback((cursor: PeerInfo["cursor"]) => {
+    providerRef.current?.updatePresence({ cursor: cursor ?? null });
+  }, []);
+
+  return { peers, connected, active, pushLocalTree, snapshot, setEditing, setCursor };
 }

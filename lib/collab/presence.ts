@@ -13,6 +13,12 @@ export interface PeerInfo {
   clientId: number;
   /** Block id this peer is currently editing (their "typing line"), or null. */
   editingId?: string | null;
+  /**
+   * Live caret / selection within `editingId`, as character offsets into the
+   * block's source text. `start === end` (or `end` omitted) is a plain caret;
+   * a range is a selection. Drives the collaborator cursor overlay.
+   */
+  cursor?: { blockId: string; start: number; end: number } | null;
 }
 
 /** Deterministic, stable HSL color for a user id (same id → same color everywhere). */

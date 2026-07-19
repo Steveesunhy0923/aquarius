@@ -45,7 +45,9 @@ import { ModuleFieldsDialog } from "@/components/ModuleFieldsDialog";
 import { NoteLinkPicker, type NoteLinkPick } from "@/components/NoteLinkPicker";
 import { makeNoteHref, NOTE_LINK_EVENT, type NoteLinkTarget } from "@/lib/blocks/notelink";
 import { useAuth } from "@/lib/auth/AuthProvider";
-import { documentToLatex } from "@/lib/blocks";
+import { CommandPalette } from "@/components/CommandPalette";
+import { blockToKatex, documentToLatex } from "@/lib/blocks";
+import { latexToExpr } from "@/lib/blocks/latex-expr";
 import { ceInner, isChemBlock, tagChem, wrapCe } from "@/lib/blocks/chem";
 import { CHEM_SYMBOLS } from "@/lib/chemsymbols";
 import { emptyDocument } from "@/lib/blocks/types";
@@ -61,7 +63,7 @@ import {
 } from "@/lib/blocks/outline";
 import { paginate } from "@/lib/editor/pagination";
 import { moveRowItemAcross, reorderRowItem, type RowItems } from "@/lib/editor/rowItems";
-import type { DocHandle } from "@/lib/editor/types";
+import type { DocHandle, EditorCommand } from "@/lib/editor/types";
 import {
   HEADING_NAMES,
   computeHeadingNumbers,
@@ -87,7 +89,7 @@ import {
   isParagraph,
   paragraphFromSource,
 } from "@/lib/blocks/source";
-import { graphModel, makeGraphBlock, withGraph, type GraphData } from "@/lib/blocks/graph";
+import { defaultGraph, fitViewToExpr, graphModel, makeGraphBlock, newGraphId, SHAPE_PALETTE, withGraph, type GraphData } from "@/lib/blocks/graph";
 import { DEFAULT_HIGHLIGHT } from "@/lib/blocks/format";
 import { A4_W, A4_H, fontFamilyOf } from "@/lib/blocks/docstyle";
 import { listItems, listOrdered, makeList, withList, type ListMarker } from "@/lib/blocks/lists";
@@ -101,10 +103,12 @@ import {
   type TableStyle,
 } from "@/lib/blocks/tables";
 import type { Block, DocumentStyle, DocumentTree, Placement } from "@/lib/blocks/types";
+import { HistoryPanel } from "@/components/HistoryPanel";
+import { CollabCursors, type RemoteCursor } from "@/components/CollabCursors";
 import { getStore, isCloudActive } from "@/lib/storage";
-import type { NotePackage } from "@/lib/storage/types";
+import type { NotePackage, NoteSnapshot } from "@/lib/storage/types";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import {
   useCallback,
   useEffect,
@@ -142,6 +146,8 @@ const TABLE_ROW: RowItems<TableData> = { items: tableItems, withItems: withTable
 // Which strip the symbol bar shows (math or chemistry) — persisted like the
 // toolbar's editable slots: a global preference, last write wins across panes.
 const BAR_MODE_KEY = "aquarius.symbolbar";
+/** Min gap between throttled auto version-history snapshots (4 min). */
+const AUTO_VERSION_INTERVAL_MS = 4 * 60 * 1000;
 
 function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, onSaved, handleRef }: DocProps) {
   const { loading: authLoading, user } = useAuth();
@@ -184,6 +190,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   // holds the pending insertion, run via `proceed` once values are gathered.
   const [fieldsPrompt, setFieldsPrompt] = useState<{ name: string; fields: string[]; proceed: (values: Record<string, string>) => void } | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false); // version-history timeline
   // Current user's access to this note: "owner" (incl. local/guest), an editor
   // role, or a read-only role. Drives the Share dialog and read-only mode.
   const [access, setAccess] = useState<Access>("owner");
@@ -229,6 +236,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   const redoStack = useRef<DocumentTree[]>([]);
   const lastSnapAt = useRef(0);
   const lastSnapCoalesced = useRef(false);
+  const lastAutoVersionAt = useRef(0); // throttle auto version-history snapshots
   const taRef = useRef<HTMLTextAreaElement>(null);
   const caretRef = useRef(0);
   const sticky = useRef(false);
@@ -282,9 +290,26 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   }, [pkg, collab.active, collab.pushLocalTree]);
   // Announce which block we're editing so peers can flag our "typing line".
   useEffect(() => {
-    if (collab.active) collab.setEditing(editingId);
+    if (!collab.active) return;
+    collab.setEditing(editingId);
+    if (!editingId) collab.setCursor(null); // left the block → clear our caret for peers
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editingId, collab.active, collab.setEditing]);
+  // Broadcast our caret / selection for the collaborator-cursor overlay. A single
+  // document-level `selectionchange` listener covers typing, arrow-key moves and
+  // clicks across every editor surface (they're all <textarea>s in this pane).
+  useEffect(() => {
+    if (!collab.active) return;
+    const onSel = () => {
+      const ae = document.activeElement as HTMLTextAreaElement | null;
+      if (!editingId || !ae || ae.tagName !== "TEXTAREA" || !rootRef.current?.contains(ae)) return;
+      const start = ae.selectionStart ?? 0;
+      const end = ae.selectionEnd ?? start;
+      collab.setCursor({ blockId: editingId, start: Math.min(start, end), end: Math.max(start, end) });
+    };
+    document.addEventListener("selectionchange", onSel);
+    return () => document.removeEventListener("selectionchange", onSel);
+  }, [collab.active, editingId, collab.setCursor]);
   // Map of blockId → peers (excluding self) currently editing that block.
   const selfId = user?.id ?? null;
   const remoteEditing = useMemo(() => {
@@ -295,6 +320,18 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
       if (arr) arr.push(p); else m.set(p.editingId, [p]);
     }
     return m;
+  }, [collab.peers, selfId]);
+  // Remote peers' carets/selections (excluding self). "measurable" = do a precise
+  // text-node caret (prose/headings) vs. anchoring at the block's leading edge.
+  const remoteCursors = useMemo<RemoteCursor[]>(() => {
+    const out: RemoteCursor[] = [];
+    for (const p of collab.peers) {
+      if (p.userId === selfId || !p.cursor) continue;
+      const blk = pkgRef.current?.tree.blocks.find((b) => b.id === p.cursor!.blockId);
+      const measurable = blk?.type === "text" || blk?.type === "heading";
+      out.push({ peer: p, blockId: p.cursor.blockId, start: p.cursor.start, end: p.cursor.end, measurable });
+    }
+    return out;
   }, [collab.peers, selfId]);
   // Flush any pending save when the tab is hidden/closed or the editor unmounts
   // (e.g. navigating back to the library), so the debounced write isn't lost.
@@ -666,7 +703,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   function reorderSections(fromId: string, toId: string | null) {
     setBlocks((bs) => reorderSectionBlocks(bs, fromId, toId));
   }
-  useImperativeHandle(handleRef, () => ({ scrollToBlock, scrollToTop, toggleSection, reorderSections, saveSectionAsModule: (hid: string) => void saveSectionAsModule(hid) }), [handleRef]);
+  useImperativeHandle(handleRef, () => ({ scrollToBlock, scrollToTop, toggleSection, reorderSections, saveSectionAsModule: (hid: string) => void saveSectionAsModule(hid), insertModule: paletteInsertModule, runCommand, canWrite: () => !readOnlyRef.current }), [handleRef]);
   // Report the outline to the page whenever it actually changes (not every keystroke).
   const lastOutline = useRef("");
   useEffect(() => {
@@ -1055,6 +1092,99 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     else addBlock(makeGraphBlock(graph), false);
     setGraphEdit(null);
   }
+  /** "Plot this equation": drop a graph block (framed to fit the curve) right
+   *  after a display formula, plotting it as y = f(x). Gated by `plottableExpr`
+   *  so it only runs on formulas that actually parse to a function of x. */
+  function plotEquation(b: Block, expr: string) {
+    if (readOnlyRef.current) return;
+    const g = defaultGraph();
+    g.view = fitViewToExpr(expr);
+    g.shapes = [{ id: newGraphId(), kind: "function", expr, color: SHAPE_PALETTE[0] }];
+    const gb = makeGraphBlock(g);
+    setBlocks((bs) => {
+      const i = bs.findIndex((x) => x.id === b.id);
+      const next = [...bs];
+      next.splice(i < 0 ? bs.length : i + 1, 0, gb);
+      return next;
+    });
+    setEditingId(null);
+    setSelected(null);
+    setTimeout(() => scrollToBlock(gb.id), 60);
+  }
+
+  // ── ⌘K command palette bridge ─────────────────────────────────────────────
+  /** Insert a module (or preset stack) as a fresh section after the cursor.
+   *  Unlike the slash flow there is no `/query` paragraph to clean up, so this
+   *  just splices after the current anchor (or appends), raising the fields
+   *  dialog for `{{token}}` modules exactly like the slash inserter. */
+  function paletteInsertModule(m: Module) {
+    if (readOnlyRef.current) return;
+    const anchorId = editingId ?? selected?.id ?? null;
+    const proceed = (values: Record<string, string>) => {
+      const fresh = fillFields(freshBlocks(m.blocks), values);
+      if (fresh.length === 0) return;
+      setBlocks((bs) => {
+        const i = anchorId ? bs.findIndex((b) => b.id === anchorId) : -1;
+        const next = [...bs];
+        if (i < 0) next.push(...fresh);
+        else next.splice(i + 1, 0, ...fresh);
+        return next;
+      });
+      recordModuleUse(m.id);
+      setEditingId(null);
+      setSelected(null);
+      setTimeout(() => scrollToBlock(fresh[0].id), 60);
+    };
+    const fields = moduleFields(m.blocks);
+    if (fields.length === 0) { proceed({}); return; }
+    setFieldsPrompt({ name: m.name, fields, proceed });
+  }
+
+  /** Dispatch a named palette command to the matching editor action. */
+  function runCommand(cmd: EditorCommand) {
+    switch (cmd) {
+      case "insertParagraph": addBlock(paragraphFromSource("")); break;
+      case "insertHeading": insertHeading(2); break;
+      case "insertList": insertList(false); break;
+      case "insertEquation": insertEquation(); break;
+      case "insertTable": setTablePicker(true); break;
+      case "insertGraph": setGraphEdit({ id: null }); break;
+      case "insertImage": newImageRow(); break;
+      case "undo": undo(); break;
+      case "redo": redo(); break;
+      case "save": void save(); break;
+      case "print": void printPdf(); break;
+      case "toggleSource": setShowSource((v) => !v); break;
+      case "openShare": setShareOpen(true); break;
+      case "openTemplates": setTemplatesOpen(true); break;
+      case "openSymbols": setSymbolsOpen(true); break;
+      case "openInk": setInkOpen(true); break;
+      case "openHistory": setHistoryOpen(true); break;
+    }
+  }
+
+  // ── version history ────────────────────────────────────────────────────────
+  /** Save the current tree as a named manual version (persists latest first). */
+  async function saveVersion(label: string) {
+    if (readOnlyRef.current) return;
+    await save();
+    const tree = pkgRef.current?.tree;
+    if (!tree) return;
+    await getStore().saveSnapshot(id, tree, { label, kind: "manual" });
+    lastAutoVersionAt.current = Date.now(); // a manual save resets the auto throttle
+  }
+  /** Replace the note with a past version. The current tree is snapshotted first
+   *  (as a version AND onto the undo stack) so the restore is reversible. */
+  async function restoreSnapshot(snap: NoteSnapshot) {
+    if (readOnlyRef.current) return;
+    const cur = pkgRef.current;
+    if (!cur) return;
+    try { await getStore().saveSnapshot(id, cur.tree, { label: "Before restore", kind: "auto" }); } catch { /* best-effort */ }
+    snapshot(false); // push current tree so Ctrl-Z undoes the restore
+    applyTree(snap.tree);
+    setHistoryOpen(false);
+    void saveFnRef.current();
+  }
 
   // ── images ────────────────────────────────────────────────────────────────
   async function onPickImage(e: ChangeEvent<HTMLInputElement>) {
@@ -1209,6 +1339,14 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
         // Only clear the dirty flag if nothing changed while we were writing;
         // otherwise leave it dirty so the debounce schedules another save.
         if (pkgRef.current === p && titleRef.current === t) setSaved(true);
+        // Version-history timeline: capture an auto snapshot of the saved tree,
+        // throttled so rapid autosaves don't flood history (pruned to the newest
+        // AUTO_SNAPSHOT_KEEP in the store). Best-effort — never fails the save.
+        const nowMs = Date.now();
+        if (nowMs - lastAutoVersionAt.current > AUTO_VERSION_INTERVAL_MS) {
+          lastAutoVersionAt.current = nowMs;
+          void store.saveSnapshot(id, p.tree, { label: "Autosave", kind: "auto" }).catch(() => {});
+        }
       } catch (e) {
         console.error("save failed", e);
       } finally {
@@ -1327,6 +1465,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
         {collab.active && <PresenceAvatars peers={collab.peers} selfId={user?.id ?? null} connected={collab.connected} />}
         {isCloudActive() && <button onClick={() => setShareOpen(true)} title="Share this document" aria-label="Share" className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent"><Icon name="share" size={16} />Share</button>}
         <button onClick={() => setShowSource((s) => !s)} title={showSource ? "Back to the visual editor" : "Show the LaTeX source"} aria-label={showSource ? "Show visual editor" : "Show LaTeX source"} aria-pressed={showSource} className={`${HEAD_BTN_BASE} ${showSource ? "bg-accent-soft text-accent" : HEAD_BTN_HOVER}`}><Icon name="code" size={18} /></button>
+        <button onClick={() => setHistoryOpen(true)} title="Version history" aria-label="Version history" className={`${HEAD_BTN_BASE} ${HEAD_BTN_HOVER}`}><Icon name="history" size={18} /></button>
         <ExportMenu noteId={id} title={title} beforeExport={save} onPdf={printPdf} label={<Icon name="export" size={18} />} className={HEAD_BTN} />
         {readOnly
           ? <span className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm text-muted"><Icon name="lock" size={15} />{access === "commenter" ? "Comment only" : "View only"}</span>
@@ -1455,9 +1594,12 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
                             className="relative"
                             style={editors ? { outline: `2px solid ${editors[0].color}`, outlineOffset: "3px", borderRadius: "3px" } : undefined}
                           >
+                            {/* The peer's name rides on their live caret flag
+                                (CollabCursors); a peer with no broadcast caret
+                                yet still gets a name pill here as a fallback. */}
                             {editors && (
                               <span className="print-hide pointer-events-none absolute -top-2.5 right-0 z-10 flex gap-1">
-                                {editors.map((peer) => (
+                                {editors.filter((peer) => !peer.cursor).map((peer) => (
                                   <span key={peer.userId} className="rounded px-1.5 py-0.5 text-[10px] font-medium leading-none text-white shadow" style={{ backgroundColor: peer.color }}>{peer.username}</span>
                                 ))}
                               </span>
@@ -1506,7 +1648,10 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
       {tablePicker && <TablePicker onPick={insertTable} onClose={() => setTablePicker(false)} />}
       {inkOpen && !readOnly && (
         <InkInsertPanel
-          onInsert={onInsert}
+          /* Handwritten chemistry arrives as a single \ce{...} — route it through
+             the chem dispatcher (ChemField / inline chem popover / tagged chem
+             block); everything else takes the math path. */
+          onInsert={(tex) => (ceInner(tex) != null ? onInsertChem(tex) : onInsert(tex))}
           onClose={() => setInkOpen(false)}
           markSticky={() => { if (editingId) sticky.current = true; }}
           suspendEscape={symbolsOpen || chemOpen || tablePicker || templatesOpen || !!confirmTemplate || !!moduleEdit || shareOpen || !!graphEdit}
@@ -1528,7 +1673,17 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
           onClose={() => setTemplatesOpen(false)}
         />
       )}
+      {collab.active && <CollabCursors cursors={remoteCursors} blockEls={blockEls} />}
       {shareOpen && <ShareDialog noteId={id} access={access} onClose={() => setShareOpen(false)} />}
+      {historyOpen && (
+        <HistoryPanel
+          noteId={id}
+          canWrite={!readOnly}
+          onClose={() => setHistoryOpen(false)}
+          onRestore={(snap) => void restoreSnapshot(snap)}
+          onSaveVersion={saveVersion}
+        />
+      )}
       {linkPicker && (
         <NoteLinkPicker currentId={id} onPick={insertNoteLink} onClose={() => setLinkPicker(null)} />
       )}
@@ -1576,6 +1731,8 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
       const target = visibleBlocks[vIdx + dir];
       if (target) moveBlock(i, indexById.get(target.id) ?? i);
     };
+    // A display formula that parses to y = f(x) gets a hover "Plot" action.
+    const plotExpr = b.id === editingId ? null : plottableExpr(b);
     return (
       <div className="group relative flex items-start gap-1 rounded-lg px-1 py-0.5 hover:bg-foreground/[0.03]" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); moveBlock(dragFrom.current, i); dragFrom.current = null; }}>
         <div className="print-hide flex flex-col items-center gap-0.5 pt-1 text-faint opacity-0 transition group-hover:opacity-100">
@@ -1693,7 +1850,12 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
           )}
         </div>
 
-        <button onClick={() => deleteBlock(b.id)} title="Delete block" aria-label="Delete block" className="mt-1 grid place-items-center px-1 text-faint opacity-0 transition hover:text-danger group-hover:opacity-100"><Icon name="trash" size={16} /></button>
+        <div className="print-hide flex flex-col items-center">
+          {plotExpr && (
+            <button onClick={() => plotEquation(b, plotExpr)} title="Plot this equation" aria-label="Plot this equation" className="mt-1 grid place-items-center px-1 text-faint opacity-0 transition hover:text-accent group-hover:opacity-100"><Icon name="plot" size={16} /></button>
+          )}
+          <button onClick={() => deleteBlock(b.id)} title="Delete block" aria-label="Delete block" className="mt-1 grid place-items-center px-1 text-faint opacity-0 transition hover:text-danger group-hover:opacity-100"><Icon name="trash" size={16} /></button>
+        </div>
       </div>
     );
   }
@@ -1725,8 +1887,10 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
 
 export default function EditorPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
   const [secondId, setSecondId] = useState<string | null>(null);
   const [activeSlot, setActiveSlot] = useState<"a" | "b">("a");
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const [outlineA, setOutlineA] = useState<OutlineItem[]>([]);
   const [outlineB, setOutlineB] = useState<OutlineItem[]>([]);
   const [notesRev, setNotesRev] = useState(0); // bumped on save → refresh recent files
@@ -1747,6 +1911,25 @@ export default function EditorPage() {
 
   const onHeadingsA = useCallback((o: OutlineItem[]) => setOutlineA(o), []);
   const onHeadingsB = useCallback((o: OutlineItem[]) => setOutlineB(o), []);
+
+  // ⌘K / Ctrl-K toggles the command palette from anywhere in the editor.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Palette note-jump: focus the pane if the note is already open, else navigate.
+  const openNoteFromPalette = useCallback((noteId: string) => {
+    if (noteId === id) { setActiveSlot("a"); handleA.current?.scrollToTop(); }
+    else if (noteId === secondId) { setActiveSlot("b"); handleB.current?.scrollToTop(); }
+    else router.push(`/editor/${noteId}`);
+  }, [id, secondId, router]);
 
   // Note-link clicks: when the target note is already open in a pane, jump to
   // it in place (scroll to the linked section — or the top — and focus the
@@ -1787,7 +1970,12 @@ export default function EditorPage() {
         <Link href="/" className="flex items-center gap-1.5 text-sm text-muted hover:text-accent"><Icon name="back" size={14} />Library</Link>
         <span className="text-sm font-semibold tracking-tight">Aquarius</span>
         {split && <span className="text-xs text-muted">Split view — click a pane to focus its tools &amp; outline</span>}
-        <span className="ml-auto text-xs text-muted">{split ? "2 / 2 open" : "1 open"}</span>
+        <button onClick={() => setPaletteOpen(true)} title="Command palette (⌘K)" className="ml-auto flex items-center gap-1.5 rounded-control border border-border px-2 py-1 text-xs text-muted hover:border-accent hover:text-accent">
+          <Icon name="search" size={13} />
+          <span className="hidden sm:inline">Search</span>
+          <kbd className="rounded border border-border px-1 text-[10px]">⌘K</kbd>
+        </button>
+        <span className="text-xs text-muted">{split ? "2 / 2 open" : "1 open"}</span>
       </div>
 
       <div className="print-flow flex min-h-0 flex-1">
@@ -1804,8 +1992,26 @@ export default function EditorPage() {
           )}
         </div>
       </div>
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        handle={activeHandle.current}
+        currentNoteId={active === "b" && secondId ? secondId : id}
+        onOpenNote={openNoteFromPalette}
+      />
     </div>
   );
+}
+
+/** The plottable `y = f(x)` expression for a display-math block, or null when
+ *  it isn't a single-variable function (chem blocks and non-math never plot). */
+function plottableExpr(b: Block): string | null {
+  if (b.type !== "math" || isChemBlock(b)) return null;
+  try {
+    return latexToExpr(blockToKatex(b))?.expr ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function HeadingDisplay({ block, number }: { block: Block; number?: string }) {

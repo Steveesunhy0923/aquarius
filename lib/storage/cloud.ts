@@ -18,6 +18,7 @@ import { getSupabaseClient } from "@/lib/supabase/client";
 import { getCachedUserId } from "@/lib/supabase/session";
 import { bytesToPgHex, pgHexToBytes } from "@/lib/collab/bytes";
 import { base64ToBlob, blobToBase64, remapSelfNoteLinks, remapTreeAssetIds } from "./bundle";
+import { AUTO_SNAPSHOT_KEEP } from "./types";
 import type {
   AssetBlob,
   AssetRef,
@@ -29,7 +30,10 @@ import type {
   NoteBundleFile,
   NoteMeta,
   NotePackage,
+  NoteSnapshot,
   Notebook,
+  SnapshotKind,
+  SnapshotMeta,
   Subject,
 } from "./types";
 
@@ -423,4 +427,62 @@ export class SupabaseLibraryStore implements LibraryStore {
     await this.updateNoteMeta(newNoteId, { tags: [...bundle.meta.tags], thumbnail: bundle.meta.thumbnail });
     return (await this.getNoteMeta(newNoteId))!;
   }
+
+  // ── Version history (tree snapshots) ─────────────────────────────────────────
+  // Backed by `note_snapshots` (migration 0011). RLS: readable by any note
+  // participant, writable/deletable per role. `tree` is stored as jsonb — the
+  // same shape as note_packages.tree — so restore is a plain read.
+  async listSnapshots(noteId: EntityId): Promise<SnapshotMeta[]> {
+    const { data, error } = await this.sb.from("note_snapshots")
+      .select("id,note_id,label,kind,created_at").eq("note_id", noteId)
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    return (data as SnapshotRow[]).map(snapMetaFromRow);
+  }
+
+  async saveSnapshot(noteId: EntityId, tree: DocumentTree, opts: { label: string; kind: SnapshotKind }): Promise<SnapshotMeta> {
+    const id = newId();
+    const created_at = new Date().toISOString();
+    const { error } = await this.sb.from("note_snapshots")
+      .insert({ id, note_id: noteId, label: opts.label, kind: opts.kind, tree, created_at });
+    if (error) throw error;
+    if (opts.kind === "auto") await this.pruneAutoSnapshots(noteId);
+    return { id, noteId, label: opts.label, kind: opts.kind, createdAt: created_at };
+  }
+
+  async getSnapshot(id: EntityId): Promise<NoteSnapshot | undefined> {
+    const { data, error } = await this.sb.from("note_snapshots")
+      .select("id,note_id,label,kind,created_at,tree").eq("id", id).maybeSingle();
+    if (error) throw error;
+    if (!data) return undefined;
+    const row = data as SnapshotRow & { tree: DocumentTree };
+    return { ...snapMetaFromRow(row), tree: row.tree };
+  }
+
+  async deleteSnapshot(id: EntityId): Promise<void> {
+    const { error } = await this.sb.from("note_snapshots").delete().eq("id", id);
+    if (error) throw error;
+  }
+
+  /** Delete auto snapshots beyond the newest AUTO_SNAPSHOT_KEEP for a note. */
+  private async pruneAutoSnapshots(noteId: EntityId): Promise<void> {
+    const { data, error } = await this.sb.from("note_snapshots")
+      .select("id").eq("note_id", noteId).eq("kind", "auto")
+      .order("created_at", { ascending: false });
+    if (error) return; // best-effort; a failed prune must not break the save
+    const ids = (data as { id: string }[]).slice(AUTO_SNAPSHOT_KEEP).map((r) => r.id);
+    if (ids.length) await this.sb.from("note_snapshots").delete().in("id", ids);
+  }
+}
+
+interface SnapshotRow {
+  id: string;
+  note_id: string;
+  label: string;
+  kind: SnapshotKind;
+  created_at: string;
+}
+
+function snapMetaFromRow(r: SnapshotRow): SnapshotMeta {
+  return { id: r.id, noteId: r.note_id, label: r.label, kind: r.kind, createdAt: r.created_at };
 }

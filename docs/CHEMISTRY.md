@@ -76,9 +76,38 @@ works — one click, and the strip is arrows/states/species instead of ∑/∫/�
   chemistry there either.
 - **Structural beta editor** stores an inserted `\ce{...}` as one opaque atom —
   renders/serializes fine, no in-place chem editing.
-- **Chemistry handwriting** (planned): the /ink pipeline is already
-  LaTeX-string-based end to end (`components/ink/InkInsertPanel.tsx` →
-  `onInsert`), so a chemistry-capable recognition model only needs to emit
-  `\ce{...}` strings — route its output through `onInsertChem` for the chem-aware
-  landing. Training data: mhchem sources are linear text, so a synthetic
-  renderer→strokes pipeline like `ml/`'s MathWriting setup should transfer.
+
+## Handwritten chemistry (ink → \ce) — SHIPPED
+
+Chemistry is the third recognition mode of the handwriting pipeline, separate
+from math and text (full model story: [HANDWRITING_MODEL.md](HANDWRITING_MODEL.md)):
+
+- **Contract**: `POST /recognize {strokes, mode:"chem"}` → `{latex:"\ce{...}"}`.
+  The server decodes strokes with the recognition model, then
+  `ml/src/chem_normalize.py` reinterprets the decoded expression AS CHEMISTRY —
+  `2H_{2}+O_{2}\rightarrow 2H_{2}O` becomes `\ce{2H2 + O2 -> 2H2O}`: digit
+  subscripts collapse (mhchem re-subscripts them), `^{2-}`→`^2-` charges,
+  isotope prefixes stay native, arrows map (`\rightarrow`→`->`,
+  `\rightleftharpoons`→`<=>`), `\cdot`→`*` hydrates, `\equiv`→`#`. Operator
+  normalization (`sin`→`\sin`) deliberately does NOT run — `Sn` is tin. An
+  expression mhchem can't express (e.g. `\sqrt`) falls back to plain math LaTeX,
+  so chem mode never corrupts what it doesn't understand.
+- **Model slot**: chem mode auto-loads `ml/checkpoints/chem.pt` (or
+  `INK_CHEM_CHECKPOINT`) when present — the drop-in point for a chem fine-tune;
+  until then it shares the math model, whose vocabulary already covers all
+  chem-critical tokens (letters, digits, `+ ( ) ^ _ =`, both reaction arrows).
+- **UI**: `/ink` lab mode toggle is Math/Chem/Text; the editor's ink sheet has
+  the same Σ/⚗ switch as the symbol strip (switching re-recognizes the ink on
+  the canvas). Chem results render via the mhchem-aware KaTeX everywhere.
+- **Insert routing**: a recognized `\ce{...}` routes through `onInsertChem`
+  (ChemField caret / inline chem popover / tagged chem block) — never the math
+  path (editor page wraps `InkInsertPanel`'s `onInsert` with a `ceInner` check).
+- **Correction capture**: in chem mode the "fix the label" editor edits plain
+  mhchem SOURCE (the app's chemistry-editing convention) with a live `\ce`
+  preview; the stored label is the wrapped `\ce{...}` with `mode:"chem"`, so
+  chem corrections are separable training data.
+- **Training/eval data**: no public online-stroke chemistry dataset exists, so
+  `ml/src/chem_corpus.py` + `ml/src/chem_synth.py` synthesize chemistry ink by
+  stitching real MathWriting symbol strokes (all needed glyphs incl.
+  `\rightleftharpoons` are in its symbols split); `ml/eval_chem.py` benchmarks
+  the chem path. See HANDWRITING_MODEL.md for the found external test sets.

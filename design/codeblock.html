@@ -1,0 +1,242 @@
+<!doctype html><html><head><meta charset="utf-8">
+<title>Aquarius — code block, design directions</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/aaaakshat/cm-web-fonts@latest/fonts.css">
+<style>
+:root{
+  --background:#fbfbfd; --foreground:#17171c; --surface:#ffffff;
+  --border:#ebebf0; --border-soft:#f2f2f6; --accent:#5b5bd6; --accent-soft:#eeeefb;
+  --muted:#8a8a93; --faint:#b9b9c2;
+  --danger:#dc2626; --warning:#b45309; --success:#16a34a;
+  --code-keyword:#6247d6; --code-string:#167a4a; --code-number:#a15c07;
+  --code-comment:#6b6b75; --code-func:#0b7285;
+  /* quieter palette used by the document-native directions */
+  --q-keyword:#5a5570; --q-string:#3f6b52; --q-number:#7a6440; --q-comment:#9a9aa4; --q-func:#4a6470;
+}
+.dark{
+  --background:#0e0e12; --foreground:#ededf2; --surface:#17171d;
+  --border:#2a2a35; --border-soft:#20202a; --accent:#818cf8; --accent-soft:#23233a;
+  --muted:#9ca3af; --faint:#6b7280;
+  --danger:#f87171; --warning:#fbbf24; --success:#4ade80;
+  --code-keyword:#a5aef9; --code-string:#5ec98f; --code-number:#e0aa55;
+  --code-comment:#8b93a1; --code-func:#6cc9de;
+  --q-keyword:#b3b7cf; --q-string:#8fc3a6; --q-number:#c9ae86; --q-comment:#7e8794; --q-func:#9dc0cc;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--background);color:var(--foreground);
+  font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+.wrap{width:1500px;margin:0 auto;padding:28px 24px 40px}
+h1{font-size:19px;font-weight:650;letter-spacing:-.01em;margin:0 0 4px}
+.sub{font-size:13px;color:var(--muted);margin:0 0 22px;max-width:760px;line-height:1.5}
+.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:20px}
+.cell{}
+.label{display:flex;align-items:baseline;gap:8px;margin:0 0 8px}
+.label b{font-size:12.5px;font-weight:650}
+.label span{font-size:11.5px;color:var(--muted)}
+.tag{font-size:10px;font-weight:650;text-transform:uppercase;letter-spacing:.09em;
+  padding:2px 7px;border-radius:999px;background:var(--accent-soft);color:var(--accent)}
+.tag.bad{background:color-mix(in srgb,var(--danger) 12%,transparent);color:var(--danger)}
+/* the page surface, matching the editor */
+.page{background:var(--surface);border-radius:2px;box-shadow:0 1px 2px rgba(20,20,45,.05),0 10px 26px -12px rgba(20,20,45,.12);
+  padding:34px 40px 40px;position:relative}
+.dark .page{box-shadow:0 1px 2px rgba(0,0,0,.4)}
+/* document typography — mirrors the real editor */
+.doc{font-family:"Computer Modern Serif","Latin Modern Roman","CMU Serif",Georgia,serif;font-size:14px;line-height:1.5}
+.doc p{margin:0 0 12px}
+.doc .eq{text-align:center;margin:14px 0 16px;font-size:15px}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.k{color:var(--code-keyword)} .s{color:var(--code-string)} .n{color:var(--code-number)}
+.c{color:var(--code-comment);font-style:italic} .f{color:var(--code-func)}
+.qk{color:var(--q-keyword)} .qs{color:var(--q-string)} .qn{color:var(--q-number)}
+.qc{color:var(--q-comment);font-style:italic} .qf{color:var(--q-func)}
+.op{color:var(--muted)}
+
+/* ─── CURRENT ─────────────────────────────────────────────────────── */
+.cur-card{border:1px solid var(--border);border-radius:8px;background:var(--surface);overflow:hidden;margin:12px 0}
+.cur-head{display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border-soft);padding:5px 8px}
+.cur-lang{font-size:12px;font-weight:500;color:var(--muted);display:flex;align-items:center;gap:4px}
+.cur-sp{flex:1}
+.cur-n{font-size:11px;color:var(--muted)}
+.cur-ic{width:26px;height:26px;display:grid;place-items:center;border-radius:6px;color:var(--accent)}
+.cur-ic.m{color:var(--muted)}
+.cur-code{display:flex;font-size:13px;line-height:1.55;padding:10px 0}
+.cur-gut{width:34px;text-align:right;padding-right:10px;color:var(--faint);user-select:none}
+.cur-out{border-top:1px solid var(--border-soft);padding:8px 12px;font-size:12px;line-height:1.55;color:var(--foreground)}
+
+/* ─── A · LISTING ─────────────────────────────────────────────────── */
+.a-block{position:relative;margin:14px 0 16px}
+.a-code{border-left:2px solid var(--border);padding:2px 0 2px 16px;font-size:12.5px;line-height:1.62}
+.a-out{margin-top:9px;padding-left:16px;border-left:2px solid transparent;
+  font-size:12.5px;line-height:1.62;color:var(--muted);position:relative}
+.a-out::before{content:"→";position:absolute;left:1px;top:0;color:var(--faint);font-size:12px}
+.a-cap{margin-top:7px;padding-left:16px;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint)}
+.a-tools{position:absolute;top:-3px;right:0;display:flex;gap:2px;align-items:center;
+  opacity:.001}
+.a-tools.show{opacity:1}
+.a-ic{width:24px;height:24px;display:grid;place-items:center;border-radius:5px;color:var(--muted)}
+.a-ic.run{color:var(--accent)}
+.hoverlabel{position:absolute;top:-22px;right:0;font-size:10px;color:var(--accent);
+  background:var(--accent-soft);padding:2px 7px;border-radius:999px;letter-spacing:.02em}
+
+/* ─── B · MARGIN NOTEBOOK ─────────────────────────────────────────── */
+.b-row{display:flex;gap:0;margin:14px 0 16px;position:relative}
+.b-margin{width:52px;flex:none;text-align:right;padding-right:12px;padding-top:1px;
+  font-size:11px;color:var(--faint);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.b-body{flex:1;min-width:0}
+.b-code{background:var(--border-soft);border-radius:5px;padding:9px 13px;font-size:12.5px;line-height:1.62}
+.dark .b-code{background:#1c1c24}
+.b-out{margin-top:8px;padding:0 13px;font-size:12.5px;line-height:1.62;color:var(--muted)}
+.b-tools{position:absolute;left:0;top:22px;display:flex;flex-direction:column;gap:2px;align-items:flex-end;width:40px}
+.b-ic{width:22px;height:22px;display:grid;place-items:center;border-radius:5px;color:var(--accent)}
+
+/* ─── C · QUIET CARD ──────────────────────────────────────────────── */
+.c-card{border:1px solid var(--border-soft);border-radius:6px;background:color-mix(in srgb,var(--border-soft) 45%,transparent);
+  padding:10px 14px 8px;margin:14px 0 16px;position:relative}
+.dark .c-card{background:#191920;border-color:#23232c}
+.c-code{font-size:12.5px;line-height:1.62}
+.c-out{margin-top:9px;padding-top:8px;border-top:1px dashed var(--border);font-size:12.5px;line-height:1.62;color:var(--muted)}
+.c-foot{display:flex;align-items:center;margin-top:7px}
+.c-lang{font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint)}
+.c-sp{flex:1}
+.c-tools{display:flex;gap:2px;opacity:.001}
+.c-tools.show{opacity:1}
+
+.note{font-size:11.5px;color:var(--muted);line-height:1.5;margin:9px 2px 0}
+.note b{color:var(--foreground);font-weight:600}
+svg{display:block}
+svg :is(path,circle,rect,line,polyline,polygon){fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}
+svg polygon.fill{fill:currentColor;stroke:currentColor}
+</style></head>
+<body>
+<div class="wrap">
+  <h1>Code block — why it doesn't fit, and three ways out</h1>
+  <p class="sub">Same note, same snippet, same output. The document is Computer Modern at 14px on an A4 page where
+     nothing else is boxed and every control is hover-revealed in the margin.</p>
+
+  <div class="grid">
+
+    <!-- CURRENT ---------------------------------------------------- -->
+    <div class="cell">
+      <div class="label"><b>Current</b><span class="tag bad">ships today</span></div>
+      <div class="page">
+        <div class="doc">
+          <p>The damped oscillator loses energy each cycle. With <i>γ</i> the damping ratio, the amplitude decays
+             exponentially, so we integrate numerically to see the envelope.</p>
+          <div class="cur-card">
+            <div class="cur-head">
+              <span class="cur-lang">Python
+                <svg width="11" height="11" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></span>
+              <span class="cur-sp"></span>
+              <span class="cur-n mono">[1]</span>
+              <span class="cur-ic"><svg width="15" height="15" viewBox="0 0 24 24"><polygon points="6 3 20 12 6 21 6 3"/></svg></span>
+              <span class="cur-ic m"><svg width="15" height="15" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg></span>
+            </div>
+            <div class="cur-code mono">
+              <div class="cur-gut">1<br>2<br>3<br>4<br>5</div>
+              <div><span class="k">import</span> math<br><br>
+                <span class="k">def</span> <span class="f">envelope</span>(a0, gamma, t):<br>
+                &nbsp;&nbsp;&nbsp;&nbsp;<span class="k">return</span> a0 <span class="op">*</span> math.<span class="f">exp</span>(<span class="op">-</span>gamma <span class="op">*</span> t)<br>
+              </div>
+            </div>
+            <div class="cur-out mono">0 1.0<br>1 0.6703<br>2 0.4493</div>
+          </div>
+          <p>The printed values match the analytic envelope to four decimals.</p>
+        </div>
+      </div>
+      <p class="note"><b>The mismatch:</b> a permanent toolbar, a hard-bordered card and a line-number gutter — IDE
+        furniture on a page that has no other boxes. The code column starts 34px right of the prose margin, the
+        output has the same weight as the code, and none of this is what the exported PDF shows.</p>
+    </div>
+
+    <!-- A · LISTING ------------------------------------------------- -->
+    <div class="cell">
+      <div class="label"><b>A · Listing</b><span class="tag">recommended</span></div>
+      <div class="page">
+        <div class="doc">
+          <p>The damped oscillator loses energy each cycle. With <i>γ</i> the damping ratio, the amplitude decays
+             exponentially, so we integrate numerically to see the envelope.</p>
+          <div class="a-block">
+            <span class="hoverlabel">on hover / while editing ↓</span>
+            <div class="a-tools show">
+              <span class="a-ic run"><svg width="14" height="14" viewBox="0 0 24 24"><polygon class="fill" points="7 4 19 12 7 20 7 4"/></svg></span>
+              <span class="a-ic"><svg width="14" height="14" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg></span>
+            </div>
+            <div class="a-code mono">
+              <span class="qk">import</span> math<br><br>
+              <span class="qk">def</span> <span class="qf">envelope</span>(a0, gamma, t):<br>
+              &nbsp;&nbsp;&nbsp;&nbsp;<span class="qk">return</span> a0 * math.<span class="qf">exp</span>(-gamma * t)
+            </div>
+            <div class="a-out mono">0 1.0<br>1 0.6703<br>2 0.4493</div>
+            <div class="a-cap">Python · run 1</div>
+          </div>
+          <p>The printed values match the analytic envelope to four decimals.</p>
+        </div>
+      </div>
+      <p class="note"><b>Reads as a listing, not an app.</b> One hairline rule marks the code the way a blockquote
+        marks a quote; the result hangs off an <span class="mono">→</span> below it. Language and run counter sit in a
+        caption, like a figure's. Run/⋯ fade in on hover or while the caret is inside. No line numbers, no card,
+        no header — and this is exactly what prints.</p>
+    </div>
+
+    <!-- B · MARGIN NOTEBOOK ----------------------------------------- -->
+    <div class="cell">
+      <div class="label"><b>B · Margin notebook</b><span class="tag">jupyter nod</span></div>
+      <div class="page">
+        <div class="doc">
+          <p>The damped oscillator loses energy each cycle. With <i>γ</i> the damping ratio, the amplitude decays
+             exponentially, so we integrate numerically to see the envelope.</p>
+          <div class="b-row">
+            <div class="b-tools">
+              <span class="b-ic"><svg width="13" height="13" viewBox="0 0 24 24"><polygon class="fill" points="7 4 19 12 7 20 7 4"/></svg></span>
+            </div>
+            <div class="b-margin">[1]</div>
+            <div class="b-body">
+              <div class="b-code mono">
+                <span class="qk">import</span> math<br><br>
+                <span class="qk">def</span> <span class="qf">envelope</span>(a0, gamma, t):<br>
+                &nbsp;&nbsp;&nbsp;&nbsp;<span class="qk">return</span> a0 * math.<span class="qf">exp</span>(-gamma * t)
+              </div>
+              <div class="b-out mono">0 1.0<br>1 0.6703<br>2 0.4493</div>
+            </div>
+          </div>
+          <p>The printed values match the analytic envelope to four decimals.</p>
+        </div>
+      </div>
+      <p class="note"><b>Chrome leaves the page entirely.</b> The run counter becomes a margin note (a
+        <span class="mono">\marginpar</span>, the notebook idea done in print language) and Run joins the existing
+        move/drag controls in the page gutter. The code keeps a faint tint so a cell is still scannable.</p>
+    </div>
+
+    <!-- C · QUIET CARD ---------------------------------------------- -->
+    <div class="cell">
+      <div class="label"><b>C · Quiet card</b><span class="tag">smallest change</span></div>
+      <div class="page">
+        <div class="doc">
+          <p>The damped oscillator loses energy each cycle. With <i>γ</i> the damping ratio, the amplitude decays
+             exponentially, so we integrate numerically to see the envelope.</p>
+          <div class="c-card">
+            <div class="c-code mono">
+              <span class="qk">import</span> math<br><br>
+              <span class="qk">def</span> <span class="qf">envelope</span>(a0, gamma, t):<br>
+              &nbsp;&nbsp;&nbsp;&nbsp;<span class="qk">return</span> a0 * math.<span class="qf">exp</span>(-gamma * t)
+            </div>
+            <div class="c-out mono">0 1.0<br>1 0.6703<br>2 0.4493</div>
+            <div class="c-foot">
+              <span class="c-lang">Python · run 1</span>
+              <span class="c-sp"></span>
+              <span class="c-tools show">
+                <span class="a-ic run"><svg width="13" height="13" viewBox="0 0 24 24"><polygon class="fill" points="7 4 19 12 7 20 7 4"/></svg></span>
+                <span class="a-ic"><svg width="13" height="13" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg></span>
+              </span>
+            </div>
+          </div>
+          <p>The printed values match the analytic envelope to four decimals.</p>
+        </div>
+      </div>
+      <p class="note"><b>Keeps a container, drops the furniture.</b> Tinted surface instead of a hard border, no
+        header bar, no line numbers, caption-style language line, controls on hover. Still a box on a page with no
+        other boxes — but the least disruptive of the three.</p>
+    </div>
+
+  </div>
+</div>
+</body></html>

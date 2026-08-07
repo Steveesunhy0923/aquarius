@@ -18,6 +18,7 @@ import type {
   InlineRun,
 } from "./types";
 import { escapeLatex } from "./captions";
+import { codeLangInfo, codeOutputs } from "./codeblock";
 import { formatToLatex } from "./format";
 import { graphModel, graphToTikz } from "./graph";
 import { headingToLatex } from "./headings";
@@ -292,12 +293,44 @@ function serializeIdentifier(b: Block): string {
   return b.value ?? "";
 }
 
-/** code → an lstlisting verbatim block. Not math; used in document body. */
+/**
+ * A listing body is verbatim EXCEPT for two hazards:
+ *  - `\end{lstlisting}` would end the environment early and leak arbitrary
+ *    LaTeX into the compile; an inserted space defuses the token at the cost
+ *    of one character in that (pathological) line.
+ *  - C0 control bytes (ANSI color escapes from a colorized traceback, BEL,
+ *    NUL…) make TeX abort with "Text line contains an invalid character".
+ *    ANSI sequences are dropped whole; other controls except tab/newline go.
+ */
+function guardListing(s: string): string {
+  return s
+    // eslint-disable-next-line no-control-regex
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "")
+    .replace(/\\end\{lstlisting\}/g, "\\end {lstlisting}");
+}
+
+/** code → an lstlisting block (+ a grayed listing of the captured outputs).
+ *  The language is mapped to a listings-known name (codeblock.ts) — unmapped
+ *  languages emit no [language=…] so the compile never sees an unknown name;
+ *  julia/css/javascript/… have no-op definitions in the preamble (pdf.ts). */
 function serializeCode(b: Block): string {
-  const a = attrs(b);
-  const lang = a.lang ?? "text";
-  const source = b.value ?? "";
-  return `\\begin{lstlisting}[language=${lang}]\n${source}\n\\end{lstlisting}`;
+  const info = codeLangInfo(b);
+  const source = guardListing(b.value ?? "");
+  const opt = info.listings ? `[language=${info.listings}]` : "";
+  // The `% requires` comments follow the convention used by the table/image
+  // serializers, so a hand-compiled .tex export knows what its preamble needs.
+  let out = `% requires \\usepackage{listings}\n\\begin{lstlisting}${opt}\n${source}\n\\end{lstlisting}`;
+  const outputs = codeOutputs(b);
+  if (outputs.length > 0) {
+    const text = guardListing(outputs.map((o) => o.text).join("").replace(/\n$/, ""));
+    out +=
+      `\n% run output — requires \\usepackage{xcolor}\n` +
+      `\\begin{lstlisting}[frame=leftline,rulecolor=\\color{gray},basicstyle=\\ttfamily\\footnotesize\\color{darkgray}]\n` +
+      `${text}\n\\end{lstlisting}`;
+  }
+  return out;
 }
 
 /** Read the legacy horizontal-offset fraction (0..1) for \hspace*{x\linewidth}. */

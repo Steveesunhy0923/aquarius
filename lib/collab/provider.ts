@@ -2,13 +2,19 @@
  * SupabaseYjsProvider — binds one Y.Doc to a Supabase Realtime channel so edits
  * flow peer↔peer in real time, with presence for avatars.
  *
- * Transport: a per-note channel `note:<id>`. Three broadcast events:
+ * Transport: a per-note channel `note:<id>`. Broadcast events:
  *   • "sync"       {from, sv, state} — sent on every (re)subscribe. Carries the
  *                  sender's FULL state (so receivers merge anything they lack,
  *                  including edits made while a peer was offline) plus its state
  *                  vector (so receivers can reply with the diff the sender lacks).
  *   • "sync-reply" {update}          — the diff a syncing peer was missing.
- *   • "update"     {update}          — an incremental live edit.
+ *   • "update"     {update}          — incremental live edits, COALESCED: rapid
+ *                  keystrokes are merged (Y.mergeUpdates) and flushed on a short
+ *                  timer so a fast typist sends a few messages/sec, not dozens,
+ *                  keeping under the realtime event-rate budget.
+ *   • "chunk"      {id, event, i, n, piece} — any payload over the ~256 KB
+ *                  realtime frame cap is split and reassembled, so large notes'
+ *                  initial "sync" state can't be silently dropped.
  * Yjs merges are commutative + idempotent, so this push+pull-on-join handshake
  * converges under any message order and any join race — no leader election.
  *
@@ -43,8 +49,14 @@ export interface ProviderOpts {
 
 // Empty Yjs updates encode to 2 bytes; skip replying with "nothing to send".
 const EMPTY_UPDATE_LEN = 2;
-// Soft warning threshold for a single broadcast payload (Realtime caps ~256 KB).
-const PAYLOAD_WARN_BYTES = 180_000;
+// Coalesce outgoing live updates over this window before broadcasting one merged
+// message — smooths fast typing under the realtime event-rate budget.
+const UPDATE_FLUSH_MS = 30;
+// Leading-edge throttle for presence (cursor/editing) tracking.
+const TRACK_THROTTLE_MS = 50;
+// Max characters per broadcast payload; larger payloads are chunked. Realtime's
+// hard frame cap is ~256 KB — stay well under it to leave room for envelope JSON.
+const MAX_FRAME = 180_000;
 
 export class SupabaseYjsProvider {
   private channel: RealtimeChannel | null = null;
@@ -53,13 +65,23 @@ export class SupabaseYjsProvider {
   private readonly selfState: PeerInfo;
   private readonly onUpdate: (update: Uint8Array, origin: unknown) => void;
 
+  // Outgoing update coalescing.
+  private pendingUpdates: Uint8Array[] = [];
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
+  // Presence track throttling.
+  private trackTimer: ReturnType<typeof setTimeout> | null = null;
+  private trackPending = false;
+  // Inbound chunk reassembly, keyed by sender-scoped id.
+  private chunkSeq = 0;
+  private readonly chunks = new Map<string, { n: number; parts: string[] }>();
+
   constructor(private readonly opts: ProviderOpts) {
     this.selfState = { ...opts.self };
     this.onUpdate = (update, origin) => {
       // Don't rebroadcast what we just applied from a peer.
       if (origin === ORIGIN_REMOTE) return;
       if (!this._connected) return; // offline edits ship via the next "sync"
-      this.send("update", { update: bytesToBase64(update) });
+      this.queueUpdate(update);
     };
   }
 
@@ -80,21 +102,10 @@ export class SupabaseYjsProvider {
     });
     this.channel = channel;
 
-    channel.on("broadcast", { event: "update" }, ({ payload }) => {
-      this.applyRemote(payload?.update);
-    });
-    channel.on("broadcast", { event: "sync-reply" }, ({ payload }) => {
-      this.applyRemote(payload?.update);
-    });
-    channel.on("broadcast", { event: "sync" }, ({ payload }) => {
-      // Merge the sender's full state (covers their offline edits)…
-      this.applyRemote(payload?.state);
-      // …then reply with whatever the sender is still missing relative to us.
-      if (typeof payload?.sv === "string") {
-        const diff = Y.encodeStateAsUpdate(doc, base64ToBytes(payload.sv));
-        if (diff.length > EMPTY_UPDATE_LEN) this.send("sync-reply", { update: bytesToBase64(diff) });
-      }
-    });
+    channel.on("broadcast", { event: "update" }, ({ payload }) => this.handleEvent("update", payload));
+    channel.on("broadcast", { event: "sync-reply" }, ({ payload }) => this.handleEvent("sync-reply", payload));
+    channel.on("broadcast", { event: "sync" }, ({ payload }) => this.handleEvent("sync", payload));
+    channel.on("broadcast", { event: "chunk" }, ({ payload }) => this.onChunk(payload));
 
     const emitPeers = () => this.emitPeers();
     channel.on("presence", { event: "sync" }, emitPeers);
@@ -107,7 +118,7 @@ export class SupabaseYjsProvider {
   /** Update our presence payload (e.g. which block we're editing) and re-track. */
   updatePresence(patch: Partial<PeerInfo>): void {
     Object.assign(this.selfState, patch);
-    if (this._connected) void this.channel?.track(this.selfState);
+    this.scheduleTrack();
   }
 
   /**
@@ -143,6 +154,10 @@ export class SupabaseYjsProvider {
   destroy(): void {
     const { supabase, doc } = this.opts;
     doc.off("update", this.onUpdate);
+    this.flushUpdates(); // ship any coalesced keystrokes before we tear down
+    if (this.flushTimer) { clearTimeout(this.flushTimer); this.flushTimer = null; }
+    if (this.trackTimer) { clearTimeout(this.trackTimer); this.trackTimer = null; }
+    this.chunks.clear();
     if (this.channel) {
       void this.channel.untrack();
       void supabase.removeChannel(this.channel);
@@ -152,6 +167,38 @@ export class SupabaseYjsProvider {
   }
 
   // ── internals ──────────────────────────────────────────────────────────────
+
+  /** Route a (possibly reassembled) broadcast to its handler. */
+  private handleEvent(event: string, payload: unknown): void {
+    const p = payload as Record<string, unknown> | null | undefined;
+    if (event === "update" || event === "sync-reply") {
+      this.applyRemote(p?.update);
+    } else if (event === "sync") {
+      // Merge the sender's full state (covers their offline edits)…
+      this.applyRemote(p?.state);
+      // …then reply with whatever the sender is still missing relative to us.
+      if (typeof p?.sv === "string") {
+        const diff = Y.encodeStateAsUpdate(this.opts.doc, base64ToBytes(p.sv));
+        if (diff.length > EMPTY_UPDATE_LEN) this.send("sync-reply", { update: bytesToBase64(diff) });
+      }
+    }
+  }
+
+  private queueUpdate(update: Uint8Array): void {
+    this.pendingUpdates.push(update);
+    if (this.flushTimer == null) {
+      this.flushTimer = setTimeout(() => this.flushUpdates(), UPDATE_FLUSH_MS);
+    }
+  }
+
+  private flushUpdates(): void {
+    if (this.flushTimer) { clearTimeout(this.flushTimer); this.flushTimer = null; }
+    if (this.pendingUpdates.length === 0) return;
+    const merged =
+      this.pendingUpdates.length === 1 ? this.pendingUpdates[0] : Y.mergeUpdates(this.pendingUpdates);
+    this.pendingUpdates = [];
+    this.send("update", { update: bytesToBase64(merged) });
+  }
 
   private applyRemote(b64: unknown): void {
     if (typeof b64 !== "string" || b64.length === 0) return;
@@ -165,12 +212,50 @@ export class SupabaseYjsProvider {
   private send(event: string, payload: Record<string, unknown>): void {
     const ch = this.channel;
     if (!ch) return;
-    for (const v of Object.values(payload)) {
-      if (typeof v === "string" && v.length > PAYLOAD_WARN_BYTES) {
-        console.warn(`collab: ${event} payload ~${v.length}B exceeds the realtime budget; large notes may need chunking`);
-      }
+    const json = JSON.stringify(payload);
+    if (json.length <= MAX_FRAME) {
+      void ch.send({ type: "broadcast", event, payload });
+      return;
     }
-    void ch.send({ type: "broadcast", event, payload });
+    // Oversized: frame into ordered chunks reassembled by the receiver.
+    const id = `${this.selfState.clientId}-${this.chunkSeq++}`;
+    const n = Math.ceil(json.length / MAX_FRAME);
+    for (let i = 0; i < n; i++) {
+      void ch.send({
+        type: "broadcast",
+        event: "chunk",
+        payload: { id, event, i, n, piece: json.slice(i * MAX_FRAME, (i + 1) * MAX_FRAME) },
+      });
+    }
+  }
+
+  private onChunk(payload: unknown): void {
+    const p = payload as { id?: unknown; event?: unknown; i?: unknown; n?: unknown; piece?: unknown };
+    if (typeof p?.id !== "string" || typeof p.event !== "string" || typeof p.i !== "number" ||
+        typeof p.n !== "number" || typeof p.piece !== "string") return;
+    // Defensive cap: drop stale partials if a sender vanished mid-transmission.
+    if (this.chunks.size > 16 && !this.chunks.has(p.id)) this.chunks.clear();
+    let buf = this.chunks.get(p.id);
+    if (!buf) { buf = { n: p.n, parts: [] }; this.chunks.set(p.id, buf); }
+    buf.parts[p.i] = p.piece;
+    if (buf.parts.filter((x) => x !== undefined).length < buf.n) return;
+    this.chunks.delete(p.id);
+    try {
+      this.handleEvent(p.event, JSON.parse(buf.parts.join("")));
+    } catch (e) {
+      console.error("collab: failed to reassemble chunked payload", e);
+    }
+  }
+
+  /** Leading-edge-throttled presence track; always sends the latest selfState. */
+  private scheduleTrack(): void {
+    if (!this._connected) return;
+    if (this.trackTimer != null) { this.trackPending = true; return; }
+    void this.channel?.track(this.selfState);
+    this.trackTimer = setTimeout(() => {
+      this.trackTimer = null;
+      if (this.trackPending) { this.trackPending = false; this.scheduleTrack(); }
+    }, TRACK_THROTTLE_MS);
   }
 
   private setConnected(value: boolean): void {

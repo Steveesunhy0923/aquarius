@@ -1,9 +1,18 @@
-# ml/ — handwriting → LaTeX recognition
+# ml/ — Ancha, the handwriting → LaTeX model
 
-Small encoder-decoder model (CNN + Transformer decoder, ~5.5M params) trained
-on Google's [MathWriting 2024](https://github.com/google-research/mathwriting)
+**Ancha** is Aquarius's handwriting recognizer. At her core is a small
+encoder-decoder model (CNN + Transformer decoder, ~5.5M params) trained on
+Google's [MathWriting 2024](https://github.com/google-research/mathwriting)
 online-handwriting dataset, served over the HTTP contract the `/ink` web UI
 already speaks.
+
+Her headline mode is **`auto`**: the user writes words and formulas together
+and never picks a mode. Ancha segments the page geometrically (`src/layout.py`),
+asks Apple Vision for the word boundaries (`src/vision_layout.py`), decides per
+run whether it is prose or a formula, decodes the formulas with her own model,
+and assembles the lot into the app's paragraph source — prose with `\( … \)`
+inline math (`src/unified.py`). With no text engine on the platform she
+degrades to geometry-only rather than failing.
 
 Everything runs from the `ml/` directory with the local venv
 (`ml/.venv`, Python 3.11). `ml/data/`, `ml/checkpoints/`, `ml/.venv/` and
@@ -39,6 +48,11 @@ Traces are `(x, y, t)` triples — no pressure channel.
 .venv/bin/python -m src.render data/mathwriting-2024-excerpt/train/<file>.inkml out.png
 .venv/bin/python -m src.dataset
 .venv/bin/python -m src.model               # prints param count
+.venv/bin/python -m src.latex_normalize     # 18 operator-normalization cases
+.venv/bin/python -m src.chem_normalize      # 26 mhchem conversion cases
+.venv/bin/python -m src.layout              # 25 segmentation cases (pure geometry, no torch)
+.venv/bin/python -m src.vision_layout       # Vision layout analysis (skips off macOS)
+.venv/bin/python -m src.unified             # 14 router/assembly cases (no checkpoint needed)
 ```
 
 ## Train
@@ -54,7 +68,7 @@ Writes `checkpoints/smoke.pt` (weights + vocab + config),
 `checkpoints/smoke_loss.txt`, and `checkpoints/vocab.json`.
 A real model needs the `--full` dataset and a proper training schedule.
 
-## Serve
+## Serve (run Ancha)
 
 ```bash
 .venv/bin/uvicorn serve:app --host 127.0.0.1 --port 8787
@@ -70,8 +84,23 @@ API (contract used by the web `/ink` client — do not change):
   when present (`INK_CHEM_CHECKPOINT` overrides; falls back to the math model)
   and reinterprets the result as chemistry via `src/chem_normalize.py` →
   `\ce{2H2 + O2 -> 2H2O}`; non-chemistry ink falls back to plain math LaTeX.
-- `GET /health` → `{"status":"ok","model":"xl.pt","chemModel":"xl.pt",...}`
+- `GET /health` → `{"status":"ok","name":"Ancha","version":"1.0","checkpoint":"xl.pt","chemCheckpoint":"xl.pt","modes":["auto","math","chem","text"],"textEngine":"apple-vision","collected":N,"accepted":M}`
+- `POST /collect` — a CORRECTION: the user overruled Ancha, so the label is
+  ground truth. → `data/corrections/collected.jsonl`.
+- `POST /collect/accepted` — an ACCEPTANCE: the user inserted Ancha's reading
+  unchanged, so the label is her own output, ratified by use.
+  → `data/accepted/accepted.jsonl` (same record shape, separate file).
+  Body adds `confidence`, and `segments` for a mixed page.
 - CORS: all origins.
+
+**Why two stores.** Corrections are oversampled **x32** in a training run
+(`--corrections-repeat`), because there are only ever a handful and each one is
+a place the model was demonstrably wrong. Acceptances arrive with *every*
+insert, and their label is what the model already predicts — replaying those at
+x32 would drown the corrections and entrench current behavior instead of
+correcting it. Same shape, so `src/dataset.py`'s `load_corrections()` reads the
+accepted file as-is whenever we choose to mix it in, with its own (much
+smaller) repeat. Nothing reads it during training today.
 
 Quick test:
 
@@ -120,6 +149,8 @@ docs/HANDWRITING_MODEL.md §9a.
 
 ```
 data/download_mathwriting.py  dataset fetch/extract (excerpt or --full)
+data/corrections/            samples the user CORRECTED (ground truth, trained x32)
+data/accepted/               samples the user INSERTED UNCHANGED (self-labelled, untrained)
 src/inkml.py                  namespaced InkML parser -> strokes + label
 src/latex_tokenizer.py        LaTeX tokenizer + vocab (<pad>/<sos>/<eos>/<unk>)
 src/render.py                 strokes -> 96x768 grayscale image (shared by train & serve)
@@ -131,8 +162,11 @@ src/chem_corpus.py            chemical-equation label corpus (curated + seeded r
 src/chem_synth.py             synthetic chemistry ink stitched from MathWriting symbol strokes
 src/chem_proxy.py             chem-shaped REAL-ink test set filtered from the MathWriting test split
 src/text_ocr.py               text mode via Apple Vision (macOS)
+src/layout.py                 pure-geometry stroke segmentation: strokes -> lines -> runs
+src/vision_layout.py          Apple Vision layout: line/word boxes mapped back into stroke space
+src/unified.py                the `auto` mode: classify runs, merge, decode, assemble to source
 train.py                      training CLI
-serve.py                      FastAPI recognition server (port 8787)
+serve.py                      Ancha's FastAPI server (port 8787)
 eval_chem.py                  chem-mode benchmark (exact/similarity/conversion metrics)
 export/export_coreml.py       CoreML conversion of encoder + decoder step
 ```

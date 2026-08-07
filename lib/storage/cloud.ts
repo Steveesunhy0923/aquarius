@@ -473,6 +473,118 @@ export class SupabaseLibraryStore implements LibraryStore {
     const ids = (data as { id: string }[]).slice(AUTO_SNAPSHOT_KEEP).map((r) => r.id);
     if (ids.length) await this.sb.from("note_snapshots").delete().in("id", ids);
   }
+
+  // ── Sync-engine surface (see lib/sync/) ───────────────────────────────────
+  //
+  // Verbatim upserts that PRESERVE caller ids/created_at (unlike the public
+  // creators, which mint fresh ids), plus owner-scoped listings. Every upsert
+  // returns the row's post-write `updated_at`: the tables' set_updated_at
+  // trigger stamps now() on UPDATE, and the engine stores that value as the
+  // local `rev` (last-synced marker) — the basis of change detection.
+  //
+  // Owner scoping matters: the notes RLS (0006) also SELECTs rows shared with
+  // this user, and the sync mirror must only ever contain the user's OWN rows.
+
+  async syncListAllOwned(): Promise<{ subjects: Subject[]; notebooks: Notebook[]; notes: NoteMeta[] }> {
+    const uid = await this.uid();
+    const [s, nb, n] = await Promise.all([
+      this.sb.from("subjects").select("*").eq("owner_id", uid),
+      this.sb.from("notebooks").select("*").eq("owner_id", uid),
+      this.sb.from("notes").select("*").eq("owner_id", uid), // incl. soft-deleted
+    ]);
+    if (s.error) throw s.error;
+    if (nb.error) throw nb.error;
+    if (n.error) throw n.error;
+    return {
+      subjects: (s.data as SubjectRow[]).map(subjectFromRow),
+      notebooks: (nb.data as NotebookRow[]).map(notebookFromRow),
+      notes: (n.data as NoteRow[]).map(noteFromRow),
+    };
+  }
+
+  /** updated_at stamps of the user's own note packages, keyed by note id. */
+  async syncListPackageStamps(): Promise<Map<EntityId, string>> {
+    const uid = await this.uid();
+    const { data, error } = await this.sb.from("note_packages")
+      .select("note_id,updated_at,notes!inner(owner_id)").eq("notes.owner_id", uid);
+    if (error) throw error;
+    const rows = data as { note_id: string; updated_at: string }[];
+    return new Map(rows.map((r) => [r.note_id, r.updated_at]));
+  }
+
+  private async upsertReturningStamp(table: string, row: Record<string, unknown>, conflict: string): Promise<string> {
+    const { data, error } = await this.sb.from(table)
+      .upsert(row, { onConflict: conflict }).select("updated_at").single();
+    if (error) throw error;
+    return (data as { updated_at: string }).updated_at;
+  }
+
+  async syncUpsertSubject(s: Subject): Promise<string> {
+    return this.upsertReturningStamp("subjects", {
+      id: s.id, name: s.name, color: s.color, icon: s.icon ?? null,
+      sort_order: s.order, created_at: s.createdAt, updated_at: s.updatedAt,
+    }, "id");
+  }
+
+  async syncUpsertNotebook(n: Notebook): Promise<string> {
+    return this.upsertReturningStamp("notebooks", {
+      id: n.id, subject_id: n.subjectId, name: n.name, color: n.color,
+      sort_order: n.order, created_at: n.createdAt, updated_at: n.updatedAt,
+    }, "id");
+  }
+
+  async syncUpsertNote(m: NoteMeta): Promise<string> {
+    return this.upsertReturningStamp("notes", {
+      id: m.id, notebook_id: m.notebookId, subject_id: m.subjectId,
+      title: m.title, sort_order: m.order, tags: m.tags,
+      thumbnail: m.thumbnail ?? null, mode: m.mode,
+      created_at: m.createdAt, updated_at: m.updatedAt,
+      deleted_at: m.deletedAt ?? null,
+    }, "id");
+  }
+
+  /** Package push. Leaves the `notes` row alone (meta is its own op) and, like
+   *  saveNote, only writes `ydoc` when present so a collab snapshot in the
+   *  cloud is never clobbered by a device that doesn't have one. */
+  async syncUpsertPackage(pkg: NotePackage): Promise<string> {
+    const row: Record<string, unknown> = {
+      note_id: pkg.noteId, tree: pkg.tree, latex_cache: pkg.latexCache,
+      updated_at: pkg.updatedAt,
+    };
+    if (pkg.ydoc != null) row.ydoc = bytesToPgHex(pkg.ydoc);
+    return this.upsertReturningStamp("note_packages", row, "note_id");
+  }
+
+  /** Asset push preserving the LOCAL id — the tree references assets by id, so
+   *  a fresh cloud id would orphan every image block. */
+  async syncUpsertAsset(ref: AssetRef, data: Blob): Promise<void> {
+    const uid = await this.uid();
+    const storage_path = `${uid}/${ref.noteId}/${ref.id}`;
+    const up = await this.sb.storage.from(BUCKET).upload(storage_path, data, { contentType: ref.mime, upsert: true });
+    if (up.error) throw up.error;
+    const { error } = await this.sb.from("assets").upsert({
+      id: ref.id, note_id: ref.noteId, kind: ref.kind, mime: ref.mime,
+      size: ref.size, storage_path, created_at: ref.createdAt,
+    }, { onConflict: "id" });
+    if (error) throw error;
+  }
+
+  /** Snapshot push (immutable — insert once, ignore an existing row). */
+  async syncUpsertSnapshot(snap: NoteSnapshot): Promise<void> {
+    const { error } = await this.sb.from("note_snapshots").upsert({
+      id: snap.id, note_id: snap.noteId, label: snap.label, kind: snap.kind,
+      tree: snap.tree, created_at: snap.createdAt,
+    }, { onConflict: "id", ignoreDuplicates: true });
+    if (error) throw error;
+  }
+
+  /** Hard delete regardless of trash state (the public deleteNote soft-deletes
+   *  live notes; a queued delete op means the local cascade already ran). */
+  async syncDeleteNoteHard(id: EntityId): Promise<void> {
+    await this.purgeAssets(id);
+    const { error } = await this.sb.from("notes").delete().eq("id", id);
+    if (error) throw error;
+  }
 }
 
 interface SnapshotRow {

@@ -92,9 +92,25 @@ def image_to_array(img: Image.Image) -> np.ndarray:
     return (1.0 - arr)[None, :, :]
 
 
-def strokes_to_array(strokes: list[dict], line_width: float = 2.0) -> np.ndarray:
-    """One-call helper used by dataset.py and serve.py."""
-    return image_to_array(render_strokes(strokes, line_width=line_width))
+def strokes_to_array(
+    strokes: list[dict],
+    line_width: float = 2.0,
+    height: int = HEIGHT,
+    max_width: int = MAX_WIDTH,
+) -> np.ndarray:
+    """One-call helper used by dataset.py and serve.py.
+
+    height/max_width are pass-throughs to render_strokes, which has always
+    accepted them — only this helper hardcoded the pair. Leave the defaults
+    alone for anything headed to the decoder: Encoder registers pos2d for a
+    fixed (height//16, width//16) grid (model.py:61-62) and adds it by slice
+    (:69), so 96x768 is the only shape the model can consume. The knobs exist
+    for callers that want the identical normalize+draw pipeline at another
+    resolution (OCR-scale rasters, debug renders) rather than a second one.
+    """
+    return image_to_array(
+        render_strokes(strokes, height=height, max_width=max_width, line_width=line_width)
+    )
 
 
 if __name__ == "__main__":

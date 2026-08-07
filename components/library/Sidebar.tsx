@@ -27,21 +27,34 @@ export function SideItem({
   active,
   onClick,
   onDelete,
+  badge,
+  title,
   children,
 }: {
   active?: boolean;
   onClick: () => void;
   onDelete?: () => void;
+  /** Unread count shown as a pill on the right (hidden when 0). */
+  badge?: number;
+  title?: string;
   children: React.ReactNode;
 }) {
   return (
-    <div className={`group flex items-center rounded-control ${active ? "bg-accent-soft" : "hover:bg-foreground/[0.04]"}`}>
+    <div
+      title={title}
+      className={`group flex items-center rounded-control ${active ? "bg-accent-soft" : "hover:bg-foreground/[0.04]"}`}
+    >
       <button
         onClick={onClick}
         className={`flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-2 text-left text-[13px] ${active ? "text-accent" : "text-foreground"}`}
       >
         {children}
       </button>
+      {!!badge && badge > 0 && (
+        <span className="mr-2 shrink-0 rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white">
+          {badge > 99 ? "99+" : badge}
+        </span>
+      )}
       {onDelete && (
         <button
           onClick={onDelete}

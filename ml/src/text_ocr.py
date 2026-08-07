@@ -11,11 +11,18 @@ macOS-only by nature: pyobjc + Vision.framework. Callers must treat
 (e.g. the cloud training pod imports serve.py's modules without Vision).
 
     recognize_text(strokes) -> (text, confidence)
+
+`_load_vision`, `_cgimage_from_pil` and `_run_text_request` are the package's
+shared Vision plumbing — vision_layout.py drives the same request for its
+layout geometry. They live here because this module owns `VisionUnavailable`,
+which is the contract every caller degrades on.
 """
 
 from __future__ import annotations
 
 import io
+
+from PIL import Image
 
 from .render import render_strokes
 
@@ -42,13 +49,58 @@ def _load_vision():
     return Vision, Quartz
 
 
+def _cgimage_from_pil(img: Image.Image):
+    """PIL image -> CGImage, or None if Quartz cannot decode it.
+
+    Vision only takes Core Graphics images, and the shortest reliable pyobjc
+    bridge is an in-memory PNG: encode, wrap in NSData, let ImageIO decode.
+    Both CGImageSource steps are nullable, and a None from either means the
+    caller has no image to recognize — not that Vision is broken — so this
+    returns None rather than raising.
+    """
+    _load_vision()
+    import Quartz
+    from Foundation import NSData
+
+    buf = io.BytesIO()
+    img.convert("RGB").save(buf, "PNG")
+    data = NSData.dataWithBytes_length_(buf.getvalue(), len(buf.getvalue()))
+
+    src = Quartz.CGImageSourceCreateWithData(data, None)
+    if src is None:
+        return None
+    return Quartz.CGImageSourceCreateImageAtIndex(src, 0, None)
+
+
+def _run_text_request(cg) -> list:
+    """Run one accurate VNRecognizeTextRequest -> its observations.
+
+    Accurate (not Fast) is the whole point: Fast is a per-character classifier
+    that gives up on handwriting. Language correction stays on because it is
+    what makes the line candidate a *sentence* — the string unified recognition
+    slices per word, since re-OCRing a word in isolation returns no observation
+    at all. Running a second pass with it off was measured and buys nothing
+    (agreement text 61/64, math 18/33) for a whole extra Vision call.
+    """
+    Vision, _ = _load_vision()
+
+    handler = Vision.VNImageRequestHandler.alloc().initWithCGImage_options_(cg, None)
+    request = Vision.VNRecognizeTextRequest.alloc().init()
+    request.setRecognitionLevel_(Vision.VNRequestTextRecognitionLevelAccurate)
+    request.setUsesLanguageCorrection_(True)
+
+    ok, err = handler.performRequests_error_([request], None)
+    if not ok:
+        raise VisionUnavailable(f"Vision request failed: {err}")
+    return list(request.results() or [])
+
+
 def recognize_text(strokes: list[dict]) -> tuple[str, float]:
     """OCR handwritten strokes into plain text.
 
     Returns (text, mean confidence 0..1). Raises VisionUnavailable off-macOS.
     """
-    Vision, Quartz = _load_vision()
-    from Foundation import NSData
+    _load_vision()  # fail fast off-macOS, before rasterizing anything
 
     img = render_strokes(
         strokes, height=OCR_HEIGHT, max_width=OCR_MAX_WIDTH, line_width=OCR_LINE_WIDTH
@@ -62,30 +114,13 @@ def recognize_text(strokes: list[dict]) -> tuple[str, float]:
             max(0, bbox[0] - pad), max(0, bbox[1] - pad),
             min(img.width, bbox[2] + pad), min(img.height, bbox[3] + pad),
         ))
-    img = img.convert("RGB")
-    buf = io.BytesIO()
-    img.save(buf, "PNG")
-    data = NSData.dataWithBytes_length_(buf.getvalue(), len(buf.getvalue()))
-
-    src = Quartz.CGImageSourceCreateWithData(data, None)
-    if src is None:
-        return "", 0.0
-    cg = Quartz.CGImageSourceCreateImageAtIndex(src, 0, None)
+    cg = _cgimage_from_pil(img)
     if cg is None:
         return "", 0.0
 
-    handler = Vision.VNImageRequestHandler.alloc().initWithCGImage_options_(cg, None)
-    request = Vision.VNRecognizeTextRequest.alloc().init()
-    request.setRecognitionLevel_(Vision.VNRequestTextRecognitionLevelAccurate)
-    request.setUsesLanguageCorrection_(True)
-
-    ok, err = handler.performRequests_error_([request], None)
-    if not ok:
-        raise VisionUnavailable(f"Vision request failed: {err}")
-
     lines: list[str] = []
     confidences: list[float] = []
-    for obs in request.results() or []:
+    for obs in _run_text_request(cg):
         top = obs.topCandidates_(1)
         if not top or top.count() == 0:
             continue

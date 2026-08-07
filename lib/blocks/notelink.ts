@@ -35,7 +35,7 @@ export function parseNoteHref(href: string): NoteLinkTarget | null {
  *  (same-note section jumps, split panes) and un-handled clicks navigate. */
 export const NOTE_LINK_EVENT = "aquarius:note-link";
 
-/** The editor URL a note link navigates to (`?block=` scrolls after load). */
+/** The editor URL a note link navigates to (`&block=` scrolls after load). */
 export function noteLinkUrl(t: NoteLinkTarget): string {
-  return `/editor/${t.noteId}${t.blockId ? `?block=${encodeURIComponent(t.blockId)}` : ""}`;
+  return `/editor?id=${t.noteId}${t.blockId ? `&block=${encodeURIComponent(t.blockId)}` : ""}`;
 }

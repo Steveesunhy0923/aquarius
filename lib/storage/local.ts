@@ -111,10 +111,15 @@ function nextOrder(orders: number[]): number {
 export class LocalLibraryStore implements LibraryStore {
   private dbPromise: Promise<IDBPDatabase<AquariusDB>> | null = null;
 
+  /** Which IndexedDB database backs this store. The guest library uses the
+   *  default; the sync layer opens a per-user mirror ("aquarius-u-<uid>") so
+   *  cloud data never mixes with guest data on a shared device. */
+  constructor(private readonly dbName: string = DB_NAME) {}
+
   /** Lazily open (and memoize) the typed IndexedDB database. */
   private db(): Promise<IDBPDatabase<AquariusDB>> {
     if (!this.dbPromise) {
-      this.dbPromise = openDB<AquariusDB>(DB_NAME, DB_VERSION, {
+      this.dbPromise = openDB<AquariusDB>(this.dbName, DB_VERSION, {
         upgrade(db, oldVersion) {
           if (oldVersion < 1) {
             const subjects = db.createObjectStore("subjects", { keyPath: "id" });
@@ -808,6 +813,84 @@ export class LocalLibraryStore implements LibraryStore {
   async deleteSnapshot(id: EntityId): Promise<void> {
     const db = await this.db();
     await db.delete("noteSnapshots", id);
+  }
+
+  // ── Sync-engine surface (verbatim writes; see lib/sync/) ──────────────────
+  //
+  // The engine mirrors cloud rows into this store and needs to write entities
+  // EXACTLY as given — preserving ids, timestamps and the `rev` last-synced
+  // marker, and never setting `dirty` — where the public mutators deliberately
+  // bump `updatedAt` / flag `dirty`. Deletes reuse the public cascades.
+
+  async syncPutSubject(s: Subject): Promise<void> {
+    const db = await this.db();
+    await db.put("subjects", s);
+  }
+
+  async syncPutNotebook(n: Notebook): Promise<void> {
+    const db = await this.db();
+    await db.put("notebooks", n);
+  }
+
+  async syncPutNoteMeta(m: NoteMeta): Promise<void> {
+    const db = await this.db();
+    await db.put("notes", m);
+  }
+
+  async syncPutPackage(pkg: NotePackage): Promise<void> {
+    const db = await this.db();
+    await db.put("notePackages", pkg);
+  }
+
+  async syncPutAssetBlob(blob: AssetBlob): Promise<void> {
+    const db = await this.db();
+    await db.put("assets", blob);
+  }
+
+  async syncPutSnapshot(snap: NoteSnapshot): Promise<void> {
+    const db = await this.db();
+    await db.put("noteSnapshots", snap);
+  }
+
+  /** Every subject / notebook / note (incl. soft-deleted), for reconciliation. */
+  async syncListAll(): Promise<{ subjects: Subject[]; notebooks: Notebook[]; notes: NoteMeta[] }> {
+    const db = await this.db();
+    const tx = db.transaction(["subjects", "notebooks", "notes"], "readonly");
+    const subjects = await tx.objectStore("subjects").getAll();
+    const notebooks = await tx.objectStore("notebooks").getAll();
+    const notes = await tx.objectStore("notes").getAll();
+    await tx.done;
+    return { subjects, notebooks, notes };
+  }
+
+  /** The raw package row, or undefined — openNote throws on a miss. */
+  async syncGetPackage(noteId: EntityId): Promise<NotePackage | undefined> {
+    const db = await this.db();
+    return db.get("notePackages", noteId);
+  }
+
+  /** Record a successful push: store the cloud's updated_at as the entity's
+   *  `rev` (last-synced marker) and clear `dirty` — WITHOUT bumping updatedAt,
+   *  so the entity doesn't look locally-changed again. */
+  async syncMarkSynced(
+    kind: "subject" | "notebook" | "note" | "package",
+    id: EntityId,
+    rev: string,
+  ): Promise<void> {
+    const db = await this.db();
+    if (kind === "subject") {
+      const s = await db.get("subjects", id);
+      if (s) await db.put("subjects", { ...s, rev });
+    } else if (kind === "notebook") {
+      const n = await db.get("notebooks", id);
+      if (n) await db.put("notebooks", { ...n, rev });
+    } else if (kind === "note") {
+      const m = await db.get("notes", id);
+      if (m) await db.put("notes", { ...m, rev, dirty: false });
+    } else {
+      const p = await db.get("notePackages", id);
+      if (p) await db.put("notePackages", { ...p, rev });
+    }
   }
 
   /** Keep only the newest AUTO_SNAPSHOT_KEEP auto snapshots for a note. */

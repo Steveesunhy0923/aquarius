@@ -1,28 +1,12 @@
 "use client";
 
 import { documentToLatex } from "@/lib/blocks";
+import { downloadText, safeName } from "@/lib/export/download";
+import { exportTypesetPdf } from "@/lib/export/pdf";
 import { getStore } from "@/lib/storage";
 import type { ReactNode } from "react";
+import { uiAlert } from "@/components/ui/dialogs";
 import { Menu, MenuItem } from "@/components/ui/Menu";
-
-function download(filename: string, content: string, mime: string) {
-  const url = URL.createObjectURL(new Blob([content], { type: mime }));
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  // Defer revoke so the download has actually started in all browsers.
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-// Unicode-aware, no leading/trailing dots/underscores; falls back to "note".
-const safeName = (s: string) =>
-  (s ?? "")
-    .trim()
-    .replace(/[^\p{L}\p{N}._-]+/gu, "_")
-    .replace(/^[._]+|[._]+$/g, "") || "note";
 
 /** Export a note to a downloadable file in the given format. */
 export async function downloadNote(
@@ -33,10 +17,10 @@ export async function downloadNote(
   const store = getStore();
   if (fmt === "tex") {
     const pkg = await store.openNote(noteId);
-    download(`${safeName(title)}.tex`, documentToLatex(pkg.tree), "application/x-tex");
+    downloadText(`${safeName(title)}.tex`, documentToLatex(pkg.tree), "application/x-tex");
   } else {
     const bundle = await store.exportNote(noteId);
-    download(`${safeName(title)}.aqnote`, JSON.stringify(bundle, null, 2), "application/json");
+    downloadText(`${safeName(title)}.aqnote`, JSON.stringify(bundle, null, 2), "application/json");
   }
 }
 
@@ -72,6 +56,31 @@ export function ExportMenu({
     }
   }
 
+  // Typeset PDF via /api/pdf; when the server is unreachable (offline, static
+  // shell, no Tectonic installed) fall back to the print path.
+  async function runTypeset() {
+    try {
+      if (beforeExport) await beforeExport();
+      const r = await exportTypesetPdf(noteId, title);
+      if (r.ok) return;
+      if (r.reason === "compile") {
+        await uiAlert({
+          title: "Typeset PDF failed",
+          message: `The LaTeX compile failed.${r.log ? `\n\n…${r.log.slice(-600)}` : ""}`,
+        });
+      } else if (onPdf) {
+        onPdf();
+      } else {
+        await uiAlert({
+          title: "Typeset PDF unavailable",
+          message: "The PDF server isn't reachable — use PDF (print) instead.",
+        });
+      }
+    } catch (e) {
+      console.error("pdf export failed", e);
+    }
+  }
+
   return (
     <Menu
       width="w-48"
@@ -91,6 +100,9 @@ export function ExportMenu({
     >
       {(close) => (
         <>
+          <MenuItem onClick={() => { close(); void runTypeset(); }}>
+            PDF <span className="text-muted">(typeset)</span>
+          </MenuItem>
           {onPdf && (
             <MenuItem onClick={() => { close(); onPdf(); }}>
               PDF <span className="text-muted">(print)</span>

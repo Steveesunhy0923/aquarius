@@ -11,9 +11,15 @@
  * A "raw" formula is stored as a `math` block wrapping a single `symbol` leaf
  * whose value is the LaTeX, so it round-trips through the existing serializer
  * (blockToKatex / documentToLatex) unchanged.
+ *
+ * Every builder here is 1:1 (one source string → one block) except
+ * `blocksFromSource`, which is the entry point for payloads that arrive as
+ * several blocks at once — a handwriting recognition covering a whole page, or
+ * a paste.
  */
 
 import { blockToKatex } from "@/lib/blocks";
+import { ceInner, tagChem } from "@/lib/blocks/chem";
 import type { Block, InlineRun } from "@/lib/blocks/types";
 
 const uid = (): string => crypto.randomUUID();
@@ -126,6 +132,49 @@ export function paragraphFromSource(src: string, id: string = uid()): Block {
 /** Build a display-formula block from edited LaTeX, preserving id when given. */
 export function displayFromSource(src: string, id: string = uid()): Block {
   return rawMath(src.trim(), id);
+}
+
+/**
+ * Split a whole source payload — a handwriting recognition, a paste — into one
+ * or more document blocks.
+ *
+ * What separates blocks is a BLANK LINE, never a single newline. A lone `\n`
+ * belongs INSIDE one block: the editable textarea grows to fit it
+ * (EditBox `rows={draft.split("\n").length}`), the rendered paragraph is
+ * `whitespace-pre-wrap`, and collab syncs a paragraph as its source string, so
+ * the break survives everywhere. Splitting on every `\n` instead would be a
+ * quiet semantic change on export — `documentToLatex` joins top-level blocks
+ * with "\n\n" (a real paragraph break) while an interior `\n` is just
+ * inter-word space. Handwriting comes back one line per written line, and a
+ * hand-written paragraph must stay one paragraph.
+ *
+ * A chunk that is nothing but ONE `\(…\)` span is promoted to a DISPLAY
+ * formula — that is what a centred equation written between two prose lines
+ * means — and is chem-tagged when its LaTeX is a pure `\ce{…}`, because
+ * chemistry identity is STORED on the block and never re-sniffed from the
+ * string (lib/blocks/chem.ts). Everything else becomes a paragraph, inline
+ * math included.
+ *
+ * Empty or whitespace-only input yields NO blocks. Callers splice the result
+ * into the document, and a recognition that found nothing must not leave a
+ * blank paragraph behind (note the empty array: `blocks[0]` is not safe).
+ */
+export function blocksFromSource(src: string): Block[] {
+  const chunks = src
+    .replace(/\r\n?/g, "\n") // CR / CRLF from a paste — the grammar is \n-only
+    .split(/\n{2,}/)
+    .map((c) => c.trim())
+    .filter(Boolean);
+  return chunks.map((chunk) => {
+    const runs = runsFromSource(chunk);
+    const only = runs.length === 1 ? runs[0] : undefined;
+    if (!only || only.kind !== "math") return paragraphFromSource(chunk);
+    // Re-serialize rather than re-slicing the source: `rawMath` stores the
+    // inner LaTeX verbatim, so this is the exact text between the delimiters.
+    const latex = blockToKatex(only.block);
+    const block = displayFromSource(latex);
+    return ceInner(latex) != null ? tagChem(block) : block;
+  });
 }
 
 /**

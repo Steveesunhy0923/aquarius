@@ -4,14 +4,17 @@ import { AccountMenu } from "@/components/auth/AccountMenu";
 import { SettingsDialog } from "@/components/SettingsDialog";
 import { Icon } from "@/components/Icon";
 import { ImportMenu } from "@/components/library/ImportMenu";
+import { readLibraryLocation, writeLibraryLocation } from "@/lib/library/location";
+import { importPdfAsNote, PdfImportError } from "@/lib/pdf/import";
 import { DeletedCard, SharedNoteCard } from "@/components/library/NoteCard";
 import { Empty, NOTE_GRID, NoteGrid, ResultGroup } from "@/components/library/NoteGrid";
 import { SideHead, SideItem, TagChip } from "@/components/library/Sidebar";
 import { uiAlert, uiConfirm, uiPrompt } from "@/components/ui/dialogs";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { errorMessage } from "@/lib/errors";
-import { listSharedWithMe, type SharedNote } from "@/lib/sharing/sharing";
+import { listSharedWithMe, SHARES_CHANGED_EVENT, type SharedNote } from "@/lib/sharing/sharing";
 import { getStore, migrateLocalToCloud, seedDemoLibrary } from "@/lib/storage";
+import { SYNC_APPLIED_EVENT } from "@/lib/sync";
 import type { LibraryStore, NoteBundleFile, NoteMeta, Notebook, Subject } from "@/lib/storage/types";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -56,6 +59,13 @@ export default function LibraryPage() {
   const [subjectId, setSubjectId] = useState<string | null>(null);
   const [notebookId, setNotebookId] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
+  // The notebook we are trying to restore. Held in a ref rather than consumed
+  // on first use because the subject→notebooks effect can legitimately run more
+  // than once for the same subject (StrictMode double-invokes in dev, and a
+  // refresh re-lists); clearing it on the first run would make the restore
+  // survive in production but silently fail in development. It is cleared only
+  // when the user explicitly navigates, which is the real "stop restoring" signal.
+  const restoreNotebook = useRef<string | null>(null);
 
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<{ title: NoteMeta[]; content: NoteMeta[] } | null>(null);
@@ -82,10 +92,20 @@ export default function LibraryPage() {
       const subs = await store.listSubjects();
       if (!alive) return;
       setSubjects(subs);
-      setSubjectId(subs[0]?.id ?? null);
-      // Leave any account-scoped view (shared/uncat) when the account changes.
-      setShared(false);
-      setUncat(false);
+      // Land where the user left off. A stored id can be stale — the subject may
+      // have been deleted here or on another device — so it is only honored when
+      // it still exists, otherwise the old first-subject default applies.
+      const saved = readLibraryLocation(userId);
+      const savedSubject = saved && subs.some((x) => x.id === saved.subjectId) ? saved.subjectId : null;
+      restoreNotebook.current = savedSubject ? saved?.notebookId ?? null : null;
+      setSubjectId(savedSubject ?? subs[0]?.id ?? null);
+      // "Shared with me" only exists for a signed-in account, so never restore
+      // it for a guest — that would select a sidebar row that isn't rendered.
+      setShared(saved?.view === "shared" && !!userId);
+      setUncat(saved?.view === "uncat");
+      // Trash is deliberately NOT restored: opening the app into a list of
+      // deleted notes is a hostile default, and it is an administrative view
+      // rather than a place you work.
       setTrash(false);
       setReady(true);
     })().catch(console.error);
@@ -102,10 +122,22 @@ export default function LibraryPage() {
       .listNotebooks(subjectId)
       .then((nbs) => {
         setNotebooks(nbs);
-        setNotebookId(nbs[0]?.id ?? null);
+        const want = restoreNotebook.current;
+        setNotebookId(want && nbs.some((nb) => nb.id === want) ? want : nbs[0]?.id ?? null);
       })
       .catch(console.error);
   }, [subjectId]);
+
+  // Remember where we are, so returning from a note lands here again. Skipped
+  // until `ready` so the pre-load nulls can't overwrite a good stored value.
+  useEffect(() => {
+    if (!ready) return;
+    writeLibraryLocation(userId, {
+      view: shared ? "shared" : uncat ? "uncat" : "subject",
+      subjectId,
+      notebookId,
+    });
+  }, [ready, userId, shared, uncat, subjectId, notebookId]);
 
   useEffect(() => {
     if (!notebookId) {
@@ -137,11 +169,21 @@ export default function LibraryPage() {
 
   // Shares split by whether they've been opened: unopened ones are the
   // "Shared with me" inbox; opened ones live in the Uncategorized section.
-  // Keyed to userId so sign-out clears the list and account switches refetch.
+  // Loaded for any signed-in user (not just while one of those panes is open) so
+  // the sidebar's unread badge is correct the moment the library paints, and
+  // refreshed from ShareNotifier's push subscription instead of a poll of our
+  // own. Keyed to userId so sign-out clears the list and account switches refetch.
   useEffect(() => {
-    if (!userId || (!shared && !uncat)) { setSharedNotes([]); return; }
-    listSharedWithMe().then(setSharedNotes).catch(() => setSharedNotes([]));
-  }, [shared, uncat, userId]);
+    if (!userId) { setSharedNotes([]); return; }
+    let alive = true;
+    listSharedWithMe().then((s) => { if (alive) setSharedNotes(s); }).catch(() => { if (alive) setSharedNotes([]); });
+    const onShares = (e: Event) => {
+      const list = (e as CustomEvent<{ shares?: SharedNote[] }>).detail?.shares;
+      if (alive && list) setSharedNotes(list);
+    };
+    window.addEventListener(SHARES_CHANGED_EVENT, onShares);
+    return () => { alive = false; window.removeEventListener(SHARES_CHANGED_EVENT, onShares); };
+  }, [userId]);
   const sharedInbox = useMemo(() => sharedNotes.filter((s) => !s.openedAt), [sharedNotes]);
   const uncatNotes = useMemo(() => sharedNotes.filter((s) => s.openedAt), [sharedNotes]);
 
@@ -151,6 +193,18 @@ export default function LibraryPage() {
     if (query.trim()) setResults(await store.searchNotes(query.trim()));
     if (trash) setDeleted(await store.listDeletedNotes());
   }, [notebookId, query, trash]);
+
+  // Background sync pulled remote changes → refresh whatever is on screen.
+  useEffect(() => {
+    const onSync = () => {
+      const store = getStore();
+      store.listSubjects().then(setSubjects).catch(() => {});
+      if (subjectId) store.listNotebooks(subjectId).then(setNotebooks).catch(() => {});
+      void refresh().catch(() => {});
+    };
+    window.addEventListener(SYNC_APPLIED_EVENT, onSync);
+    return () => window.removeEventListener(SYNC_APPLIED_EVENT, onSync);
+  }, [subjectId, refresh]);
 
   const addSubject = useCallback(async () => {
     const name = (await uiPrompt({ title: "New subject", placeholder: "Subject name", confirmLabel: "Create" }))?.trim();
@@ -226,7 +280,7 @@ export default function LibraryPage() {
   const addNote = useCallback(async () => {
     if (!notebookId) return;
     const meta = await getStore().createNote({ notebookId, title: "Untitled note" });
-    router.push(`/editor/${meta.id}?new=1`);
+    router.push(`/editor?id=${meta.id}&new=1`);
   }, [notebookId, router]);
 
   // User delete = soft delete (recoverable from Recently Deleted).
@@ -273,7 +327,7 @@ export default function LibraryPage() {
   }, [deleted, refresh]);
 
   const pdfNote = useCallback(
-    (note: NoteMeta) => router.push(`/editor/${note.id}?print=1`),
+    (note: NoteMeta) => router.push(`/editor?id=${note.id}&print=1`),
     [router],
   );
 
@@ -297,6 +351,30 @@ export default function LibraryPage() {
 
   // ── Import an .aqnote bundle (from a picked file or a link) into this notebook.
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
+  const [importing, setImporting] = useState(false);
+
+  /** Import a PDF as its own note and open it. Parsing happens before anything
+   *  is written, so a bad file never leaves an unopenable note behind. */
+  const importPdf = useCallback(
+    async (file: File) => {
+      if (!notebookId || importing) return;
+      setImporting(true);
+      try {
+        const { noteId } = await importPdfAsNote(file, notebookId);
+        router.push(`/editor?id=${noteId}`);
+      } catch (e) {
+        await uiAlert({
+          title: "Import failed",
+          message:
+            e instanceof PdfImportError ? e.message : "Couldn't import that PDF.",
+        });
+      } finally {
+        setImporting(false);
+      }
+    },
+    [notebookId, importing, router],
+  );
 
   const importBundle = useCallback(
     async (bundle: NoteBundleFile) => {
@@ -430,7 +508,7 @@ export default function LibraryPage() {
         <aside className="overflow-auto border-r border-border bg-surface px-3 py-4">
           <SideHead onAdd={addSubject} addLabel="Add subject">Subjects</SideHead>
           {subjects.map((s) => (
-            <SideItem key={s.id} active={!trash && !shared && !uncat && s.id === subjectId} onClick={() => { setTrash(false); setShared(false); setUncat(false); setSubjectId(s.id); }} onDelete={() => removeSubject(s.id)}>
+            <SideItem key={s.id} active={!trash && !shared && !uncat && s.id === subjectId} onClick={() => { restoreNotebook.current = null; setTrash(false); setShared(false); setUncat(false); setSubjectId(s.id); }} onDelete={() => removeSubject(s.id)}>
               <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: s.color || "var(--accent)" }} />
               <span className="truncate">{s.name}</span>
             </SideItem>
@@ -441,7 +519,7 @@ export default function LibraryPage() {
           {notebooks.map((nb) => {
             const on = !trash && !shared && !uncat && nb.id === notebookId;
             return (
-              <SideItem key={nb.id} active={on} onClick={() => { setTrash(false); setShared(false); setUncat(false); setNotebookId(nb.id); }} onDelete={() => removeNotebook(nb.id)}>
+              <SideItem key={nb.id} active={on} onClick={() => { restoreNotebook.current = null; setTrash(false); setShared(false); setUncat(false); setNotebookId(nb.id); }} onDelete={() => removeNotebook(nb.id)}>
                 <Icon name="notebooks" size={16} className={`shrink-0 ${on ? "text-accent" : "text-muted"}`} />
                 <span className="truncate">{nb.name}</span>
               </SideItem>
@@ -450,13 +528,24 @@ export default function LibraryPage() {
 
           <SideHead>Library</SideHead>
           {user && (
-            <SideItem active={shared} onClick={() => { setShared(true); setUncat(false); setTrash(false); setQuery(""); }}>
+            <SideItem
+              active={shared}
+              badge={sharedInbox.length}
+              title="Notes other people have shared with you that you haven't opened yet"
+              onClick={() => { setShared(true); setUncat(false); setTrash(false); setQuery(""); }}
+            >
               <Icon name="share" size={16} className={`shrink-0 ${shared ? "text-accent" : "text-muted"}`} />
               <span className="truncate">Shared with me</span>
             </SideItem>
           )}
+          {/* A built-in section, always present and never deletable: every shared
+              note you open lands here so it always has a home in the library. */}
           {user && (
-            <SideItem active={uncat} onClick={() => { setUncat(true); setShared(false); setTrash(false); setQuery(""); }}>
+            <SideItem
+              active={uncat}
+              title="Default section — shared notes you've opened. Can't be deleted."
+              onClick={() => { setUncat(true); setShared(false); setTrash(false); setQuery(""); }}
+            >
               <Icon name="inbox" size={16} className={`shrink-0 ${uncat ? "text-accent" : "text-muted"}`} />
               <span className="truncate">Uncategorized</span>
             </SideItem>
@@ -507,7 +596,7 @@ export default function LibraryPage() {
               ) : (
                 <div className={NOTE_GRID}>
                   {sharedInbox.map(({ note, role }) => (
-                    <SharedNoteCard key={note.id} note={note} role={role} onOpen={() => router.push(`/editor/${note.id}`)} />
+                    <SharedNoteCard key={note.id} note={note} role={role} onOpen={() => router.push(`/editor?id=${note.id}`)} />
                   ))}
                 </div>
               )}
@@ -521,7 +610,7 @@ export default function LibraryPage() {
               ) : (
                 <div className={NOTE_GRID}>
                   {uncatNotes.map(({ note, role }) => (
-                    <SharedNoteCard key={note.id} note={note} role={role} onOpen={() => router.push(`/editor/${note.id}`)} />
+                    <SharedNoteCard key={note.id} note={note} role={role} onOpen={() => router.push(`/editor?id=${note.id}`)} />
                   ))}
                 </div>
               )}
@@ -537,9 +626,22 @@ export default function LibraryPage() {
                     disabled={!notebookId}
                     onFile={() => fileInputRef.current?.click()}
                     onLink={importFromLink}
+                    onPdf={() => pdfInputRef.current?.click()}
                   />
                 )}
               </div>
+              {/* A picked PDF becomes its own note, locked to handwriting. */}
+              <input
+                ref={pdfInputRef}
+                type="file"
+                accept="application/pdf,.pdf"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = ""; // allow re-picking the same file
+                  if (f) void importPdf(f);
+                }}
+              />
               <input
                 ref={fileInputRef}
                 type="file"

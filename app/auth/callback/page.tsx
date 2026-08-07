@@ -1,17 +1,30 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { handleAuthCallback } from "@orka/auth";
 import { getSupabaseClient } from "@/lib/supabase/client";
 
 /**
- * OAuth / magic-link landing page. The browser client (flowType: pkce,
- * detectSessionInUrl) exchanges the `code` in the URL for a session on load; we
- * poll briefly for that session, surface any provider error, then go home.
+ * OAuth / email-link landing page.
+ *
+ * The client sets `flowType: "pkce"` and `detectSessionInUrl: false`, so
+ * NOTHING exchanges the `code` on its own — this page does it explicitly. That
+ * is deliberate: an explicit exchange surfaces a real message when it fails,
+ * where an automatic one would just leave the visitor silently signed out.
+ *
+ * (The previous version of this comment said the client auto-exchanged and that
+ * we polled for the result. It never did — `detectSessionInUrl` has been false
+ * throughout, and the code below has always exchanged explicitly. Corrected
+ * rather than carried forward.)
+ *
+ * The exchange itself now lives in `@orka/auth`, so this route, the Orka site's
+ * callback and Virgo's boot-time hook cannot drift apart.
  */
 export default function AuthCallback() {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
+  const ran = useRef(false);
 
   useEffect(() => {
     const sb = getSupabaseClient();
@@ -19,27 +32,22 @@ export default function AuthCallback() {
       router.replace("/");
       return;
     }
-    (async () => {
-      const params = new URLSearchParams(window.location.hash.slice(1) || window.location.search);
-      // Provider-side error (e.g. consent denied, redirect mismatch).
-      const provErr = params.get("error_description") ?? params.get("error");
-      if (provErr) {
-        setError(provErr);
-        return;
-      }
-      const code = params.get("code");
-      if (!code) {
-        // No code to exchange — already signed in, or nothing to do.
+    // Exactly once. An authorization code is single-use, so React's
+    // double-invoked development effect would fail the second exchange and
+    // report an error over a sign-in that had actually succeeded.
+    if (ran.current) return;
+    ran.current = true;
+
+    void (async () => {
+      try {
+        const { handled } = await handleAuthCallback(sb, window.location.href);
+        // No code in the URL: already signed in, or nothing to do.
+        void handled;
         router.replace("/");
-        return;
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
       }
-      const { error: exErr } = await sb.auth.exchangeCodeForSession(code);
-      if (exErr) {
-        setError(exErr.message);
-        return;
-      }
-      router.replace("/");
-    })().catch((e) => setError(e instanceof Error ? e.message : String(e)));
+    })();
   }, [router]);
 
   return (

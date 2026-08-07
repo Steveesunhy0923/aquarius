@@ -17,6 +17,14 @@ export type Role = "viewer" | "commenter" | "editor";
 /** What the current user can do with a note. */
 export type Access = "owner" | Role;
 
+/**
+ * Fired on `window` when the set of notes shared with the current user changes
+ * (the ShareNotifier polls and broadcasts the fresh list in `detail.shares`), so
+ * the library can refresh its "Shared with me"/"Uncategorized" panes and unread
+ * badge without polling on its own.
+ */
+export const SHARES_CHANGED_EVENT = "aquarius:shares-changed";
+
 export const ROLES: { id: Role; label: string; hint: string }[] = [
   { id: "editor", label: "Editor", hint: "Can view and edit" },
   { id: "commenter", label: "Commenter", hint: "Can view and comment" },

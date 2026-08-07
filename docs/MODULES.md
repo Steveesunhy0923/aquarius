@@ -4,6 +4,12 @@ Living status doc for the "modular notes" initiative. Update as slices land.
 
 ## Current version
 
+- **Aquarius 0.8.0** — released from `ui-graphite-redesign`: **Ancha**, the handwriting
+  model, gains a unified `auto` mode (words and formulas written together, segmented and
+  read per run — no mode picking) plus a resizable, auto-paginating ink canvas; **PDF
+  import** (a picked PDF becomes its own note, locked to handwriting via a capability
+  model that replaces the `readOnly` boolean); and the library remembers the last
+  subject/notebook you were in.
 - **Aquarius 0.6.1** — released from `ui-graphite-redesign`: presets as editable stacks
   (module chips on the Note-layout cards), Google-Docs-style orientation-aware link
   previews for note + external links (`/api/unfurl`), and the ML workstream's XL cloud
@@ -243,7 +249,8 @@ different initiative from modular notes above._
 
 ## Why
 
-The `/ink` handwriting→LaTeX recognizer currently runs the **smoke** checkpoint — trained on
+Ancha, the `/ink` handwriting→LaTeX recognizer, ran the **smoke** checkpoint at the time of
+writing — trained on
 100 samples for 45 s purely to prove the pipeline. It reproduces its memorized training
 expressions exactly (verified: 5/6 at 0.94–0.97 confidence) but collapses **every** novel
 drawing to one attractor output, `\overline{Y}_1`. It is undertrained, not broken; the fix is

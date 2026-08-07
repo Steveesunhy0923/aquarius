@@ -20,6 +20,13 @@ hold Notebooks hold Notes — and everything runs local-first in the browser.
 Aquarius is **local-first**. It runs with **no Supabase keys** — all data lives in
 IndexedDB in your browser, and the app is fully usable offline. Cloud sync is optional.
 
+> **Aquarius signs in with an [Orka](https://orka.app) account.** Orka is the umbrella over
+> Aquarius and [Virgo](https://github.com/Steveesunhy0923/Virgo), and one account works in
+> both. This project's Supabase instance *is* the Orka project — signing in here and signing
+> in there reach the same identity. The sign-in plumbing is shared code (`@orka/auth`); none
+> of Aquarius's data moved, and the account remains optional. Note that account **deletion**
+> is now franchise-wide: it ends the Orka account everywhere, not just here.
+
 ```bash
 npm install
 
@@ -55,6 +62,8 @@ aquarius/
 │   ├── page.tsx          Notability-style library (minimal)
 │   └── editor/[id]/      WYSIWYG block-tree editor (minimal)
 ├── components/           Katex + BlockView render components
+│   └── ink/              handwriting capture surface (paged canvas, recognition sheet)
+├── ml/                   Ancha — the handwriting → LaTeX model, training pipeline + local server
 ├── lib/
 │   ├── blocks/           block tree (types) + LaTeX/KaTeX serializer + factory
 │   ├── storage/          Notability-style library model + IndexedDB store
@@ -76,3 +85,4 @@ The implemented `lib/` modules include the block tree (`blocks/types.ts`,
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — the block-tree-as-source-of-truth model, input/output adapters, and render pipeline.
 - [`docs/STORAGE.md`](docs/STORAGE.md) — deep dive on the Notability-modeled, local-first storage layer.
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) — V1 build order and V2 plans, with what is scaffolded vs not started.
+- [`docs/HANDWRITING_MODEL.md`](docs/HANDWRITING_MODEL.md) — Ancha, the handwriting → LaTeX model: architecture, training runs, and the recognition contract.

@@ -7,14 +7,15 @@
  * and a delete button — so bad labels can be culled before a training run.
  */
 
+import { anchaUrl } from "@/lib/ink/endpoint";
 import { Katex } from "@/components/Katex";
 import { Dialog } from "@/components/ui/Dialog";
 import { uiConfirm } from "@/components/ui/dialogs";
 import { useCallback, useEffect, useState } from "react";
 
-const SAMPLES_URL = "http://127.0.0.1:8787/collect/samples";
-const COLLECT_URL = "http://127.0.0.1:8787/collect";
-const imgUrl = (id: string) => `http://127.0.0.1:8787/collect/img/${id}`;
+const SAMPLES_URL = () => anchaUrl("/collect/samples");
+const COLLECT_URL = () => anchaUrl("/collect");
+const imgUrl = (id: string) => anchaUrl(`/collect/img/${id}`);
 
 interface Sample {
   id: string;
@@ -36,7 +37,7 @@ export function ReviewDialog({ onClose, onCount }: {
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch(SAMPLES_URL);
+      const res = await fetch(SAMPLES_URL());
       if (!res.ok) throw new Error();
       const body = (await res.json()) as { count?: number; samples?: Sample[] };
       setSamples(body.samples ?? []);
@@ -52,13 +53,13 @@ export function ReviewDialog({ onClose, onCount }: {
   const remove = async (s: Sample) => {
     const ok = await uiConfirm({
       title: "Delete this sample?",
-      message: "It will no longer be used as training data. This can't be undone.",
+      message: "It will no longer be used as Ancha's training data. This can't be undone.",
       confirmLabel: "Delete",
       danger: true,
     });
     if (!ok) return;
     try {
-      const res = await fetch(`${COLLECT_URL}/${s.id}`, { method: "DELETE" });
+      const res = await fetch(`${COLLECT_URL()}/${s.id}`, { method: "DELETE" });
       if (!res.ok) return;
       const body = (await res.json()) as { count?: number };
       setSamples((prev) => (prev ?? []).filter((x) => x.id !== s.id));
@@ -69,12 +70,12 @@ export function ReviewDialog({ onClose, onCount }: {
   };
 
   return (
-    <Dialog title="Collected training samples" onClose={onClose} maxWidth="max-w-2xl">
+    <Dialog title="Samples collected for Ancha" onClose={onClose} maxWidth="max-w-2xl">
       <div className="max-h-[70vh] overflow-y-auto px-5 py-4">
         {samples === null ? (
           <p className="py-4 text-sm text-muted">Loading…</p>
         ) : offline ? (
-          <p className="py-4 text-sm text-muted">Recognition server offline — samples live on it.</p>
+          <p className="py-4 text-sm text-muted">Ancha is offline — the samples live on her server.</p>
         ) : samples.length === 0 ? (
           <p className="py-4 text-sm text-muted">
             Nothing collected yet. Fix a wrong recognition (here or in the note editor) and the
@@ -103,7 +104,7 @@ export function ReviewDialog({ onClose, onCount }: {
                   <p className="mt-1 truncate font-mono text-[11px] text-muted" title={s.label}>{s.label}</p>
                   <p className="mt-0.5 text-[11px] text-faint">
                     {s.predicted != null && s.predicted !== s.label && (
-                      <>model guessed <span className="font-mono">{s.predicted || "(empty)"}</span> · </>
+                      <>Ancha guessed <span className="font-mono">{s.predicted || "(empty)"}</span> · </>
                     )}
                     {s.mode} · {s.strokes} stroke{s.strokes === 1 ? "" : "s"}
                     {s.ts ? ` · ${new Date(s.ts).toLocaleString()}` : ""}

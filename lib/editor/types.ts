@@ -1,3 +1,4 @@
+import type { EditorCapabilities } from "./capabilities";
 import type { Module } from "@/lib/templates/modules";
 
 /**
@@ -11,6 +12,7 @@ export type EditorCommand =
   | "insertEquation"
   | "insertTable"
   | "insertGraph"
+  | "insertCode"
   | "insertImage"
   | "undo"
   | "redo"
@@ -37,5 +39,7 @@ export interface DocHandle {
   /** Run a named editor action — ⌘K palette. */
   runCommand: (cmd: EditorCommand) => void;
   /** False while the pane is read-only (viewer/commenter) — mutating commands are hidden. */
-  canWrite: () => boolean;
+  /** What the open note currently permits. Read through a ref by the editor,
+   *  so callers always see live values rather than a stale capture. */
+  capabilities: () => EditorCapabilities;
 }

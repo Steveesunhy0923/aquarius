@@ -3,6 +3,7 @@
 import { Icon, type IconName } from "@/components/Icon";
 import { getStore } from "@/lib/storage";
 import type { NoteMeta } from "@/lib/storage/types";
+import { NO_CAPS, type EditorCapabilities } from "@/lib/editor/capabilities";
 import type { DocHandle, EditorCommand } from "@/lib/editor/types";
 import { builtinPresets, searchModules, stackTree, type Module, type Preset } from "@/lib/templates/modules";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -27,25 +28,31 @@ interface Row {
   run: () => void;
 }
 
-/** Static action/insert catalog. `write` rows are hidden on read-only notes. */
-const COMMANDS: { id: EditorCommand; label: string; icon: IconName; group: "Insert" | "Actions"; write: boolean; keywords?: string[] }[] = [
-  { id: "insertParagraph", label: "Paragraph", icon: "paragraph", group: "Insert", write: true, keywords: ["text", "body"] },
-  { id: "insertHeading", label: "Heading", icon: "heading", group: "Insert", write: true, keywords: ["title", "section"] },
-  { id: "insertList", label: "List", icon: "list", group: "Insert", write: true, keywords: ["bullet", "bulleted", "item"] },
-  { id: "insertEquation", label: "Equation", icon: "displayeq", group: "Insert", write: true, keywords: ["formula", "math", "latex"] },
-  { id: "insertTable", label: "Table", icon: "table", group: "Insert", write: true, keywords: ["grid", "rows", "columns"] },
-  { id: "insertGraph", label: "Graph", icon: "graph", group: "Insert", write: true, keywords: ["plot", "chart", "figure", "curve"] },
-  { id: "insertImage", label: "Image", icon: "image", group: "Insert", write: true, keywords: ["picture", "photo", "figure"] },
-  { id: "openSymbols", label: "Symbol library…", icon: "choosesymbol", group: "Insert", write: true, keywords: ["math", "greek", "operator"] },
-  { id: "openInk", label: "Handwriting input…", icon: "ink", group: "Insert", write: true, keywords: ["draw", "pencil", "ipad"] },
-  { id: "openTemplates", label: "Templates & designs…", icon: "templates", group: "Insert", write: true, keywords: ["preset", "design", "layout"] },
-  { id: "undo", label: "Undo", icon: "undo", group: "Actions", write: true },
-  { id: "redo", label: "Redo", icon: "redo", group: "Actions", write: true },
-  { id: "save", label: "Save now", icon: "save", group: "Actions", write: true, keywords: ["store"] },
-  { id: "openHistory", label: "Version history…", icon: "history", group: "Actions", write: false, keywords: ["timeline", "snapshot", "revision", "restore"] },
-  { id: "toggleSource", label: "Toggle LaTeX source", icon: "code", group: "Actions", write: false, keywords: ["latex", "source", "raw"] },
-  { id: "openShare", label: "Share…", icon: "share", group: "Actions", write: true, keywords: ["collaborate", "invite", "publish"] },
-  { id: "print", label: "Export / print PDF", icon: "export", group: "Actions", write: false, keywords: ["pdf", "download", "print"] },
+/**
+ * Static action/insert catalog. Each row names the CAPABILITY it needs, rather
+ * than a single write flag — an imported PDF permits annotation and sharing
+ * while forbidding every block insert, which one boolean cannot express.
+ * `cap: null` means always available.
+ */
+const COMMANDS: { id: EditorCommand; label: string; icon: IconName; group: "Insert" | "Actions"; cap: keyof EditorCapabilities | null; keywords?: string[] }[] = [
+  { id: "insertParagraph", label: "Paragraph", icon: "paragraph", group: "Insert", cap: "editBlocks", keywords: ["text", "body"] },
+  { id: "insertHeading", label: "Heading", icon: "heading", group: "Insert", cap: "editBlocks", keywords: ["title", "section"] },
+  { id: "insertList", label: "List", icon: "list", group: "Insert", cap: "editBlocks", keywords: ["bullet", "bulleted", "item"] },
+  { id: "insertEquation", label: "Equation", icon: "displayeq", group: "Insert", cap: "editBlocks", keywords: ["formula", "math", "latex"] },
+  { id: "insertTable", label: "Table", icon: "table", group: "Insert", cap: "editBlocks", keywords: ["grid", "rows", "columns"] },
+  { id: "insertGraph", label: "Graph", icon: "graph", group: "Insert", cap: "editBlocks", keywords: ["plot", "chart", "figure", "curve"] },
+  { id: "insertCode", label: "Code block", icon: "codeblock", group: "Insert", cap: "editBlocks", keywords: ["python", "javascript", "run", "jupyter", "script", "program", "cell"] },
+  { id: "insertImage", label: "Image", icon: "image", group: "Insert", cap: "editBlocks", keywords: ["picture", "photo", "figure"] },
+  { id: "openSymbols", label: "Symbol library…", icon: "choosesymbol", group: "Insert", cap: "editBlocks", keywords: ["math", "greek", "operator"] },
+  { id: "openInk", label: "Handwriting input (Ancha)…", icon: "ink", group: "Insert", cap: "editBlocks", keywords: ["draw", "pencil", "ipad", "ancha", "ink", "recognize", "handwrite"] },
+  { id: "openTemplates", label: "Templates & designs…", icon: "templates", group: "Insert", cap: "editBlocks", keywords: ["preset", "design", "layout"] },
+  { id: "undo", label: "Undo", icon: "undo", group: "Actions", cap: "editBlocks" },
+  { id: "redo", label: "Redo", icon: "redo", group: "Actions", cap: "editBlocks" },
+  { id: "save", label: "Save now", icon: "save", group: "Actions", cap: "persist", keywords: ["store"] },
+  { id: "openHistory", label: "Version history…", icon: "history", group: "Actions", cap: "editHistory", keywords: ["timeline", "snapshot", "revision", "restore"] },
+  { id: "toggleSource", label: "Toggle LaTeX source", icon: "code", group: "Actions", cap: null, keywords: ["latex", "source", "raw"] },
+  { id: "openShare", label: "Share…", icon: "share", group: "Actions", cap: "share", keywords: ["collaborate", "invite", "publish"] },
+  { id: "print", label: "Export / print PDF", icon: "export", group: "Actions", cap: null, keywords: ["pdf", "download", "print"] },
 ];
 
 /** A preset behaves like a big multi-section module when inserted from the palette. */
@@ -120,7 +127,7 @@ export function CommandPalette({
     return () => { cancelled = true; };
   }, [q, open]);
 
-  const canWrite = handle?.canWrite() ?? false;
+  const caps = handle?.capabilities() ?? NO_CAPS;
 
   const rows = useMemo<Row[]>(() => {
     const query = q.trim().toLowerCase();
@@ -141,11 +148,11 @@ export function CommandPalette({
     if (handle) {
       // 2) Insert — block commands, then modules, then presets
       for (const c of COMMANDS.filter((c) => c.group === "Insert")) {
-        if (c.write && !canWrite) continue;
+        if (c.cap && !caps[c.cap]) continue;
         if (query && !(c.label.toLowerCase().includes(query) || c.keywords?.some((k) => k.includes(query)))) continue;
         out.push({ key: `cmd:${c.id}`, section: "Insert", icon: c.icon, label: c.label, run: () => { handle.runCommand(c.id); onClose(); } });
       }
-      if (canWrite) {
+      if (caps.editBlocks) {
         const modules = searchModules(query).slice(0, query ? 8 : 4);
         for (const m of modules) {
           out.push({ key: `mod:${m.id}`, section: "Insert", icon: m.icon, label: m.name, sub: m.description, run: () => { handle.insertModule(m); onClose(); } });
@@ -159,14 +166,14 @@ export function CommandPalette({
 
       // 3) Actions
       for (const c of COMMANDS.filter((c) => c.group === "Actions")) {
-        if (c.write && !canWrite) continue;
+        if (c.cap && !caps[c.cap]) continue;
         if (query && !(c.label.toLowerCase().includes(query) || c.keywords?.some((k) => k.includes(query)))) continue;
         out.push({ key: `cmd:${c.id}`, section: "Actions", icon: c.icon, label: c.label, run: () => { handle.runCommand(c.id); onClose(); } });
       }
     }
 
     return out;
-  }, [q, notes, handle, canWrite, currentNoteId, onOpenNote, onClose]);
+  }, [q, notes, handle, caps, currentNoteId, onOpenNote, onClose]);
 
   // Keep the active index in range as results change.
   useEffect(() => { setActive((a) => (rows.length === 0 ? 0 : Math.min(a, rows.length - 1))); }, [rows.length]);

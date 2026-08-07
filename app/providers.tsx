@@ -3,7 +3,9 @@
 import { useEffect, type ReactNode } from "react";
 import { AuthProvider } from "@/lib/auth/AuthProvider";
 import { MathKeyboardDismiss } from "@/components/MathKeyboardDismiss";
+import { ShareNotifier } from "@/components/ShareNotifier";
 import { SystemDialogs } from "@/components/ui/dialogs";
+import { Toaster } from "@/components/ui/toast";
 import { applyMathKeyboard, applyTheme, getSettings } from "@/lib/settings/settings";
 
 /** Client-side context providers mounted once at the app root. */
@@ -20,6 +22,8 @@ export function Providers({ children }: { children: ReactNode }) {
       {children}
       <MathKeyboardDismiss />
       <SystemDialogs />
+      <Toaster />
+      <ShareNotifier />
     </AuthProvider>
   );
 }

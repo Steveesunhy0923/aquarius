@@ -3,15 +3,17 @@
 import { Icon } from "@/components/Icon";
 import { Menu, MenuItem } from "@/components/ui/Menu";
 
-/** Dropdown to import a note from an .aqnote file or a link to one. */
+/** Dropdown to import: a PDF to annotate, an .aqnote bundle, or a link to one. */
 export function ImportMenu({
   disabled,
   onFile,
   onLink,
+  onPdf,
 }: {
   disabled: boolean;
   onFile: () => void;
   onLink: () => void;
+  onPdf: () => void;
 }) {
   return (
     <Menu
@@ -28,6 +30,9 @@ export function ImportMenu({
     >
       {(close) => (
         <>
+          <MenuItem onClick={() => { close(); onPdf(); }}>
+            PDF to annotate <span className="text-muted">(.pdf)</span>
+          </MenuItem>
           <MenuItem onClick={() => { close(); onFile(); }}>
             From file <span className="text-muted">(.aqnote)</span>
           </MenuItem>

@@ -9,7 +9,9 @@ output against gold. Two input formats are accepted:
         {"id", "ce", "latex", "strokes": [{"x","y","t"}, ...]}
   - collected corrections from serve.py /collect (data/corrections/
     collected.jsonl): records with "label" (possibly wrapped as \ce{...})
-    and "mode" — only mode=="chem" rows are used.
+    and "mode" — only mode=="chem" rows are used. math/text corrections and
+    the "mixed" whole-page layout parents are skipped, not scored as bad
+    chemistry.
 
 Metrics (printed as a table, written to <input>.eval.json):
   ce exact match       whitespace-normalized mhchem string equality
@@ -109,10 +111,20 @@ def load_records(path: Path) -> list[dict]:
             strokes = [s for s in rec.get("strokes", []) if s.get("x")]
             if not strokes:
                 continue
+            # Mode gate, same intent as dataset.load_corrections: /collect files
+            # carry math, text and (from unified recognition) "mixed" layout
+            # parents whose label is a whole page of source and whose strokes are
+            # a whole page of ink. Scored as chemistry those are pure noise in
+            # the denominator. A record with no mode at all is only trusted when
+            # it is a chem_synth row (which is identified by its "ce" gold, not
+            # by a mode field) — a pre-"mode" correction is not known chem.
+            mode = rec.get("mode")
+            if mode is not None and mode != "chem":
+                continue
             if "ce" in rec:  # chem_synth format carries both gold forms
                 gold_ce, gold_latex = rec["ce"], rec.get("latex")
             elif "label" in rec:  # serve.py /collect corrections format
-                if rec.get("mode") != "chem":
+                if mode != "chem":
                     continue
                 label = (rec["label"] or "").strip()
                 inner = _ce_inner(label)

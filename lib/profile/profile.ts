@@ -1,10 +1,11 @@
 /**
  * User profiles — the social handle (username), display name, and avatar.
  *
- * Backed by the `profiles` table (supabase/migrations/0003_profiles.sql), which
- * any authenticated user can read (for share-by-username lookups) but only the
+ * Backed by the `profiles` table (supabase/migrations/0003_profiles.sql). Reads
+ * are scoped (0013) to your own row plus people you share notes with; only the
  * owner can write. A row is auto-created on signup by a DB trigger; this module
- * reads it, lets the user pick a username, and looks up other users by username.
+ * reads it, lets the user pick a username, and looks up others by exact username
+ * through the `lookup_profile` RPC.
  */
 
 import { getSupabaseClient } from "@/lib/supabase/client";
@@ -89,14 +90,19 @@ export async function setUsername(username: string): Promise<Profile> {
   return fromRow(data as ProfileRow);
 }
 
-/** Find a user by exact username (case-insensitive via citext). Null if none. */
+/**
+ * Find a user by exact username (case-insensitive via citext). Null if none.
+ *
+ * Goes through the `lookup_profile` RPC rather than selecting from `profiles`:
+ * since migration 0013 the table's read policy is scoped to yourself + people
+ * you already share notes with, so a direct select can't resolve a brand-new
+ * share target. The RPC discloses only the single exact-match row.
+ */
 export async function lookupByUsername(username: string): Promise<Profile | null> {
   const sb = getSupabaseClient();
   if (!sb) return null;
   const { data, error } = await sb
-    .from("profiles")
-    .select(COLS)
-    .eq("username", username)
+    .rpc("lookup_profile", { p_username: username })
     .maybeSingle();
   if (error) throw error;
   return data ? fromRow(data as ProfileRow) : null;

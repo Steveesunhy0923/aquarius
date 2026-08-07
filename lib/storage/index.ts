@@ -12,9 +12,9 @@
 
 import { isSupabaseConfigured } from "@/lib/supabase/client";
 import { getCachedUserId } from "@/lib/supabase/session";
-import { SupabaseLibraryStore } from "./cloud";
+import { SyncedStore } from "@/lib/sync/store";
 import { LocalLibraryStore } from "./local";
-import type { LibraryStore } from "./types";
+import type { EntityId, LibraryStore } from "./types";
 
 const SERVER_ERROR =
   "storage unavailable on server: getStore() may only be used from client " +
@@ -63,7 +63,7 @@ function createServerStub(): LibraryStore {
 }
 
 let localSingleton: LocalLibraryStore | null = null;
-let cloudSingleton: SupabaseLibraryStore | null = null;
+let syncedSingleton: { uid: string; store: SyncedStore } | null = null;
 
 /** The IndexedDB store (always local), regardless of auth — used for migration. */
 export function getLocalStore(): LibraryStore {
@@ -73,26 +73,42 @@ export function getLocalStore(): LibraryStore {
 }
 
 /**
- * The active `LibraryStore`: the Supabase cloud store when a user is signed in
- * (and cloud is configured), otherwise the local IndexedDB store (guest mode).
- * Synchronous by design — the auth session is mirrored into a module cache
- * (lib/supabase/session.ts) so this never needs to await.
+ * The active `LibraryStore`: when a user is signed in (and cloud is
+ * configured), the local-first `SyncedStore` — a per-user IndexedDB mirror
+ * with background push/pull against Supabase (lib/sync/) — otherwise the
+ * plain local IndexedDB store (guest mode). Synchronous by design — the auth
+ * session is mirrored into a module cache (lib/supabase/session.ts) so this
+ * never needs to await.
  */
 export function getStore(): LibraryStore {
   // Never memoize the server stub: caching it on a first SSR/prerender call
   // would poison a later client call.
   if (typeof indexedDB === "undefined") return createServerStub();
-  if (isSupabaseConfigured() && getCachedUserId()) {
-    if (!cloudSingleton) cloudSingleton = new SupabaseLibraryStore();
-    return cloudSingleton;
+  const uid = isSupabaseConfigured() ? getCachedUserId() : null;
+  if (uid) {
+    if (syncedSingleton?.uid !== uid) syncedSingleton = { uid, store: new SyncedStore(uid) };
+    return syncedSingleton.store;
   }
-  if (!localSingleton) localSingleton = new LocalLibraryStore();
-  return localSingleton;
+  return getLocalStore();
 }
 
 /** True when `getStore()` currently resolves to the cloud (signed-in) store. */
 export function isCloudActive(): boolean {
   return isSupabaseConfigured() && Boolean(getCachedUserId());
+}
+
+/**
+ * True when the note is held in the active store's OWN local data — the guest
+ * database, or the signed-in user's sync mirror. Such a note is ours even if
+ * the cloud has not seen it yet, which is the normal state of a note for the
+ * first seconds of its life (SyncedStore pushes on a debounce). Callers use
+ * this instead of asking the sharing layer, which would report a not-yet-
+ * pushed note as missing. See lib/editor/access.ts.
+ */
+export async function isOwnLocalNote(id: EntityId): Promise<boolean> {
+  const store = getStore();
+  if (store instanceof SyncedStore) return store.hasLocalCopy(id);
+  return (await store.getNoteMeta(id)) !== undefined;
 }
 
 /**

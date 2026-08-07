@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/Icon";
 import { ChevronSelect, Dialog, DialogSection } from "@/components/ui/Dialog";
 import { useAuth } from "@/lib/auth/AuthProvider";
@@ -43,7 +43,24 @@ function RoleSelect({ value, onChange, ariaLabel }: { value: Role; onChange: (r:
 }
 
 /** Manage who a note is shared with (owner), or show your access (collaborator). */
-export function ShareDialog({ noteId, access, onClose }: { noteId: string; access: Access; onClose: () => void }) {
+export function ShareDialog({
+  noteId,
+  access,
+  onClose,
+  onCollaboratorsChanged,
+}: {
+  noteId: string;
+  access: Access;
+  onClose: () => void;
+  /**
+   * Fired with the current collaborator count whenever this dialog loads or
+   * changes the list. The editor uses it to open the live co-editing channel the
+   * moment a note gains its first collaborator — without it, the owner keeps
+   * editing alone until they reload the page, which is what made co-editing look
+   * like it wasn't real-time at all.
+   */
+  onCollaboratorsChanged?: (count: number) => void;
+}) {
   const isOwner = access === "owner";
   const { user, profile } = useAuth();
   const [collabs, setCollabs] = useState<Collaborator[]>([]);
@@ -52,12 +69,21 @@ export function ShareDialog({ noteId, access, onClose }: { noteId: string; acces
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  const changedRef = useRef(onCollaboratorsChanged);
+  changedRef.current = onCollaboratorsChanged;
+
   useEffect(() => {
     if (!isOwner) return;
-    listCollaborators(noteId).then(setCollabs).catch((e) => setErr(e instanceof Error ? e.message : String(e)));
+    listCollaborators(noteId)
+      .then((list) => { setCollabs(list); changedRef.current?.(list.length); })
+      .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
   }, [noteId, isOwner]);
 
-  const refresh = async () => setCollabs(await listCollaborators(noteId));
+  const refresh = async () => {
+    const list = await listCollaborators(noteId);
+    setCollabs(list);
+    changedRef.current?.(list.length);
+  };
 
   const share = async () => {
     const u = username.trim().replace(/^@/, "");

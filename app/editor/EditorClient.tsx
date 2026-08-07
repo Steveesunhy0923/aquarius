@@ -20,6 +20,7 @@ import { Icon } from "@/components/Icon";
 import { TablePicker } from "@/components/TablePicker";
 import { TableRowEditor } from "@/components/TableRowEditor";
 import {
+  CodeToolButton,
   HEAD_BTN,
   HEAD_BTN_BASE,
   HEAD_BTN_HOVER,
@@ -28,6 +29,9 @@ import {
   ListToolButton,
   ToolButton,
 } from "@/components/ToolbarControls";
+import { CodeBlockView } from "@/components/CodeBlockView";
+import { makeCodeBlock } from "@/lib/blocks/codeblock";
+import { releaseNoteKernels, retainNoteKernels } from "@/lib/run/manager";
 import { DesignPicker } from "@/components/DesignPicker";
 import { ShareDialog } from "@/components/ShareDialog";
 import { activeMathField, activeTextInserter } from "@/components/MathField";
@@ -36,7 +40,12 @@ import { isStructural, structuralEquation } from "@/lib/matheditor";
 import { PresenceAvatars } from "@/components/PresenceAvatars";
 import { TemplateApplyDialog } from "@/components/TemplateApplyDialog";
 import { getMyAccess, listCollaborators, markSharedNoteOpened, type Access } from "@/lib/sharing/sharing";
-import { useCollab, type PeerInfo } from "@/lib/collab";
+import { shiftCaret, useCollab, type PeerInfo } from "@/lib/collab";
+import { SYNC_APPLIED_EVENT } from "@/lib/sync";
+import { resolveNoteAccess } from "@/lib/editor/access";
+import { capabilitiesFor, lockReason, type NoteKind } from "@/lib/editor/capabilities";
+import { PdfDocumentView } from "@/components/pdf/PdfDocumentView";
+import type { Stroke as InkStroke } from "@/components/ink/strokes";
 import { getSettings, setSettings } from "@/lib/settings/settings";
 import { freshTree, saveTemplate, type BuiltInBackground, type SavedTemplate } from "@/lib/templates/templates";
 import { fillFields, freshBlocks, listSavedModules, moduleFields, recordModuleUse, saveModule, updateModule, type Module } from "@/lib/templates/modules";
@@ -84,10 +93,12 @@ import {
 } from "@/lib/blocks/images";
 import {
   blockEditSource,
+  blocksFromSource,
   displayFromSource,
   hasContent,
   isParagraph,
   paragraphFromSource,
+  runsFromSource,
 } from "@/lib/blocks/source";
 import { defaultGraph, fitViewToExpr, graphModel, makeGraphBlock, newGraphId, SHAPE_PALETTE, withGraph, type GraphData } from "@/lib/blocks/graph";
 import { DEFAULT_HIGHLIGHT } from "@/lib/blocks/format";
@@ -105,10 +116,10 @@ import {
 import type { Block, DocumentStyle, DocumentTree, Placement } from "@/lib/blocks/types";
 import { HistoryPanel } from "@/components/HistoryPanel";
 import { CollabCursors, type RemoteCursor } from "@/components/CollabCursors";
-import { getStore, isCloudActive } from "@/lib/storage";
+import { getStore, isCloudActive, isOwnLocalNote } from "@/lib/storage";
 import type { NotePackage, NoteSnapshot } from "@/lib/storage/types";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   useCallback,
   useEffect,
@@ -194,7 +205,19 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   // Current user's access to this note: "owner" (incl. local/guest), an editor
   // role, or a read-only role. Drives the Share dialog and read-only mode.
   const [access, setAccess] = useState<Access>("owner");
-  const readOnly = access === "viewer" || access === "commenter";
+  // What the note IS, which locks editing independently of who you are: an
+  // imported PDF may be annotated but not restructured. Read fail-closed from
+  // BOTH the tree and the asset list — `tree.source` travels through the collab
+  // layer, but if a future change ever drops it again, the attached pdf asset
+  // still says what this note is, and the lock holds.
+  const kind: NoteKind =
+    pkg?.tree.source?.kind === "pdf" || pkg?.assets.some((a) => a.kind === "pdf") ? "pdf" : "document";
+  const caps = useMemo(() => capabilitiesFor({ access, kind }), [access, kind]);
+  const capsRef = useRef(caps);
+  capsRef.current = caps;
+  const locked = lockReason({ access, kind });
+  /** Shorthand for "the block tree is not editable" — the common render gate. */
+  const readOnly = !caps.editBlocks;
   const readOnlyRef = useRef(readOnly);
   readOnlyRef.current = readOnly;
   // The signed-in user has NO access to this cloud note (never shared, or the
@@ -209,19 +232,84 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   // remote edit never loops back into the doc (and the initial projection from
   // the authoritative `ydoc` never clobbers it with a stale local tree).
   const lastRemoteTreeRef = useRef<DocumentTree | null>(null);
+  // Mirrors of the open edit session, read by applyRemoteTree (which is a stable
+  // callback and would otherwise close over the first render's values).
+  const editingIdRef = useRef<string | null>(null);
+  editingIdRef.current = editingId;
+  const editingChemRef = useRef(false);
+  editingChemRef.current = editingChem;
+  const draftRef = useRef("");
+  draftRef.current = draft;
+  // Set when a peer's edit rewrote the open draft: where to put our caret once
+  // the controlled <textarea> has re-rendered (see the layout effect below).
+  const remoteCaretRef = useRef<number | null>(null);
   const applyRemoteTree = useCallback((tree: DocumentTree) => {
     lastRemoteTreeRef.current = tree;
     // Update content WITHOUT marking the editor dirty (autosave stays gated on
     // `saved`, so only the client that actually edited persists) and WITHOUT
     // pushing an undo snapshot (you only undo your own actions).
     setPkg((prev) => (prev ? { ...prev, tree } : prev));
+
+    // A peer typed in the block WE have open. The draft is separate state, so
+    // without this we'd neither see their characters nor keep them: our next
+    // keystroke would commit the stale draft and splice their text back out.
+    const openId = editingIdRef.current;
+    if (!openId) return;
+    const block = tree.blocks.find((b) => b.id === openId);
+    if (!block) return;
+    const source = blockEditSource(block);
+    const next = editingChemRef.current ? (ceInner(source) ?? "") : source;
+    const cur = draftRef.current;
+    if (next === cur) return;
+    remoteCaretRef.current = shiftCaret(cur, next, taRef.current?.selectionStart ?? caretRef.current);
+    draftRef.current = next;
+    setDraft(next);
   }, []);
   const collab = useCollab({ noteId: id, access, enabled: shared, pkg, applyRemoteTree });
   // null = closed; { id: null } = drawing a new graph; { id } = editing an existing one.
   const [graphEdit, setGraphEdit] = useState<{ id: string | null } | null>(null);
   const [listMenu, setListMenu] = useState<null | "bullet" | "number">(null);
+  const [codeMenu, setCodeMenu] = useState(false);
   const [hlMenu, setHlMenu] = useState(false);
   const [zoom, setZoom] = useState(1); // page size ratio
+
+  // ── Imported PDF ───────────────────────────────────────────────────────────
+  const pdfSource = pkg?.tree.source?.kind === "pdf" ? pkg.tree.source : null;
+  const [pdfBytes, setPdfBytes] = useState<ArrayBuffer | null>(null);
+  // Fetch the file's bytes once. They live in the asset store, NOT the tree —
+  // a 30 MB buffer inside the document would be cloned on every undo snapshot.
+  useEffect(() => {
+    if (!pdfSource) return void setPdfBytes(null);
+    let cancelled = false;
+    void (async () => {
+      const blob = await getStore().getAsset(pdfSource.assetId);
+      if (cancelled || !blob) return;
+      setPdfBytes(await blob.data.arrayBuffer());
+    })();
+    return () => { cancelled = true; };
+  }, [pdfSource?.assetId]); // eslint-disable-line react-hooks/exhaustive-deps -- identity is the asset id
+  /**
+   * Annotations ride in `tree.style.annotations` — vector strokes, small next
+   * to the PDF itself, and part of the tree so they sync, version and export
+   * with the note rather than needing their own lifecycle.
+   *
+   * Seeded ONCE into the surface (see InkSurface's `initialStrokes`), so the
+   * round trip back through this state can't wipe ink mid-draw.
+   */
+  const initialAnnotations = useMemo(
+    () => (pkg?.tree.style?.annotations as InkStroke[] | undefined) ?? [],
+    // Identity must change only when a DIFFERENT note loads.
+    [pkg?.noteId], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const onAnnotationChange = useCallback((strokes: InkStroke[]) => {
+    if (!capsRef.current.annotate) return;
+    setPkg((prev) =>
+      prev
+        ? { ...prev, tree: { ...prev.tree, style: { ...prev.tree.style, annotations: strokes } } }
+        : prev,
+    );
+    setSaved(false);
+  }, []);
   const [hlColor, setHlColor] = useState(DEFAULT_HIGHLIGHT);
   const [heights, setHeights] = useState<Record<string, number>>({});
 
@@ -288,6 +376,20 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     // `pushLocalTree` is stable (useCallback); `collab.active` is a boolean.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pkg, collab.active, collab.pushLocalTree]);
+  // A peer's edit rewrote the open draft: React has just re-rendered the
+  // controlled <textarea> (which parks the caret at the end), so put it back
+  // where the text we were typing still is. Layout effect = before paint, so
+  // the caret never visibly jumps.
+  useLayoutEffect(() => {
+    const at = remoteCaretRef.current;
+    if (at == null) return;
+    remoteCaretRef.current = null;
+    const ta = taRef.current;
+    if (!ta || document.activeElement !== ta) return;
+    const pos = Math.min(at, ta.value.length);
+    ta.setSelectionRange(pos, pos);
+    caretRef.current = pos;
+  }, [draft]);
   // Announce which block we're editing so peers can flag our "typing line".
   useEffect(() => {
     if (!collab.active) return;
@@ -333,6 +435,12 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     }
     return out;
   }, [collab.peers, selfId]);
+  // Code-block kernels live for the note's editing session (ref-counted, so a
+  // split view holding the same note twice doesn't kill its twin's kernel).
+  useEffect(() => {
+    retainNoteKernels(id);
+    return () => releaseNoteKernels(id);
+  }, [id]);
   // Flush any pending save when the tab is hidden/closed or the editor unmounts
   // (e.g. navigating back to the library), so the debounced write isn't lost.
   useEffect(() => {
@@ -351,7 +459,12 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
         metaPresentRef.current &&
         p != null &&
         titleUnchanged &&
-        isEmptyDoc(p.tree.blocks);
+        isEmptyDoc(p.tree.blocks) &&
+        // An IMPORTED note is legitimately block-less — its content is the
+        // attached file, not the tree. Without this it would be deleted the
+        // moment you navigated away from the PDF you just imported.
+        !p.tree.source &&
+        p.assets.length === 0;
       if (discard) {
         deletedRef.current = true; // suppress any pending/late autosave
         savedRef.current = true;
@@ -382,23 +495,48 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
       setPkg((prev) => prev ?? { noteId: id, tree: emptyDocument("flow"), latexCache: "", assets: [], updatedAt: new Date().toISOString(), rev: null });
     });
   }, [id, authLoading]);
-  // Determine the current user's access (owner / role) for this note. Local and
-  // guest notes are always "owner"; cloud notes ask the sharing layer.
+  // Determine the current user's access (owner / role) for this note. Guest
+  // notes and notes held in our own sync mirror are always "owner" — a note we
+  // just created lives locally for the length of the push debounce, and asking
+  // the sharing layer during that window answers "no such note", which used to
+  // render every new note as deleted. Only notes we do NOT hold (shared with
+  // us, or opened by URL) go to the sharing layer. See lib/editor/access.ts.
   useEffect(() => {
     if (authLoading) return;
     if (!isCloudActive()) { setAccess("owner"); return; }
     let alive = true;
-    getMyAccess(id)
-      .then((a) => {
-        if (!alive) return;
-        if (a === null) setGone(true); // cloud note we can't see: gone or never ours
-        else setAccess(a);
-      })
-      .catch(() => { if (alive) setAccess("owner"); });
-    return () => { alive = false; };
+    const check = async () => {
+      let resolution;
+      if (await isOwnLocalNote(id)) {
+        resolution = resolveNoteAccess({ mirroredLocally: true });
+      } else {
+        try {
+          resolution = resolveNoteAccess({ mirroredLocally: false, cloudAccess: await getMyAccess(id) });
+        } catch {
+          resolution = resolveNoteAccess({ mirroredLocally: true }); // offline: assume ours
+        }
+      }
+      if (!alive) return;
+      setGone(resolution.kind === "gone");
+      if (resolution.kind === "access") setAccess(resolution.access);
+    };
+    void check();
+    // A pull can delete a note removed on another device; re-check after each
+    // sync so a genuine deletion still surfaces (and a late push clears a
+    // transient "gone" from before this fix's data landed).
+    const onSync = () => void check();
+    window.addEventListener(SYNC_APPLIED_EVENT, onSync);
+    return () => {
+      alive = false;
+      window.removeEventListener(SYNC_APPLIED_EVENT, onSync);
+    };
   }, [id, authLoading]);
   // Is this note shared? A collaborator role implies yes; an owner must have at
   // least one collaborator. Drives whether the live co-editing channel opens.
+  // `sharedRev` re-runs the check on demand — the Share dialog bumps it so the
+  // channel opens the instant a note gains its first collaborator, and the
+  // window-focus listener catches a share made from another tab or device.
+  const [sharedRev, setSharedRev] = useState(0);
   useEffect(() => {
     if (authLoading) return;
     if (!isCloudActive()) { setShared(false); return; }
@@ -414,7 +552,14 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
       .then((c) => { if (alive) setShared(c.length > 0); })
       .catch(() => { if (alive) setShared(false); });
     return () => { alive = false; };
-  }, [id, authLoading, access]);
+  }, [id, authLoading, access, sharedRev]);
+  // An owner who shares from another tab/device should still go live here.
+  useEffect(() => {
+    if (access !== "owner" || shared || !isCloudActive()) return;
+    const onFocus = () => setSharedRev((n) => n + 1);
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [access, shared]);
   // Arrived via a "Download PDF" action (?print=1): open the print dialog once
   // the document has loaded and rendered.
   useEffect(() => {
@@ -495,6 +640,11 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     setSaved(false);
   }, []);
   const undo = useCallback(() => {
+    // applyTree writes setPkg DIRECTLY, bypassing setBlocks' guard — so undo
+    // needs its own. Today the stack is empty on a locked note (snapshots are
+    // only taken by gated mutators), but that is an incidental invariant, not
+    // a check, and annotation will start pushing snapshots.
+    if (!capsRef.current.editBlocks) return;
     const prev = undoStack.current.pop();
     const cur = pkgRef.current;
     if (!prev || !cur) return;
@@ -503,6 +653,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     applyTree(prev);
   }, [applyTree]);
   const redo = useCallback(() => {
+    if (!capsRef.current.editBlocks) return;
     const next = redoStack.current.pop();
     const cur = pkgRef.current;
     if (!next || !cur) return;
@@ -703,7 +854,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   function reorderSections(fromId: string, toId: string | null) {
     setBlocks((bs) => reorderSectionBlocks(bs, fromId, toId));
   }
-  useImperativeHandle(handleRef, () => ({ scrollToBlock, scrollToTop, toggleSection, reorderSections, saveSectionAsModule: (hid: string) => void saveSectionAsModule(hid), insertModule: paletteInsertModule, runCommand, canWrite: () => !readOnlyRef.current }), [handleRef]);
+  useImperativeHandle(handleRef, () => ({ scrollToBlock, scrollToTop, toggleSection, reorderSections, saveSectionAsModule: (hid: string) => void saveSectionAsModule(hid), insertModule: paletteInsertModule, runCommand, capabilities: () => capsRef.current }), [handleRef]);
   // Report the outline to the page whenever it actually changes (not every keystroke).
   const lastOutline = useRef("");
   useEffect(() => {
@@ -747,6 +898,10 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     setEditingId(block.id);
   }
   function selectItem(blockId: string, index: number, kind: "image" | "table") {
+    // Selecting a figure reveals its edit controls (add row/col, delete, align)
+    // and makes table cells editable — so it is an edit entry point, not just
+    // a selection, and needs the same gate as startEdit.
+    if (!capsRef.current.editBlocks) return;
     setEditingId(null);
     setSelected({ id: blockId, index, kind });
   }
@@ -862,7 +1017,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     else blockEls.current.delete(id);
   };
   function setDocStyle(patch: Partial<DocumentStyle>) {
-    if (readOnlyRef.current) return;
+    if (!capsRef.current.editDocStyle) return;
     snapshot(false);
     setPkg((prev) =>
       prev ? { ...prev, tree: { ...prev.tree, style: { ...prev.tree.style, ...patch } } } : prev,
@@ -948,6 +1103,49 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     if (src != null) addBlock(displayFromSource(latex), true, true);
     else onInsert(latex);
   }
+  /**
+   * Insert a handwriting reading from the ink sheet.
+   *
+   * `src` is paragraph source: prose with `\( ... \)` inline math. Ancha's
+   * unified mode routinely returns both in one reading, which the single-LaTeX
+   * dispatchers cannot represent — a MathLive field or a structural formula
+   * tree has no atom for the word "let".
+   *
+   * So: a reading that is PURELY one formula keeps the old behavior exactly
+   * (focused math field, chem field, table cell, fresh equation block); a mixed
+   * or multi-line reading splices into the prose being edited, or becomes fresh
+   * blocks. Both are one undo step.
+   */
+  function insertRecognized(src: string) {
+    const runs = runsFromSource(src);
+    const onlyMath = runs.length === 1 && runs[0].kind === "math";
+    if (onlyMath) {
+      const tex = blockToKatex((runs[0] as { kind: "math"; block: Block }).block);
+      if (ceInner(tex) != null) onInsertChem(tex);
+      else onInsert(tex);
+      return;
+    }
+    // Editing prose: land it at the caret, where the writer was looking.
+    if (editingId && editingPara && taRef.current) {
+      const t = taRef.current;
+      spliceIntoTextarea(t.selectionStart ?? caretRef.current, t.selectionEnd ?? caretRef.current, src);
+      return;
+    }
+    const fresh = blocksFromSource(src);
+    if (fresh.length === 0) return;
+    const anchorId = editingId ?? selected?.id ?? null;
+    setBlocks((bs) => {
+      const i = anchorId ? bs.findIndex((b) => b.id === anchorId) : -1;
+      const next = [...bs];
+      if (i < 0) next.push(...fresh);
+      else next.splice(i + 1, 0, ...fresh);
+      return next;
+    });
+    setEditingId(null);
+    setSelected(null);
+    setTimeout(() => scrollToBlock(fresh[0].id), 60);
+  }
+
   /** Replace [from, to) of the editing textarea with `insert`, commit, and
    *  restore focus with the caret after the insertion. */
   function spliceIntoTextarea(from: number, to: number, insert: string) {
@@ -1085,6 +1283,14 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     addBlock(getSettings().mathEditorBeta ? structuralEquation() : displayFromSource(""));
   }
 
+  // ── code blocks ───────────────────────────────────────────────────────────
+  /** Insert a runnable code block after the cursor. Its own mini IDE manages
+   *  focus (like graph/table/image), so never route it into startEdit. */
+  function insertCode(langId?: string) {
+    setCodeMenu(false);
+    addBlock(makeCodeBlock(langId ?? "python"), false);
+  }
+
   // ── graphs ────────────────────────────────────────────────────────────────
   function commitGraph(graph: GraphData) {
     const target = graphEdit?.id ?? null;
@@ -1149,6 +1355,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
       case "insertEquation": insertEquation(); break;
       case "insertTable": setTablePicker(true); break;
       case "insertGraph": setGraphEdit({ id: null }); break;
+      case "insertCode": insertCode(); break;
       case "insertImage": newImageRow(); break;
       case "undo": undo(); break;
       case "redo": redo(); break;
@@ -1166,7 +1373,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   // ── version history ────────────────────────────────────────────────────────
   /** Save the current tree as a named manual version (persists latest first). */
   async function saveVersion(label: string) {
-    if (readOnlyRef.current) return;
+    if (!capsRef.current.editHistory) return;
     await save();
     const tree = pkgRef.current?.tree;
     if (!tree) return;
@@ -1176,7 +1383,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   /** Replace the note with a past version. The current tree is snapshotted first
    *  (as a version AND onto the undo stack) so the restore is reversible. */
   async function restoreSnapshot(snap: NoteSnapshot) {
-    if (readOnlyRef.current) return;
+    if (!capsRef.current.editHistory) return;
     const cur = pkgRef.current;
     if (!cur) return;
     try { await getStore().saveSnapshot(id, cur.tree, { label: "Before restore", kind: "auto" }); } catch { /* best-effort */ }
@@ -1309,7 +1516,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   }
 
   async function save() {
-    if (readOnlyRef.current) return; // viewer/commenter: nothing to persist (RLS also blocks)
+    if (!capsRef.current.persist) return; // viewer/commenter: nothing to persist (RLS also blocks)
     if (deletedRef.current) return; // note is being discarded — don't resurrect it
     const p = pkgRef.current;
     if (!p) return;
@@ -1454,20 +1661,20 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
 
       <header className="print-hide flex items-center gap-3 border-b border-border px-4 py-3">
         {split && <span className="rounded bg-foreground/5 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted">{primary ? "A" : "B"}</span>}
-        <input value={title} readOnly={readOnly} onChange={(e) => { setTitle(e.target.value); setSaved(false); }} className="flex-1 bg-transparent text-lg font-semibold outline-none" />
+        <input value={title} readOnly={!caps.editTitle} onChange={(e) => { setTitle(e.target.value); setSaved(false); }} className="flex-1 bg-transparent text-lg font-semibold outline-none" />
         {!readOnly && (
           <div className="flex items-center">
             <button onMouseDown={(e) => e.preventDefault()} onClick={undo} disabled={undoStack.current.length === 0} title="Undo (⌘/Ctrl+Z)" aria-label="Undo" className={HEAD_BTN}><Icon name="undo" size={18} /></button>
             <button onMouseDown={(e) => e.preventDefault()} onClick={redo} disabled={redoStack.current.length === 0} title="Redo (⌘/Ctrl+Shift+Z)" aria-label="Redo" className={HEAD_BTN}><Icon name="redo" size={18} /></button>
           </div>
         )}
-        {!readOnly && <button onClick={() => setTemplatesOpen(true)} title="Design — templates, modules & backgrounds" aria-label="Design — templates, modules and backgrounds" className={HEAD_BTN}><Icon name="templates" size={18} /></button>}
+        {caps.editBlocks && <button onClick={() => setTemplatesOpen(true)} title="Design — templates, modules & backgrounds" aria-label="Design — templates, modules and backgrounds" className={HEAD_BTN}><Icon name="templates" size={18} /></button>}
         {collab.active && <PresenceAvatars peers={collab.peers} selfId={user?.id ?? null} connected={collab.connected} />}
         {isCloudActive() && <button onClick={() => setShareOpen(true)} title="Share this document" aria-label="Share" className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent"><Icon name="share" size={16} />Share</button>}
         <button onClick={() => setShowSource((s) => !s)} title={showSource ? "Back to the visual editor" : "Show the LaTeX source"} aria-label={showSource ? "Show visual editor" : "Show LaTeX source"} aria-pressed={showSource} className={`${HEAD_BTN_BASE} ${showSource ? "bg-accent-soft text-accent" : HEAD_BTN_HOVER}`}><Icon name="code" size={18} /></button>
-        <button onClick={() => setHistoryOpen(true)} title="Version history" aria-label="Version history" className={`${HEAD_BTN_BASE} ${HEAD_BTN_HOVER}`}><Icon name="history" size={18} /></button>
+        {caps.editHistory && <button onClick={() => setHistoryOpen(true)} title="Version history" aria-label="Version history" className={`${HEAD_BTN_BASE} ${HEAD_BTN_HOVER}`}><Icon name="history" size={18} /></button>}
         <ExportMenu noteId={id} title={title} beforeExport={save} onPdf={printPdf} label={<Icon name="export" size={18} />} className={HEAD_BTN} />
-        {readOnly
+        {!caps.persist
           ? <span className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm text-muted"><Icon name="lock" size={15} />{access === "commenter" ? "Comment only" : "View only"}</span>
           : <button onClick={save} title={saving ? "Saving…" : saved ? "Saved — up to date" : "Unsaved changes — click to save now"} aria-label={saving ? "Saving" : saved ? "Saved" : "Save now"} className={`grid h-9 w-9 place-items-center rounded-md transition ${saving ? "animate-pulse text-accent" : saved ? `${HEAD_BTN_HOVER}` : "text-accent hover:bg-accent-soft"}`}><Icon name="save" size={18} /></button>}
         {onClose && <button onClick={onClose} title="Close this pane" aria-label="Close pane" className="grid h-9 w-9 place-items-center rounded-md text-muted transition hover:bg-danger/10 hover:text-danger"><Icon name="close" size={17} /></button>}
@@ -1488,6 +1695,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
         <ToolButton onClick={() => addBlock(paragraphFromSource(""))} title="New paragraph (normal text)"><Icon name="paragraph" size={17} /></ToolButton>
         <ToolButton onClick={insertEquation} title="Insert centered equation ($$…$$)"><Icon name="displayeq" size={19} /></ToolButton>
         <ToolButton onClick={() => setGraphEdit({ id: null })} title="Insert interactive graph"><Icon name="graph" size={19} /></ToolButton>
+        <CodeToolButton open={codeMenu} onToggle={() => setCodeMenu((o) => !o)} onInsert={insertCode} />
         <span className="mx-1 h-7 w-px bg-border" />
         {/* Bold · Italic · Underline · Strike · Highlight */}
         <button onMouseDown={keepFocus} onClick={() => wrapSelection("**")} title="Bold (**…**)" aria-label="Bold" className={ICON_BTN}><Icon name="bold" size={16} /></button>
@@ -1503,7 +1711,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
         <button onMouseDown={keepFocus} onClick={toolbarNoteLink} title="Link to another note (or type [[ while writing)" aria-label="Link to another note" className={ICON_BTN}><Icon name="notelink" size={18} /></button>
         {/* keepFocus (like Insert link): opening the sheet while editing prose keeps the block editor
             alive, so Insert routes the recognized LaTeX into it as inline math. */}
-        <button onMouseDown={keepFocus} onClick={() => setInkOpen((o) => !o)} title="Handwrite a formula (ink → LaTeX)" aria-label="Handwrite a formula" aria-pressed={inkOpen} className={`grid h-9 min-w-9 place-items-center rounded-md border px-2 text-sm ${inkOpen ? "border-accent bg-accent-soft text-accent" : "border-border hover:border-accent"}`}><Icon name="ink" size={18} /></button>
+        <button onMouseDown={keepFocus} onClick={() => setInkOpen((o) => !o)} title="Handwrite notes — Ancha reads words and formulas together" aria-label="Handwrite notes with Ancha" aria-pressed={inkOpen} className={`grid h-9 min-w-9 place-items-center rounded-md border px-2 text-sm ${inkOpen ? "border-accent bg-accent-soft text-accent" : "border-border hover:border-accent"}`}><Icon name="ink" size={18} /></button>
         <span className="mx-1 h-7 w-px bg-border" />
         {/* Unnumbered · Numbered list */}
         <ListToolButton ordered={false} open={listMenu === "bullet"} onToggle={() => setListMenu((m) => (m === "bullet" ? null : "bullet"))} onInsert={(marker) => insertList(false, marker)} />
@@ -1511,8 +1719,9 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
       </div>
 
       {/* Functions & symbols — the strip shows either the math set or its
-          chemistry mirror; the Σ/⚗ switch swaps them (persisted globally). */}
-      {(() => {
+          chemistry mirror; the Σ/⚗ switch swaps them (persisted globally).
+          Hidden when the tree can't be edited: every glyph in it inserts. */}
+      {caps.editBlocks && (() => {
         const barSwitch = (
           <>
             <div className="flex items-center overflow-hidden rounded-md border border-border" role="group" aria-label="Symbol bar mode">
@@ -1543,7 +1752,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
       })()}
 
       {/* Document settings */}
-      {!showSource && (
+      {!showSource && caps.editDocStyle && (
         <DocStyleBar
           fontKey={fontKey}
           fontFamily={fontFamily}
@@ -1557,14 +1766,31 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
         />
       )}
 
-      {readOnly && (
+      {locked === "access" && (
         <div className="print-hide flex items-center justify-center gap-1.5 border-b border-border bg-warning/10 px-6 py-2 text-center text-sm text-warning">
           <Icon name="lock" size={14} /> You have {access === "commenter" ? "comment-only" : "view-only"} access to this shared document — your changes won’t be saved.
         </div>
       )}
+      {/* An import is locked for a different reason than a share is, so it must
+          not borrow the sharing copy — nothing here is going unsaved. */}
+      {locked === "pdf" && (
+        <div className="print-hide flex items-center justify-center gap-1.5 border-b border-border bg-accent-soft px-6 py-2 text-center text-sm text-accent">
+          <Icon name="ink" size={14} /> Imported {pkg.tree.source?.filename ? `“${pkg.tree.source.filename}”` : "PDF"} — you can handwrite on it. Other editing is off for imported files.
+        </div>
+      )}
 
-      {/* Body */}
-      {showSource ? (
+      {/* Body — an imported PDF replaces the block canvas entirely: its content
+          is the attached file, and its tree is deliberately block-less. */}
+      {pdfSource ? (
+        <PdfDocumentView
+          source={pdfSource}
+          bytes={pdfBytes}
+          initialStrokes={initialAnnotations}
+          canAnnotate={caps.annotate}
+          zoom={zoom}
+          onStrokesChange={onAnnotationChange}
+        />
+      ) : showSource ? (
         <div className="mx-auto w-full max-w-3xl flex-1 p-8">
           <p className="mb-2 text-xs text-muted">Generated LaTeX (read-only — derived from the block tree)</p>
           <textarea readOnly value={documentToLatex(pkg.tree)} className="h-[70vh] w-full rounded-lg border border-border bg-surface p-4 font-mono text-sm" />
@@ -1576,7 +1802,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
               <div key={p} className={`print-page relative shrink-0 text-foreground shadow-xl ring-1 ring-border ${docStyle.background ? "" : "bg-surface"} ${ids.length === 0 ? "print-hide" : ""} ${p === lastContentPage ? "last-print-page" : ""}`} style={{ width: pageW, minHeight: pageH, background: docStyle.background || undefined, color: docStyle.foreground || undefined }}>
                 <div style={contentStyle}>
                   {blocks.length === 0 ? (
-                    <button onClick={() => addBlock(paragraphFromSource(""))} className="w-full rounded-lg border border-dashed border-border p-8 text-center text-muted hover:border-accent">Empty note — click to start a paragraph, or use the toolbar.</button>
+                    caps.editBlocks ? <button onClick={() => addBlock(paragraphFromSource(""))} className="w-full rounded-lg border border-dashed border-border p-8 text-center text-muted hover:border-accent">Empty note — click to start a paragraph, or use the toolbar.</button> : null
                   ) : (
                     <div className="space-y-1">
                       {ids.map((id) => {
@@ -1610,7 +1836,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
                       })}
                     </div>
                   )}
-                  {p === pages.length - 1 && blocks.length > 0 && !editingId && !selected && (
+                  {p === pages.length - 1 && blocks.length > 0 && caps.editBlocks && !editingId && !selected && (
                     <button onClick={() => addBlock(paragraphFromSource(""))} className="print-hide mt-1 block w-full rounded-md px-3 py-2 text-left text-sm text-muted hover:bg-foreground/[0.04]">Click to add text…</button>
                   )}
                 </div>
@@ -1648,10 +1874,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
       {tablePicker && <TablePicker onPick={insertTable} onClose={() => setTablePicker(false)} />}
       {inkOpen && !readOnly && (
         <InkInsertPanel
-          /* Handwritten chemistry arrives as a single \ce{...} — route it through
-             the chem dispatcher (ChemField / inline chem popover / tagged chem
-             block); everything else takes the math path. */
-          onInsert={(tex) => (ceInner(tex) != null ? onInsertChem(tex) : onInsert(tex))}
+          onInsert={insertRecognized}
           onClose={() => setInkOpen(false)}
           markSticky={() => { if (editingId) sticky.current = true; }}
           suspendEscape={symbolsOpen || chemOpen || tablePicker || templatesOpen || !!confirmTemplate || !!moduleEdit || shareOpen || !!graphEdit}
@@ -1674,7 +1897,14 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
         />
       )}
       {collab.active && <CollabCursors cursors={remoteCursors} blockEls={blockEls} />}
-      {shareOpen && <ShareDialog noteId={id} access={access} onClose={() => setShareOpen(false)} />}
+      {shareOpen && (
+        <ShareDialog
+          noteId={id}
+          access={access}
+          onClose={() => setShareOpen(false)}
+          onCollaboratorsChanged={(count) => { if ((count > 0) !== shared) setSharedRev((n) => n + 1); }}
+        />
+      )}
       {historyOpen && (
         <HistoryPanel
           noteId={id}
@@ -1719,6 +1949,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     const isImage = b.type === "image";
     const isTable = b.type === "table";
     const isGraph = b.type === "graph";
+    const isCode = b.type === "code";
     // Move targets are computed in VISIBLE-list space (then mapped back to the
     // full-array index) so arrows never swap a block with a hidden, collapsed-
     // section body block. Collapsed headings can't be nudged inline (use the
@@ -1783,7 +2014,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
                 <div className="pointer-events-none mt-2 border-t border-border pt-2"><BlockView block={b} /></div>
               </div>
             ) : (
-              <button onClick={() => { setSelected(null); setEditingId(b.id); }} className="w-full rounded-md px-2 py-1 text-left"><BlockView block={b} /></button>
+              <button onClick={() => { if (!capsRef.current.editBlocks) return; setSelected(null); setEditingId(b.id); }} className="w-full rounded-md px-2 py-1 text-left"><BlockView block={b} /></button>
             )
           ) : isImage ? (
             <>
@@ -1821,7 +2052,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
               blockId={b.id}
               group="graph"
               align="center"
-              onSelect={() => { setSelected(null); setEditingId(null); setGraphEdit({ id: b.id }); }}
+              onSelect={() => { if (!capsRef.current.editBlocks) return; setSelected(null); setEditingId(null); setGraphEdit({ id: b.id }); }}
               onCommit={(positions) => placeGraph(b.id, positions[0])}
               items={[{
                 key: b.id,
@@ -1832,6 +2063,18 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
                   </div>
                 ),
               }]}
+            />
+          ) : isCode ? (
+            <CodeBlockView
+              block={b}
+              noteId={id}
+              readOnly={readOnly}
+              // A run can finish after its block was deleted; committing then
+              // would push a no-op undo step and dirty the note for nothing.
+              onChange={(fn, coalesce) => {
+                if (!pkgRef.current?.tree.blocks.some((x) => x.id === b.id)) return;
+                setBlocks((bs) => bs.map((x) => (x.id === b.id ? fn(x) : x)), coalesce);
+              }}
             />
           ) : b.id === editingId ? (
             editingPara ? (
@@ -1884,9 +2127,13 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
 }
 
 // ─── The editor route: shared strip + left sidebar + up to two split panes ────
+// The note id lives in the query string (`/editor?id=…`), not a path segment,
+// so the route is a single static page under `output: "export"` — local-first
+// note ids cannot be enumerated at build time. Rendered inside the Suspense
+// boundary in page.tsx, which useSearchParams requires for static prerender.
 
-export default function EditorPage() {
-  const { id } = useParams<{ id: string }>();
+export default function EditorClient() {
+  const id = useSearchParams().get("id") ?? "";
   const router = useRouter();
   const [secondId, setSecondId] = useState<string | null>(null);
   const [activeSlot, setActiveSlot] = useState<"a" | "b">("a");
@@ -1928,7 +2175,7 @@ export default function EditorPage() {
   const openNoteFromPalette = useCallback((noteId: string) => {
     if (noteId === id) { setActiveSlot("a"); handleA.current?.scrollToTop(); }
     else if (noteId === secondId) { setActiveSlot("b"); handleB.current?.scrollToTop(); }
-    else router.push(`/editor/${noteId}`);
+    else router.push(`/editor?id=${noteId}`);
   }, [id, secondId, router]);
 
   // Note-link clicks: when the target note is already open in a pane, jump to
@@ -1959,10 +2206,17 @@ export default function EditorPage() {
     return () => window.removeEventListener(NOTE_LINK_EVENT, onLink);
   }, [id, secondId, openSecond]);
 
+  // No id in the URL (direct visit to /editor) → back to the library.
+  useEffect(() => {
+    if (!id) router.replace("/");
+  }, [id, router]);
+
   const split = secondId !== null;
   const active: "a" | "b" = split ? activeSlot : "a";
   const activeHandle = active === "a" ? handleA : handleB;
   const activeOutline = active === "a" ? outlineA : outlineB;
+
+  if (!id) return null;
 
   return (
     <div className="print-flow flex h-screen flex-col">

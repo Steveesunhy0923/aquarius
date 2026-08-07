@@ -2,10 +2,12 @@
 
 /**
  * InkLab — the /ink testbed page body: a full-height handwriting canvas with a
- * Graphite top bar (mode / auto / convert / undo / clear) and the recognition
- * result panel. A lab tool, deliberately not linked from the library.
+ * Graphite top bar (mode / auto / convert / undo / clear) and Ancha's result
+ * panel. A lab tool, deliberately not linked from the library.
  */
 
+import { anchaUrl } from "@/lib/ink/endpoint";
+import { EndpointField } from "./EndpointField";
 import { Icon } from "@/components/Icon";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
@@ -29,14 +31,16 @@ export function InkLab() {
   // by every save (rec.collectedCount) and by deletes inside the dialog.
   const [reviewOpen, setReviewOpen] = useState(false);
   const [collected, setCollected] = useState<number | null>(null);
+  // Bumped when the endpoint is re-pointed, so the badge re-probes the new host.
+  const [endpointRev, setEndpointRev] = useState(0);
   useEffect(() => {
-    fetch("http://127.0.0.1:8787/collect")
+    fetch(anchaUrl("/collect"))
       .then((r) => (r.ok ? r.json() : null))
       .then((b: { count?: number } | null) => {
         if (typeof b?.count === "number") setCollected(b.count);
       })
-      .catch(() => {}); // server offline — badge just shows no number
-  }, []);
+      .catch(() => {}); // Ancha offline — badge just shows no number
+  }, [endpointRev]);
   useEffect(() => {
     if (rec.collectedCount !== null) setCollected(rec.collectedCount);
   }, [rec.collectedCount]);
@@ -51,12 +55,15 @@ export function InkLab() {
         <span className="rounded border border-border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.09em] text-muted">
           testbed
         </span>
-        <span className="hidden text-xs text-muted md:inline">handwriting → LaTeX</span>
+        <span className="hidden text-xs text-muted md:inline">Ancha · handwriting → LaTeX</span>
 
         <div className="ml-auto flex items-center gap-2">
+          {/* Where Ancha is. Only ever needs touching on a real iPad, where the
+              default loopback address points at the tablet, not the Mac. */}
+          <EndpointField onChanged={() => setEndpointRev((n) => n + 1)} />
           <button
             onClick={() => setReviewOpen(true)}
-            title="Review the collected training samples"
+            title="Review the samples collected for Ancha"
             className="h-9 rounded-md border border-border px-3 text-sm text-muted transition hover:border-accent hover:text-foreground"
           >
             Review{collected !== null ? ` · ${collected}` : ""}
@@ -100,7 +107,7 @@ export function InkLab() {
           />
           {empty && (
             <p className="pointer-events-none absolute inset-0 grid place-items-center text-sm text-faint">
-              Write here — Apple Pencil, finger, or mouse
+              Write here — words and formulas together; Ancha sorts them out
             </p>
           )}
         </div>

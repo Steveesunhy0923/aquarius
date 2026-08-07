@@ -1,7 +1,30 @@
 # Roadmap
 
+> Platform-maturity gaps (iPad / Desktop / Web) are tracked separately in
+> [TODO.md](TODO.md); this file stays the release record and feature build order.
+
 ## Release record
 
+- **Platform-maturity slice (2026-07-20, branch `ui-graphite-redesign`, unreleased)** —
+  the four highest-leverage items from `docs/TODO.md`, all verified end-to-end in a real
+  browser against both the dev server and the served static export (17 assertions, plus
+  a real Tectonic compile of the export preamble). (1) **Static-export build**: editor
+  moved to the query-param route `/editor?id=…` (single static page; Suspense-wrapped
+  `useSearchParams`), `CAP_STATIC=1` → `output: "export"`, `npm run build:static` parks
+  `app/api` (`scripts/build-static.mjs`), `npm run ios:sync:static` bundles `out/` into
+  the Capacitor shell; `NEXT_PUBLIC_API_ORIGIN` (`lib/api.ts`) points shell builds at
+  hosted API routes. (2) **Sync engine (real)**: `getStore()` now returns the
+  local-first `SyncedStore` when signed in — per-user IndexedDB mirror
+  (`aquarius-u-<uid>`), persistent coalescing push queue, background push/pull with
+  `rev` (last-synced `updated_at`) change detection, remote-tombstone handling, asset
+  prefetch, and cloud-tree "Sync conflict" snapshots (0011 history) before LWW; shared
+  notes still delegate to cloud, so collab is untouched. (3) **Typeset PDF export**:
+  ExportMenu "PDF (typeset)" → `lib/export/pdf.ts` (full document wrapper + asset
+  transcode) → `/api/pdf` running Tectonic sandboxed, print fallback when unreachable.
+  (4) **Compliance pair**: Sign in with Apple (+ linking) and in-app account deletion
+  (`DeleteAccountDialog` → Storage cleanup → `delete_account()` RPC, migration `0012`).
+  Manual follow-ups: `supabase db push` (0012), enable the Apple provider in the
+  Supabase dashboard, `tectonic` binary on any deploy target.
 - **0.6.2 — Fillable fields + inline `[[` autocomplete + backlinks + corrections review**
   (branch `ui-graphite-redesign`, unreleased). **Fillable module fields**: `{{Field}}` tokens in
   module/preset prose (`lib/blocks/fields.ts`) prompt once on insert (`ModuleFieldsDialog`, wired
@@ -40,7 +63,8 @@
   insert via `[[` or the toolbar picker (whole note or a chosen section), hover preview
   card, click-to-open with section scroll and in-place jumps for already-open panes;
   copies rewrite self-links; LaTeX/print export as plain text. Plus the `/ink`
-  handwriting→LaTeX lab with correction capture (`docs/HANDWRITING_MODEL.md`), the `ml/`
+  lab for Ancha, the handwriting→LaTeX model, with correction capture
+  (`docs/HANDWRITING_MODEL.md`), the `ml/`
   MathWriting pipeline (code only), Capacitor iOS shell scaffolding
   (`docs/IPAD_APP_PLAN.md`), demo-library seeding, and migration `0009`.
 - **0.5.0** (`14a99e0`) — MathLive fill-the-box math input + structural math editor beta.

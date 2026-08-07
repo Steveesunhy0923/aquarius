@@ -11,6 +11,9 @@
 export type Theme = "system" | "light" | "dark";
 /** What "Use this template" does when the note already has content. */
 export type TemplateApplyMode = "ask" | "add" | "replace";
+/** How tall the handwriting sheet opens: a strip under the note, a deeper
+ *  strip, or full A4 sheets that paginate as you write. */
+export type InkCanvasSize = "compact" | "tall" | "page";
 
 export interface AppSettings {
   theme: Theme;
@@ -21,6 +24,9 @@ export interface AppSettings {
   /** Opt-in beta: edit new formulas with the structural block-tree editor
    *  instead of MathLive. Default off. */
   mathEditorBeta: boolean;
+  /** Starting size of the handwriting sheet. The size control inside the sheet
+   *  writes through to this, so the choice sticks to the next note. */
+  inkCanvasSize: InkCanvasSize;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -28,6 +34,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   templateApplyMode: "ask",
   mathKeyboard: false,
   mathEditorBeta: false,
+  inkCanvasSize: "compact",
 };
 
 export const SETTINGS_KEY = "aquarius.settings.v1";

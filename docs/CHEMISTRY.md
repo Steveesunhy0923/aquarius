@@ -83,7 +83,7 @@ Chemistry is the third recognition mode of the handwriting pipeline, separate
 from math and text (full model story: [HANDWRITING_MODEL.md](HANDWRITING_MODEL.md)):
 
 - **Contract**: `POST /recognize {strokes, mode:"chem"}` → `{latex:"\ce{...}"}`.
-  The server decodes strokes with the recognition model, then
+  Ancha decodes the strokes, then
   `ml/src/chem_normalize.py` reinterprets the decoded expression AS CHEMISTRY —
   `2H_{2}+O_{2}\rightarrow 2H_{2}O` becomes `\ce{2H2 + O2 -> 2H2O}`: digit
   subscripts collapse (mhchem re-subscripts them), `^{2-}`→`^2-` charges,

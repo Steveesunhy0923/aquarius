@@ -73,7 +73,7 @@ export function NoteCard({ note, onDelete, onCopy, onPdf, onAddTag, onRemoveTag 
       <div className="absolute right-2 top-2 z-10 opacity-60 transition group-hover:opacity-100">
         <NoteCardMenu note={note} onCopy={onCopy} onDelete={onDelete} onPdf={onPdf} />
       </div>
-      <Link href={`/editor/${note.id}`} className="flex flex-col">
+      <Link href={`/editor?id=${note.id}`} className="flex flex-col">
         <div className="aspect-[3/4] overflow-hidden rounded-md border border-border">
           <NoteCover noteId={note.id} />
         </div>

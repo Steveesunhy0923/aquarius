@@ -16,13 +16,14 @@ import type { CapacitorConfig } from '@capacitor/cli';
  * - Real iPad: set CAP_SERVER_URL to http://<Mac-LAN-IP>:3000 and re-run
  *   `npm run ios:sync`, e.g.
  *     CAP_SERVER_URL=http://192.168.1.23:3000 npm run ios:sync
- * - Future static-export production build: set CAP_STATIC=1 (and point webDir
- *   at the export) so no server block is emitted and the bundled files load.
+ * - Static-export production build: `npm run ios:sync:static` — builds the
+ *   static export (scripts/build-static.mjs → out/) and syncs it into the
+ *   shell with no server block, so the bundled files load offline.
  */
 const config: CapacitorConfig = {
   appId: 'com.stevee.aquarius',
   appName: 'Aquarius',
-  webDir: 'shell/www',
+  webDir: process.env.CAP_STATIC ? 'out' : 'shell/www',
   ...(process.env.CAP_STATIC
     ? {}
     : {

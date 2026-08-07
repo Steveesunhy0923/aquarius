@@ -6,6 +6,7 @@ import {
   getSettings,
   setSettings,
   type AppSettings,
+  type InkCanvasSize,
   type TemplateApplyMode,
   type Theme,
 } from "@/lib/settings/settings";
@@ -14,6 +15,12 @@ const THEMES: { id: Theme; label: string }[] = [
   { id: "system", label: "System" },
   { id: "light", label: "Light" },
   { id: "dark", label: "Dark" },
+];
+
+const INK_SIZES: { id: InkCanvasSize; label: string }[] = [
+  { id: "compact", label: "Compact" },
+  { id: "tall", label: "Tall" },
+  { id: "page", label: "Full page" },
 ];
 
 const TEMPLATE_MODES: { id: TemplateApplyMode; label: string }[] = [
@@ -82,6 +89,26 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
             <span className="block text-xs text-muted">Fill-in-the-boxes editor with better integral/bound handling. Existing formulas keep the current editor.</span>
           </span>
           <Toggle on={s.mathEditorBeta} onClick={() => update({ mathEditorBeta: !s.mathEditorBeta })} />
+        </div>
+
+        {/* Handwriting */}
+        <DialogSection>Handwriting</DialogSection>
+        <div className={ROW}>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm">Sheet size</span>
+            <span className="block text-xs text-muted">How large the handwriting sheet opens. Full page gives A4 sheets that add a new page as you write.</span>
+          </span>
+          <div className="inline-flex shrink-0 rounded-lg border border-border p-0.5 text-xs">
+            {INK_SIZES.map((z) => (
+              <button
+                key={z.id}
+                onClick={() => update({ inkCanvasSize: z.id })}
+                className={`rounded-md px-3 py-1.5 transition ${s.inkCanvasSize === z.id ? "bg-foreground text-background" : "text-muted hover:text-foreground"}`}
+              >
+                {z.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Templates */}

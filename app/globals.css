@@ -20,6 +20,16 @@
   --success-soft: #ecfdf3;
   --warning: #b45309;
   --warning-soft: #fffbeb;
+  /* Code-block syntax colors (CodeMirror highlight style, lib/editor/cm.ts).
+     Same rule as status colors: reference the tokens, never raw palette values.
+     Deliberately DESATURATED: a code listing sits inside a Computer Modern
+     document, so its colors carry structure without out-shouting the prose.
+     All of them clear 4.5:1 on --surface. */
+  --code-keyword: #5b4fa8;
+  --code-string: #2f6b4f;
+  --code-number: #7a5a2e;
+  --code-comment: #6f6f7a;
+  --code-func: #3d6673;
 }
 
 /* Dark palette. Applied by the system preference UNLESS the user forced a theme
@@ -41,6 +51,11 @@
     --success-soft: #12251b;
     --warning: #fbbf24;
     --warning-soft: #2a2010;
+    --code-keyword: #a9a3d9;
+    --code-string: #7fbf9c;
+    --code-number: #cfa877;
+    --code-comment: #8b8b98;
+    --code-func: #86b3c2;
   }
 }
 :root.theme-dark {
@@ -59,6 +74,11 @@
   --success-soft: #12251b;
   --warning: #fbbf24;
   --warning-soft: #2a2010;
+  --code-keyword: #a9a3d9;
+  --code-string: #7fbf9c;
+  --code-number: #cfa877;
+  --code-comment: #8b8b98;
+  --code-func: #86b3c2;
 }
 
 @theme inline {
@@ -117,12 +137,22 @@ body {
 /* ── Print / Save-as-PDF ──────────────────────────────────────────────────
    Show only the document pages at true A4 size, on white regardless of theme. */
 @media print {
-  :root {
+  /* Must out-specify the forced-theme classes (`:root.theme-dark`), or a user
+     on dark mode prints dark surfaces and light-on-white syntax colors. */
+  :root,
+  :root.theme-dark,
+  :root.theme-light {
     --background: #ffffff;
     --foreground: #111114;
     --surface: #ffffff;
     --border: #d0d0d8;
     --muted: #555555;
+    /* Code prints with the light syntax palette even from a dark theme. */
+    --code-keyword: #5b4fa8;
+    --code-string: #2f6b4f;
+    --code-number: #7a5a2e;
+    --code-comment: #6f6f7a;
+    --code-func: #3d6673;
   }
   html,
   body {
@@ -171,6 +201,20 @@ body {
   .print-page.last-print-page {
     break-after: auto;
     page-break-after: auto;
+  }
+  /* Code blocks: the on-screen editor scrolls past 480px — print must not clip. */
+  .cm-editor .cm-scroller {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+  /* Indentation warnings are an editing affordance, not document content. */
+  .cm-tooltip-lint {
+    display: none !important;
+  }
+  .cm-lintRange-error,
+  .cm-lintRange-warning {
+    border-bottom: none !important;
+    background-image: none !important;
   }
 }
 

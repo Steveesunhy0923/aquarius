@@ -2,6 +2,7 @@
 
 import { Icon } from "@/components/Icon";
 import { placeCard, useHoverCard } from "@/components/ui/hovercard";
+import { apiUrl } from "@/lib/api";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 
@@ -66,7 +67,7 @@ async function fetchUnfurl(href: string): Promise<Fetched> {
   if (hit && Date.now() - hit.at < (hit.data ? TTL : FAIL_TTL)) return hit.data;
   let data: Fetched = null;
   try {
-    const res = await fetch(`/api/unfurl?url=${encodeURIComponent(href)}`);
+    const res = await fetch(apiUrl(`/api/unfurl?url=${encodeURIComponent(href)}`));
     const j = res.ok ? ((await res.json()) as UnfurlResponse) : null;
     if (j?.ok) {
       data = {

@@ -1,29 +1,63 @@
 "use client";
 
 /**
- * Recognition wiring + result panel for the ink testbed.
+ * Ancha wiring + result panel for the ink testbed.
  *
- * `useRecognition` owns the conversation with the local recognition server
- * (POST http://127.0.0.1:8787/recognize): manual convert, debounced
- * auto-convert after the last stroke ends, math/text mode, and the
- * offline/error states. The small control widgets (ModeToggle / AutoToggle /
- * ConvertButton) live in the page's top bar; `RecognitionPanel` renders the
- * result — KaTeX preview, confidence, and the raw LaTeX as a copyable line.
+ * `useRecognition` owns the conversation with Ancha, the local recognition
+ * server (POST http://127.0.0.1:8787/recognize): manual convert, debounced
+ * auto-convert after the last stroke ends, the recognition mode, per-run
+ * re-labelling, and the offline/error states.
+ *
+ * The default mode is "auto" — Ancha segments the page and decides prose vs
+ * formula per run, so the user never picks. A unified result carries `source`
+ * (the whole reading as paragraph source) and `segments` (her per-run calls),
+ * which is what the chips and the mixed preview render. The three
+ * single-interpretation modes keep the old two-field shape untouched.
+ *
+ * The small control widgets (ModeToggle / AutoToggle / ConvertButton) live in
+ * the page's top bar; `RecognitionPanel` renders the result.
  */
 
 import { Katex } from "@/components/Katex";
+import { anchaUrl } from "@/lib/ink/endpoint";
+import { MixedPreview, SegmentChips } from "./MixedResult";
 import { ceInner, wrapCe } from "@/lib/blocks/chem";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { buildCollectRequest, buildRecognizeRequest, type RecognitionMode, type Stroke } from "./strokes";
+import {
+  buildAcceptedRequest,
+  buildCollectRequest,
+  buildRecognizeRequest,
+  buildSegmentRequest,
+  sampleMode,
+  type RecognitionMode,
+  type SampleMode,
+  type Segment,
+  type SegmentKind,
+  type SegmentOverride,
+  type Stroke,
+} from "./strokes";
 
-const RECOGNIZE_URL = "http://127.0.0.1:8787/recognize";
-const COLLECT_URL = "http://127.0.0.1:8787/collect";
+// Resolved per call, not once at module load: the endpoint can be re-pointed
+// at runtime from the device (see lib/ink/endpoint.ts).
+const RECOGNIZE_URL = () => anchaUrl("/recognize");
+const COLLECT_URL = () => anchaUrl("/collect");
+const ACCEPTED_URL = () => anchaUrl("/collect/accepted");
+const SEGMENT_URL = () => anchaUrl("/recognize/segment");
 export const OFFLINE_CMD = "cd ml && .venv/bin/python serve.py";
 const AUTO_DELAY_MS = 800;
 
 export interface RecognitionResult {
   latex: string;
   confidence: number;
+  /** "auto" only: the whole reading as paragraph source — prose with
+   *  `\( ... \)` inline math. Equal to `latex` on that path; absent on the
+   *  single-interpretation modes. */
+  source?: string;
+  /** "auto" only: one entry per recognized run, in reading order. */
+  segments?: Segment[];
+  /** "auto" only: which engines actually ran (text is null when Ancha had to
+   *  fall back to geometry alone). */
+  engine?: { layout?: string; text?: string | null; math?: string };
 }
 
 /**
@@ -31,8 +65,26 @@ export interface RecognitionResult {
  * increments each time a stroke ENDS (not on undo/clear) and is what the
  * auto-convert debounce keys on.
  */
-export function useRecognition(strokes: Stroke[], strokeSeq: number) {
-  const [mode, setMode] = useState<RecognitionMode>("math");
+export function useRecognition(
+  strokes: Stroke[],
+  strokeSeq: number,
+  opts: {
+    /** Where the ink pages break (document-space y). Ancha forbids a line
+     *  spanning two sheets, so a paged canvas must hand these over. */
+    pageBreaks?: number[];
+    initialMode?: RecognitionMode;
+  } = {},
+) {
+  // "auto" is the default: Ancha decides text-vs-math per run, so the user never
+  // picks. The single-interpretation modes remain reachable from the lab.
+  const [mode, setMode] = useState<RecognitionMode>(opts.initialMode ?? "auto");
+  // Chemistry is an INTERPRETATION of the formula runs, not a fourth mode —
+  // `Sn` is tin or `\sin` purely by the writer's intent, so it stays a switch
+  // the user throws while text-vs-math is detected.
+  const [chem, setChem] = useState(false);
+  // Runs the user re-labelled by hand, replayed on every later call so the fix
+  // survives the next stroke.
+  const [overrides, setOverrides] = useState<SegmentOverride[]>([]);
   const [auto, setAuto] = useState(true);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<RecognitionResult | null>(null);
@@ -43,6 +95,11 @@ export function useRecognition(strokes: Stroke[], strokeSeq: number) {
   // Which MODE produced the current result: "text" results are plain words and
   // must not be typeset through KaTeX.
   const [resultMode, setResultMode] = useState<RecognitionMode>("math");
+  // What that result is FILED as when saved. Resolved when the response lands,
+  // not when the user saves: "auto" is not a corpus label, and the answer
+  // depends on the segments Ancha returned and the Σ/⚗ switch AS IT WAS at
+  // request time — both of which can have moved on by the time Save is hit.
+  const [resultSampleMode, setResultSampleMode] = useState<SampleMode>("math");
   const [error, setError] = useState<string | null>(null);
   const [offline, setOffline] = useState(false);
 
@@ -51,25 +108,44 @@ export function useRecognition(strokes: Stroke[], strokeSeq: number) {
   strokesRef.current = strokes;
   const modeRef = useRef(mode);
   modeRef.current = mode;
+  const chemRef = useRef(chem);
+  chemRef.current = chem;
+  const overridesRef = useRef(overrides);
+  overridesRef.current = overrides;
+  const pageBreaksRef = useRef(opts.pageBreaks);
+  pageBreaksRef.current = opts.pageBreaks;
   const seqRef = useRef(strokeSeq);
   seqRef.current = strokeSeq;
   const abortRef = useRef<AbortController | null>(null);
+  // The current result and its filing mode, readable from the stable save
+  // callbacks below without making them depend on either.
+  const resultRef = useRef(result);
+  resultRef.current = result;
+  const sampleModeRef = useRef(resultSampleMode);
+  sampleModeRef.current = resultSampleMode;
 
   const convert = useCallback(async () => {
     const ink = strokesRef.current;
     if (ink.length === 0) return;
     const seqAtRequest = seqRef.current;
     const modeAtRequest = modeRef.current;
+    const chemAtRequest = chemRef.current;
     abortRef.current?.abort(); // supersede any in-flight request
     const ac = new AbortController();
     abortRef.current = ac;
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(RECOGNIZE_URL, {
+      const res = await fetch(RECOGNIZE_URL(), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildRecognizeRequest(ink, modeRef.current)),
+        body: JSON.stringify(
+          buildRecognizeRequest(ink, modeRef.current, {
+            chem: chemRef.current,
+            pageBreaks: pageBreaksRef.current,
+            overrides: overridesRef.current,
+          }),
+        ),
         signal: ac.signal,
       });
       setOffline(false);
@@ -86,13 +162,24 @@ export function useRecognition(strokes: Stroke[], strokeSeq: number) {
         setResultSeq(null);
         setError(detail);
       } else {
-        const body = (await res.json()) as { latex?: unknown; confidence?: unknown };
-        setResult({
+        const body = (await res.json()) as {
+          latex?: unknown;
+          confidence?: unknown;
+          source?: unknown;
+          segments?: unknown;
+          engine?: unknown;
+        };
+        const next: RecognitionResult = {
           latex: typeof body.latex === "string" ? body.latex : "",
           confidence: typeof body.confidence === "number" ? body.confidence : 0,
-        });
+          source: typeof body.source === "string" ? body.source : undefined,
+          segments: Array.isArray(body.segments) ? (body.segments as Segment[]) : undefined,
+          engine: (body.engine as RecognitionResult["engine"]) ?? undefined,
+        };
+        setResult(next);
         setResultSeq(seqAtRequest);
         setResultMode(modeAtRequest);
+        setResultSampleMode(sampleMode(modeAtRequest, next.segments, chemAtRequest));
       }
     } catch (err) {
       if ((err as Error)?.name === "AbortError") return; // superseded or cleared
@@ -129,18 +216,17 @@ export function useRecognition(strokes: Stroke[], strokeSeq: number) {
   // training data. Returns the running collected-sample count, or null on
   // failure (e.g. server offline).
   const [collectedCount, setCollectedCount] = useState<number | null>(null);
-  // `mode` override: correction capture must stamp the mode that PRODUCED the
-  // result being corrected (resultMode), not the live toggle — flipping the
-  // toggle between recognize and save would otherwise file a \ce{...} label
-  // under mode:"math" and silently misroute it in the training corpora.
-  const collect = useCallback(async (label: string, predicted?: string, mode?: RecognitionMode): Promise<number | null> => {
+  // `mode` defaults to the filing mode frozen with the result, NOT the live
+  // toggle: flipping Σ/⚗ between recognize and save would otherwise file a
+  // \ce{...} label under mode:"math" and silently misroute it in the corpora.
+  const collect = useCallback(async (label: string, predicted?: string, mode?: SampleMode): Promise<number | null> => {
     const ink = strokesRef.current;
     if (ink.length === 0 || !label.trim()) return null;
     try {
-      const res = await fetch(COLLECT_URL, {
+      const res = await fetch(COLLECT_URL(), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildCollectRequest(ink, label.trim(), predicted, mode ?? modeRef.current)),
+        body: JSON.stringify(buildCollectRequest(ink, label.trim(), predicted, mode ?? sampleModeRef.current)),
       });
       if (!res.ok) return null;
       const body = (await res.json()) as { count?: unknown };
@@ -152,9 +238,97 @@ export function useRecognition(strokes: Stroke[], strokeSeq: number) {
     }
   }, []);
 
+  // ── Acceptance capture: the user INSERTED Ancha's reading without editing
+  // it, so she was right and they ratified it by using the result. Saved to
+  // the separate accepted store (never the x32-oversampled corrections file)
+  // as a self-labelled training pair. Fire-and-forget from the caller's side:
+  // a failure here must never block or complicate the insert the user asked
+  // for, so every path returns null instead of throwing.
+  const [acceptedCount, setAcceptedCount] = useState<number | null>(null);
+  const collectAccepted = useCallback(async (label: string): Promise<number | null> => {
+    const ink = strokesRef.current;
+    const current = resultRef.current;
+    if (ink.length === 0 || !label.trim()) return null;
+    try {
+      const res = await fetch(ACCEPTED_URL(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          buildAcceptedRequest(ink, label.trim(), sampleModeRef.current, {
+            confidence: current?.confidence,
+            segments: current?.segments,
+          }),
+        ),
+      });
+      if (!res.ok) return null;
+      const body = (await res.json()) as { count?: unknown };
+      const count = typeof body.count === "number" ? body.count : null;
+      setAcceptedCount(count);
+      return count;
+    } catch {
+      return null; // network failure → server not running
+    }
+  }, []);
+
+  // ── Per-segment re-label ──────────────────────────────────────────────────
+  // Flipping a run to text is a PURE CLIENT SPLICE: `visionText` is already in
+  // hand, and re-reading an isolated word without its line's context returns no
+  // observation at all, so a round trip would lose the words. The other
+  // direction genuinely needs a fresh decode.
+  const relabel = useCallback(
+    async (segment: Segment, kind: SegmentKind): Promise<void> => {
+      setOverrides((prev) => [...prev.filter((o) => o.strokes[0] !== segment.strokes[0]), { strokes: segment.strokes, kind }]);
+      const ink = strokesRef.current;
+      const own = segment.strokes.map((i) => ink[i]).filter(Boolean);
+      const splice = (text: string) =>
+        setResult((prev) => {
+          if (!prev?.source || !prev.segments) return prev;
+          const source = prev.source.slice(0, segment.sourceStart) + text + prev.source.slice(segment.sourceEnd);
+          const delta = text.length - (segment.sourceEnd - segment.sourceStart);
+          return {
+            ...prev,
+            latex: source,
+            source,
+            segments: prev.segments.map((s) =>
+              s.id === segment.id
+                ? { ...s, kind, text: kind === "text" ? text : undefined, latex: kind === "text" ? undefined : text.slice(2, -2), sourceEnd: s.sourceEnd + delta }
+                : s.sourceStart > segment.sourceStart
+                  ? { ...s, sourceStart: s.sourceStart + delta, sourceEnd: s.sourceEnd + delta }
+                  : s,
+            ),
+          };
+        });
+
+      if (kind === "text") {
+        splice(segment.visionText ?? segment.text ?? "");
+        return;
+      }
+      if (own.length === 0) return;
+      try {
+        const res = await fetch(SEGMENT_URL(), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(buildSegmentRequest(own, kind)),
+        });
+        if (!res.ok) return;
+        const body = (await res.json()) as { latex?: unknown };
+        if (typeof body.latex === "string" && body.latex) splice(`\\(${body.latex}\\)`);
+      } catch {
+        /* server offline — the override still stands for the next recognition */
+      }
+    },
+    [],
+  );
+
+  // A fresh page of ink invalidates every run-level correction: the indices
+  // those overrides carry refer to a stroke array that no longer exists.
+  useEffect(() => {
+    if (strokes.length === 0) setOverrides([]);
+  }, [strokes.length]);
+
   return {
-    mode, setMode, auto, setAuto, busy, result, resultSeq, resultMode, error, offline, convert,
-    collect, collectedCount, hasInk: strokes.length > 0,
+    mode, setMode, chem, setChem, auto, setAuto, busy, result, resultSeq, resultMode, resultSampleMode, error, offline,
+    convert, collect, collectedCount, collectAccepted, acceptedCount, relabel, overrides, hasInk: strokes.length > 0,
   };
 }
 
@@ -162,10 +336,13 @@ export type Recognition = ReturnType<typeof useRecognition>;
 
 // ─── Top-bar controls ─────────────────────────────────────────────────────────
 
+/** The lab's raw mode switch. "auto" is what the product ships; the three
+ *  single-interpretation modes stay exposed here so a reading can be compared
+ *  against forcing one engine over the whole page. */
 export function ModeToggle({ mode, onMode }: { mode: RecognitionMode; onMode: (m: RecognitionMode) => void }) {
   return (
     <div className="inline-flex h-9 overflow-hidden rounded-md border border-border text-sm" role="group" aria-label="Recognition mode">
-      {(["math", "chem", "text"] as const).map((m) => (
+      {(["auto", "math", "chem", "text"] as const).map((m) => (
         <button
           key={m}
           onClick={() => onMode(m)}
@@ -184,7 +361,7 @@ export function AutoToggle({ on, onToggle }: { on: boolean; onToggle: () => void
     <button
       onClick={onToggle}
       aria-pressed={on}
-      title="Re-recognize shortly after each stroke"
+      title="Let Ancha re-read shortly after each stroke"
       className={`h-9 rounded-md border px-3 text-sm transition ${
         on ? "border-accent bg-accent-soft text-accent" : "border-border text-muted hover:border-accent hover:text-foreground"
       }`}
@@ -201,7 +378,7 @@ export function ConvertButton({ busy, disabled, onClick }: { busy: boolean; disa
       disabled={disabled}
       className="h-9 rounded-md bg-accent px-3.5 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-40"
     >
-      {busy ? "Converting…" : "Convert"}
+      {busy ? "Reading…" : "Convert"}
     </button>
   );
 }
@@ -235,10 +412,10 @@ export function RecognitionPanel({ rec }: { rec: Recognition }) {
   return (
     <section aria-label="Recognition result" className="shrink-0 rounded-xl border border-border bg-surface">
       <div className="flex items-center gap-3 border-b border-border-soft px-4 py-2">
-        <p className="text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted">Recognized</p>
-        {busy && <span className="text-xs text-faint">converting…</span>}
+        <p className="text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted">Ancha reads</p>
+        {busy && <span className="text-xs text-faint">reading…</span>}
         {result && (
-          <span className="ml-auto flex items-center gap-2 text-xs text-muted" title="Model confidence">
+          <span className="ml-auto flex items-center gap-2 text-xs text-muted" title="How sure Ancha is (her least certain run)">
             <span className="inline-block h-1 w-16 overflow-hidden rounded-full bg-border">
               <span className="block h-full rounded-full bg-accent" style={{ width: `${pct}%` }} />
             </span>
@@ -250,7 +427,7 @@ export function RecognitionPanel({ rec }: { rec: Recognition }) {
       <div className="px-4 py-3">
         {offline ? (
           <p className="text-sm text-muted">
-            Recognition server offline — start it with:{" "}
+            Ancha is offline — start her with:{" "}
             <code className="rounded bg-foreground/[0.06] px-1.5 py-0.5 font-mono text-xs">{OFFLINE_CMD}</code>
           </p>
         ) : error ? (
@@ -260,12 +437,26 @@ export function RecognitionPanel({ rec }: { rec: Recognition }) {
             <div className="overflow-x-auto py-1">
               {!result.latex ? (
                 <p className="text-sm text-faint">(empty result)</p>
+              ) : result.source !== undefined ? (
+                // Unified reading: prose stays prose. Handing the whole thing
+                // to KaTeX would turn every word into italic variables.
+                <MixedPreview source={result.source} className="text-lg" />
               ) : rec.resultMode === "text" ? (
                 <p className="whitespace-pre-wrap text-center text-lg">{result.latex}</p>
               ) : (
                 <Katex latex={result.latex} display />
               )}
             </div>
+            {result.segments && result.segments.length > 0 && (
+              <SegmentChips segments={result.segments} onRelabel={(s, k) => void rec.relabel(s, k)} className="mt-2" />
+            )}
+            {/* Ancha had no text engine here, so everything was necessarily read
+                as a formula — say so rather than let it look like a bad read. */}
+            {result.engine && result.engine.text == null && result.segments?.some((s) => s.degraded) && (
+              <p className="mt-2 text-xs text-muted">
+                No text engine on this machine — Ancha read everything as formulas.
+              </p>
+            )}
             <div className="mt-2 flex items-center gap-2">
               <code className="min-w-0 flex-1 overflow-x-auto whitespace-pre rounded-md border border-border-soft bg-background px-2.5 py-1.5 font-mono text-xs text-muted">
                 {result.latex || " "}
@@ -282,8 +473,8 @@ export function RecognitionPanel({ rec }: { rec: Recognition }) {
         ) : (
           <p className="text-sm text-faint">
             {hasInk
-              ? "Press Convert — or wait a beat with Auto on — to recognize your ink."
-              : "Write on the canvas above; strokes are converted to LaTeX here."}
+              ? "Press Convert — or wait a beat with Auto on — and Ancha will read your ink."
+              : "Write on the canvas above; words and formulas together. Ancha's reading appears here."}
           </p>
         )}
       </div>
@@ -327,7 +518,9 @@ function Correction({ rec, guess }: { rec: Recognition; guess: string }) {
   const save = async () => {
     if (!label.trim() || saving) return;
     setSaving(true);
-    const count = await rec.collect(stored(label), guess, rec.resultMode);
+    // No explicit mode: collect() files under the mode frozen with the result,
+    // which is the one that produced the guess being corrected.
+    const count = await rec.collect(stored(label), guess);
     setSaving(false);
     if (count !== null) {
       setSavedAt(count);

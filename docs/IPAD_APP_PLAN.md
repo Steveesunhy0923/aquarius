@@ -44,8 +44,8 @@ The dev server is reachable over your LAN. On the iPad, open Safari and visit
 `http://<your-Mac's-IP>:3000/ink` (find the IP with `ipconfig getifaddr en0`).
 **Apple Pencil works in Safari** — pointer events deliver pencil input with pressure,
 so stroke capture and recognition can be tested on real hardware immediately.
-(Recognition calls go to the ML server on the Mac; the ink lab points at `127.0.0.1:8787`,
-so for on-iPad testing the recognition endpoint must be made configurable — noted as a follow-up.)
+(Recognition calls go to Ancha on the Mac; the ink lab points at `127.0.0.1:8787`,
+so for on-iPad testing the Ancha endpoint must be made configurable — noted as a follow-up.)
 
 ### 3c. iPad Simulator / native shell — the real thing
 ```bash
@@ -75,7 +75,7 @@ Shell configuration facts (all verified during bootstrap):
   - **Status-bar overlap**: the web view extends under the iPad status bar (clock/battery covers
     the app header). Fix: `viewport-fit=cover` + `env(safe-area-inset-*)` padding in the app
     header, or constrain the Capacitor web view to the safe area.
-  - On a **real iPad**, the ink lab's recognition endpoint (`127.0.0.1:8787`) points at the iPad
+  - On a **real iPad**, the ink lab's Ancha endpoint (`127.0.0.1:8787`) points at the iPad
     itself — it needs the same LAN-IP treatment as the dev server.
 
 ## 4. Handwriting → LaTeX (the headline feature)
@@ -105,7 +105,7 @@ Full detail in [HANDWRITING_MODEL.md](HANDWRITING_MODEL.md). Summary of the two-
    step (2) a hard prerequisite for submission, not a nice-to-have.
 4. **Submission** — App Store Connect listing, privacy policy URL, privacy nutrition labels
    (Supabase account data), screenshots (12.9" and 11" iPad), review notes.
-5. **Training-data licensing** — before shipping the math recognizer commercially, resolve the
+5. **Training-data licensing** — before shipping Ancha commercially, resolve the
    MathWriting/CROHME non-commercial license question (see
    [HANDWRITING_MODEL.md §3](HANDWRITING_MODEL.md)): legal read, MyScript license (on-device
    pricing is sales-quoted; cloud tier is 2,000 free requests/month then $10 per 1,000), or

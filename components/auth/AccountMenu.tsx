@@ -6,6 +6,7 @@ import { Menu, MenuItem } from "@/components/ui/Menu";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { isDefaultUsername, setUsername, validateUsername } from "@/lib/profile/profile";
 import { AuthDialog } from "./AuthDialog";
+import { DeleteAccountDialog } from "./DeleteAccountDialog";
 import { BTN_PRIMARY_SM as PRIMARY, BTN_SM, EYEBROW as SECTION } from "@/components/ui/primitives";
 
 const LINK = "text-xs text-muted hover:text-accent";
@@ -21,8 +22,9 @@ const RULE = "my-1 h-px bg-border-soft";
  * to the cloud, and sign out.
  */
 export function AccountMenu() {
-  const { configured, loading, user, profile, linkedProviders, signOut, setPassword, linkGoogle, refreshProfile } = useAuth();
+  const { configured, loading, user, profile, linkedProviders, signOut, setPassword, linkGoogle, linkApple, refreshProfile } = useAuth();
   const [dialog, setDialog] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   if (!configured || loading) return null;
 
@@ -41,9 +43,11 @@ export function AccountMenu() {
   const needsUsername = profile ? isDefaultUsername(profile.username) : false;
   const initial = (profile?.displayName ?? username).charAt(0).toUpperCase();
   const hasGoogle = linkedProviders.includes("google");
+  const hasApple = linkedProviders.includes("apple");
   const hasPassword = linkedProviders.includes("email");
 
   return (
+    <>
     <Menu
       width="w-72"
       trigger={({ open, toggle }) => (
@@ -79,6 +83,7 @@ export function AccountMenu() {
           <div className="px-2 py-1.5">
             <p className={`mb-2 ${SECTION}`}>Linked sign-in</p>
             <div className="space-y-1.5">
+              <ProviderRow label="Apple" linked={hasApple} onLink={linkApple} />
               <ProviderRow label="Google" linked={hasGoogle} onLink={linkGoogle} />
               <PasswordRow linked={hasPassword} onSet={setPassword} />
             </div>
@@ -87,9 +92,12 @@ export function AccountMenu() {
           <div className={RULE} />
 
           <MenuItem onClick={() => { close(); void signOut(); }}>Sign out</MenuItem>
+          <MenuItem danger onClick={() => { close(); setDeleting(true); }}>Delete account…</MenuItem>
         </>
       )}
     </Menu>
+    {deleting && <DeleteAccountDialog onClose={() => setDeleting(false)} />}
+    </>
   );
 }
 

@@ -1,6 +1,8 @@
 "use client";
 
 import { AsyncImage, ImageEmpty } from "@/components/AsyncImage";
+import { CodeOutputs } from "@/components/CodeOutputs";
+import { codeExecCount, codeLangInfo, codeOutputs } from "@/lib/blocks/codeblock";
 import { GraphView } from "@/components/GraphView";
 import { ExternalLink } from "@/components/ExternalLink";
 import { NoteLink } from "@/components/NoteLink";
@@ -109,12 +111,29 @@ export function BlockView({ block }: { block: Block }) {
       );
     }
 
-    case "code":
+    // A listing, matching the live editor (components/CodeBlockView): a single
+    // hairline rule, the result hung off a `→`, and a caption for the language.
+    case "code": {
+      const lang = codeLangInfo(block);
+      const outputs = codeOutputs(block);
+      const execCount = codeExecCount(block);
       return (
-        <pre className="overflow-x-auto rounded-lg border border-border bg-surface p-3 text-sm">
-          <code>{block.value ?? ""}</code>
-        </pre>
+        <div className="my-1">
+          <div className="border-l-2 border-border pl-4">
+            <pre className="overflow-x-auto font-mono text-[12.5px] leading-[1.62]">
+              <code>{block.value ?? ""}</code>
+            </pre>
+          </div>
+          <CodeOutputs outputs={outputs} />
+          {lang.id !== "text" && (
+            <div className="mt-1.5 pl-4 text-[10.5px] uppercase tracking-[0.07em] text-muted">
+              {lang.label}
+              {execCount > 0 && ` · Run ${execCount}`}
+            </div>
+          )}
+        </div>
       );
+    }
 
     case "tikz":
       return (

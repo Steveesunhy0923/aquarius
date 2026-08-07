@@ -1,10 +1,17 @@
-# Handwriting → LaTeX: the model build document
+# Ancha — handwriting → LaTeX: the model build document
 
-_This is the living document tracking every step of building Aquarius's handwriting recognition
-model. Companion: [IPAD_APP_PLAN.md](IPAD_APP_PLAN.md). Code lives in [ml/](../ml/)._
+_This is the living document tracking every step of building **Ancha**, Aquarius's handwriting
+recognition model. Companion: [IPAD_APP_PLAN.md](IPAD_APP_PLAN.md). Code lives in [ml/](../ml/)._
 
-_Last updated: 2026-07-09 — S0 (smoke pipeline) complete: trained checkpoint, live inference
-server, CoreML export all working (build log §6)._
+**The name.** The recognizer as a whole — the service the user talks to, all of its modes — is
+**Ancha**. "Ancha's math model" is the neural net inside her; Apple Vision is a delegate she uses
+for words and is never surfaced in UI copy. Checkpoint filenames (`xl.pt`), env vars
+(`INK_CHECKPOINT`), the `/ink` route and the HTTP paths are unchanged: branding lives at the
+reporting layer (`/health` → `{"name":"Ancha", …}`), not in the artifacts.
+
+_Last updated: 2026-08-07 — every Insert now saves a training sample; corrections and acceptances
+are collected in separate stores, and correction capture (dead since `auto` shipped) is fixed
+(build log Step 14)._
 
 ## 1. Objective
 
@@ -21,7 +28,7 @@ Convert Apple Pencil ink into LaTeX, Notability-style but LaTeX-native:
 
 | Track | Approach | Why |
 |---|---|---|
-| Math | **Custom model**, trained on MathWriting (§3) | No open on-device math recognizer exists; Apple has none (verified — see §2a); this is the differentiating feature |
+| Math | **Ancha's own model**, trained on MathWriting (§3) | No open on-device math recognizer exists; Apple has none (verified — see §2a); this is the differentiating feature |
 | Plain text | **Apple Vision framework** — ✅ LIVE in dev (2026-07-12): `ml/src/text_ocr.py` via pyobjc on macOS; iPad ships the same engine on-device | Ships with iPadOS; reads neat handwriting on-device (~70–85% on print-style, weaker on cursive); training our own would take years to match |
 | Chemistry | **Separate `chem` mode** — ✅ LIVE in dev (2026-07-18): decode with the math model (own checkpoint slot `chem.pt` for a future fine-tune), then reinterpret as mhchem via `ml/src/chem_normalize.py` → `\ce{...}` (§9) | Handwritten chemistry is letters/digits/sub-sup/arrows — all in the math vocabulary; what differs is INTERPRETATION (`Sn` is tin, not `\sin`; `H_{2}O` is `H2O`). No public online-stroke chem dataset exists (§9a), so a trained-from-scratch chem model has no data anyway — synthesis is the path |
 | Fallback | MyScript iink SDK (commercial) | Does ink-math→LaTeX today; on-device pricing is sales-gated, cloud is 2,000 free requests/mo then $10/1k. The buy option if custom quality stalls |
@@ -327,13 +334,123 @@ Metrics: CER on MathWriting valid/test; ExpRate on CROHME 2023 for comparison wi
   dataset exists; EDU-CHEMC test zip (714 MB) + Chemistry SE `\ce` corpus (126 MB) fetched to
   `ml/data/chem/external/`; CCNU formulae set needs a manual Baidu download (§8 checklist).
 
+### 2026-08-02 — Step 13: Ancha, and the unified `auto` mode ✅
+
+The recognizer got a name and stopped asking the user what they were writing.
+
+- **One mode instead of three.** `mode:"auto"` is now the product default: Ancha segments a page
+  of ink herself and decides PER RUN whether it is prose or a formula, so "let x² be the root"
+  comes back as prose with real inline math in it. The three single-interpretation modes
+  (`math`/`text`/`chem`) are untouched and byte-identical — verified by diffing live responses
+  against goldens captured before the change.
+- **How it decides.** Two evidence sources, one layer. [ml/src/layout.py](../ml/src/layout.py)
+  does deterministic geometry (union-find clustering → lines → runs, all thresholds in x-height
+  units so they survive device variation); [ml/src/vision_layout.py](../ml/src/vision_layout.py)
+  asks Apple Vision for the *word boundaries* it throws away today — on the reference mixed line
+  its word boxes partitioned the strokes with **100% purity even though its strings were garbage**
+  (`'LET VI (I×I EE TRUE'` at confidence 1.000). [ml/src/unified.py](../ml/src/unified.py) routes
+  each run through a 7-rule cascade with the STRUCTURAL test above the lexical one — Vision reads
+  structured math confidently and wrongly, so a fraction bar or a big operator overrules it.
+- **Two measurements that shaped the design.**
+  (1) Vision's word boxes are uniformly padded: measured inter-box gaps 0.163–0.164 x-heights
+  where the true stroke gaps were 0.85 and 0.70. Every gap test therefore runs on **stroke
+  extents**, never on Vision boxes — computing it the other way converts the genuine word "BE"
+  into math. (2) Decode batching costs what its LONGEST member costs: naive batch-8 measured
+  958 ms vs 863 ms serial vs 508 ms bucketed, so groups are bucketed by rendered ink width.
+- **No fast path.** The plan called for one ("single line, no gap > 1.0 xh → decode as one
+  expression"). It is wrong and was removed: across 120 real MathWriting expressions a lone
+  formula spans a median 7.3 x-heights and up to 18.5, while the reference *mixed* page spans
+  13.7 — the distributions overlap, and both true word gaps in that page sit below the split
+  threshold. The gate fired on genuinely mixed ink and returned one garbage formula. Stroke
+  geometry alone cannot tell a word space from a space inside an expression; that is the whole
+  reason the design is Vision-led. Full path costs ~214 ms for a lone formula, ~380 ms for a
+  mixed page — both inside the 800 ms auto-convert debounce.
+- **Degradation is total and silent.** No Apple Vision (Linux, the training pod) means no word
+  boundaries, so every run falls to math with `degraded:true` and `engine.text:null`. `auto`
+  never 501s; only the legacy `text` mode still does, because there the user asked for exactly
+  the thing that is missing.
+- **Corrections.** Each run carries its own confidence and box, so the UI shows a chip per run
+  and one click overrules Ancha. Flipping a run TO text is a pure client-side splice of the
+  `visionText` already in hand — re-reading an isolated run returns *no observation at all*, so
+  a round trip would lose the words. `POST /collect/mixed` stores a corrected page as a
+  non-trainable parent plus per-segment children shaped exactly like existing records;
+  [ml/src/dataset.py](../ml/src/dataset.py) now admits only modes `math`/`chem`, which matters
+  because corrections are oversampled ×32 in a training run — without that gate a page of English
+  prose would reach the math decoder.
+- **The canvas grew.** Three sizes (S / M / full pages); at "Page" it is a stack of A4 sheets that
+  appends another as you fill the last one, mirroring the note's own pagination, with the sheet
+  boundaries handed to Ancha so a line of writing is never split across two of them. One canvas
+  per page (WebKit iOS caps a canvas at 4096² px — five stacked A4 sheets at dpr 2 would silently
+  return a blank buffer) with a single pointer-capture overlay so a stroke crossing a seam still
+  renders continuously.
+- **Verified live**, not just typechecked: the legacy byte-identity gate; the mixed fixture
+  decoding to exactly `\nabla I=(I_{x},I_{y})` between two prose runs with a 51/51 stroke
+  partition; page breaks; stroke indices surviving an empty stroke in the request; no-Vision
+  degradation; the corpus-poisoning round trip. Then in a real browser (23 checks across three
+  suites): auto is the default, per-run chips render, the size control persists, writing at the
+  bottom of a sheet appends another, ink in the inter-sheet gap leaves no invisible mark, clear
+  gives the pages back, and a mixed reading inserts into a note as prose with typeset inline math.
+- Self-tests, all gated `__main__` in the house style: `src.layout` 25 cases (including a
+  ×0.37/×7.3 scale-invariance sweep and a proof the pipeline never reads the `t` channel),
+  `src.unified` 14, `src.vision_layout` 9. vitest 230/230, `tsc --noEmit` clean.
+
+### 2026-08-07 — Step 14: every insert is a training sample ✅
+
+- **The idea (user's)**: when someone hits **Insert**, they are telling us the reading is right —
+  if it were wrong they would have fixed the line first, or redrawn the ink. So the insert itself
+  is a label, and the editor should be quietly harvesting one on every use. Free supervision from
+  ordinary note-taking, no labelling UI, no interruption.
+- **Two stores, not one.** An insert now produces *either* a correction (the user edited the
+  reading → `/collect`, unchanged behavior) *or* an **acceptance** (untouched → new
+  `POST /collect/accepted` → `data/accepted/accepted.jsonl`). They are kept apart deliberately:
+  corrections are oversampled **x32** in a training run and each one marks a place the model was
+  demonstrably wrong, whereas acceptances arrive with every insert and their label is the model's
+  **own output**. Mixing them would both bury the corrections and replay the model's predictions
+  back at it 32x, entrenching current behavior rather than fixing it — self-distillation with none
+  of the safeguards. Same record shape, so `load_corrections()` reads the accepted file as-is
+  whenever we choose to mix it in with its own (much smaller) repeat. **Nothing trains on it yet**
+  — this step only starts the collection, per the decision to gather first and train once there is
+  enough.
+- **`confidence` is stored** with every acceptance: the interesting subset later is the samples
+  Ancha was *unsure* of and still got right, and that is unrecoverable after the fact.
+- **Bug found and fixed: correction capture had been dead since `auto` shipped.** The client
+  stamped samples with the RECOGNITION mode, which is `"auto"` on the product path, but
+  `/collect` validates `mode` against `math|text|chem` — so every correction made from the note
+  editor or the lab since Step 13 was rejected 422 and silently dropped (`collect()` only checks
+  `res.ok`). Confirmed against the running server, and corroborated by the corpus: **one** sample,
+  dated 2026-07-11, from before `auto` existed. Fixed by separating the two vocabularies —
+  `RecognitionMode` (what we ASK: `math|chem|text|auto`) from the new `SampleMode` (what a stored
+  sample IS: `math|chem|text|mixed`) — and resolving one to the other *when the response lands*,
+  not when the user saves, so a Σ/⚗ flip in between cannot misfile a `\ce{...}` label as math.
+- **Two corpus-poisoning traps closed on the way:**
+  - a unified reading is assembled as paragraph *source*, so a lone formula arrives as
+    `\(x^{2}\)`. Filed verbatim it would have taught the decoder to emit delimiters it must never
+    emit (MathWriting labels are bare). Labels filed as math/chem are now unwrapped —
+    and a label that *still* contains `\(` after unwrapping is not one formula, so it is demoted
+    to non-trainable `mode:"mixed"`: still saved, just out of the math corpus until someone splits
+    it by hand. Nothing a user corrected is ever discarded.
+  - a single-run reading must not be stored as both a parent and a child; children are emitted
+    only under a `mixed` parent, which the dataset loader excludes, so the ink reaches the trainer
+    exactly once.
+- **Verified**: 16 new unit cases in `components/ink/strokes.test.ts` (vitest include widened to
+  `components/**`), the endpoint driven directly for shape/dedup/gating/400s, `load_corrections()`
+  confirmed to admit 3 of 5 records from a mixed sample set, and the whole path driven in a **real
+  browser** — draw on the sheet, let Ancha read, hit Insert → one accepted record with rebased
+  strokes, a rendered PNG and a bare label; then the edited-before-insert path → one correction
+  with `predicted` preserved. Test records were deleted afterwards; the corpus is back to its
+  single 2026-07-11 sample. vitest 248/248, `tsc --noEmit` clean.
+
 ## 7. Serving & deployment
 
-- **Development**: `cd ml && .venv/bin/python serve.py` → FastAPI at `http://127.0.0.1:8787`.
-  Contract: `POST /recognize` `{strokes:[{x[],y[],t[],p[]}], mode:"math"|"text"|"chem"}` →
-  `{latex, confidence}`; `GET /health` (reports both `model` and `chemModel`); text mode runs
-  Apple Vision on macOS (501 elsewhere); chem mode returns `\ce{...}` (math-LaTeX fallback when
-  the ink isn't chemistry-expressible). The ink lab at `/ink` speaks exactly this contract.
+- **Development**: `cd ml && .venv/bin/python serve.py` → Ancha's FastAPI at
+  `http://127.0.0.1:8787`. Contract: `POST /recognize`
+  `{strokes:[{x[],y[],t[],p[]}], mode:"auto"|"math"|"text"|"chem", chem?, pageBreaks?, overrides?}`
+  → `{latex, confidence}` plus, for `auto`, `{source, segments, lines, engine}`;
+  `POST /recognize/segment` re-reads one run under a kind the user picked;
+  `GET /health` reports `{name:"Ancha", version, checkpoint, chemCheckpoint, modes, textEngine}`
+  (with `model`/`chemModel` kept as deprecated aliases). Text runs use Apple Vision on macOS;
+  chem returns `\ce{...}` (math-LaTeX fallback when the ink isn't chemistry-expressible).
+  The ink lab at `/ink` speaks exactly this contract.
 - **Production**: export to CoreML ([ml/export/](../ml/export/)), embed in the Capacitor iOS shell
   behind a small Swift plugin exposing the same contract to the web layer; text mode routes to
   Apple Vision in the same plugin. No user ink ever leaves the device.

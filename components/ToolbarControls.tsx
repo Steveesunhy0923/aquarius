@@ -8,6 +8,7 @@
  */
 
 import { Icon, type IconName } from "@/components/Icon";
+import { CODE_LANGS } from "@/lib/blocks/codeblock";
 import { HIGHLIGHT_COLORS } from "@/lib/blocks/format";
 import { BULLET_MARKERS, NUMBER_MARKERS, type ListMarker } from "@/lib/blocks/lists";
 import type { MouseEvent, ReactNode } from "react";
@@ -68,6 +69,35 @@ export function ListToolButton({ ordered, open, onToggle, onInsert }: {
                   {MARKER_ICON[m] ? <Icon name={MARKER_ICON[m]} size={14} /> : MARKER_TEXT[m]}
                 </span>
                 {MARKER_NAME[m]}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </span>
+  );
+}
+
+// ─── Code button (icon + language dropdown) ──────────────────────────────────
+export function CodeToolButton({ open, onToggle, onInsert }: {
+  open: boolean;
+  onToggle: () => void;
+  onInsert: (langId?: string) => void;
+}) {
+  return (
+    <span className="relative inline-flex">
+      <button onClick={() => onInsert()} title="Insert code block (Python)" aria-label="Insert code block" className="relative z-30 grid h-9 w-9 place-items-center rounded-l-md border border-border hover:border-accent">
+        <Icon name="codeblock" size={17} />
+      </button>
+      <button onClick={onToggle} title="Code language" aria-label="Code language" aria-expanded={open} className={`relative z-30 grid h-9 w-5 place-items-center rounded-r-md border border-l-0 hover:border-accent ${open ? "border-accent text-accent" : "border-border text-muted"}`}><Icon name="chevron" size={11} /></button>
+      {open && (
+        <>
+          <button className="fixed inset-0 z-20 cursor-default" aria-hidden tabIndex={-1} onClick={onToggle} />
+          <div className="absolute left-0 top-full z-30 mt-1 max-h-80 w-48 overflow-y-auto rounded-md border border-border bg-surface p-1 shadow-lg">
+            {CODE_LANGS.map((l) => (
+              <button key={l.id} onClick={() => onInsert(l.id)} className="flex w-full items-center rounded px-2 py-1 text-left text-sm hover:bg-foreground/[0.06]">
+                <span className="flex-1">{l.label}</span>
+                {l.kernel && <span className="text-[10px] uppercase tracking-wide text-muted">runs</span>}
               </button>
             ))}
           </div>

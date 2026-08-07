@@ -7,7 +7,9 @@ Optional extensions (all default OFF, so the original constructor is intact):
   - extra_dirs: additional split directories concatenated in (e.g. synthetic/)
   - corrections_jsonl: user-collected samples from serve.py's /collect
     ({"label": .., "strokes": [{x,y,t}, ..]} per line), oversampled by
-    corrections_repeat so a handful of corrections is actually seen
+    corrections_repeat so a handful of corrections is actually seen — and
+    gated by record `mode` (load_corrections), because that oversampling
+    means one non-LaTeX record does thirty-two records' worth of damage
   - augment: stroke-level augmentation (src/augment.py) before rasterization,
     with a per-sample RNG derived from (base_seed, index, nonce) so DataLoader
     workers never repeat each other
@@ -28,8 +30,25 @@ from .latex_tokenizer import Tokenizer
 from .render import strokes_to_array
 
 
-def load_corrections(jsonl_path: str | Path) -> list[tuple[list[dict], str]]:
-    """Parse serve.py's collected.jsonl into (strokes, label) pairs."""
+def load_corrections(
+    jsonl_path: str | Path,
+    modes: tuple[str, ...] = ("math", "chem"),
+) -> list[tuple[list[dict], str]]:
+    """Parse serve.py's collected.jsonl into (strokes, label) pairs.
+
+    `modes` is a corpus-safety gate, not a convenience filter. This function
+    feeds the MATH decoder, and corrections are oversampled x32 (see the
+    --corrections-repeat wiring in cloud/setup_and_train.sh), so one record of
+    the wrong kind is trained on thirty-two times over. /collect already stores
+    `mode:"text"` — English prose from the Vision OCR path, not LaTeX — and
+    unified recognition adds `mode:"mixed"` layout parents whose label is a
+    whole page of source. Either would be learned as if it were an expression.
+
+    Default keeps math+chem: both are stroke->LaTeX for this same decoder.
+    Records with no `mode` at all fall back to math, which is the collector's
+    own default for the field and the conservative reading of a hand-written or
+    externally generated line.
+    """
     samples: list[tuple[list[dict], str]] = []
     with Path(jsonl_path).open("r", encoding="utf-8") as f:
         for lineno, line in enumerate(f, 1):
@@ -42,6 +61,8 @@ def load_corrections(jsonl_path: str | Path) -> list[tuple[list[dict], str]]:
                 # a crash mid-append can truncate the final line — skip, don't
                 # kill a training launch over one bad correction
                 print(f"WARNING: skipping malformed corrections line {lineno} in {jsonl_path}")
+                continue
+            if rec.get("mode", "math") not in modes:
                 continue
             label = (rec.get("label") or "").strip()
             strokes = [s for s in rec.get("strokes", []) if s.get("x")]

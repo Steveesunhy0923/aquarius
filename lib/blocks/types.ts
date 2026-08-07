@@ -40,7 +40,7 @@ export type BlockType =
   | "group" // slots: body; attrs.delimiters = ["(",")"] | ["[","]"] | ...
   // ── rich / non-math blocks ──────────────────────────────────────
   | "tikz" // value: tikz source; attrs.shapes: canvas shape model (optional)
-  | "code" // value: source; attrs.lang = "python" | "matlab" | "julia"
+  | "code" // value: source; attrs.lang/outputs/execCount — see lib/blocks/codeblock.ts
   | "image" // a row of one or more images (attrs.images, attrs.align)
   | "table" // attrs.table = { style, rows } — a document table
   | "graph"; // attrs.graph = interactive 2D figure model (points/shapes/axes) → tikzpicture
@@ -96,8 +96,27 @@ export interface BlockAttrs {
   env?: "matrix" | "pmatrix" | "bmatrix" | "vmatrix" | "Vmatrix" | "cases";
   // group
   delimiters?: [open: string, close: string];
-  // code
-  lang?: "python" | "matlab" | "julia" | "text";
+  // code — the runnable code block (lib/blocks/codeblock.ts). `lang` is one of
+  // CODE_LANGS (python/javascript run in-browser; the rest highlight-only);
+  // `outputs` is the bounded capture of the last run; `execCount` its [n].
+  lang?:
+    | "python"
+    | "javascript"
+    | "typescript"
+    | "c"
+    | "cpp"
+    | "java"
+    | "matlab"
+    | "julia"
+    | "r"
+    | "sql"
+    | "html"
+    | "css"
+    | "json"
+    | "bash"
+    | "text";
+  outputs?: unknown;
+  execCount?: number;
   // image
   assetId?: string;
   alt?: string;
@@ -133,6 +152,10 @@ export type InlineRun =
  */
 /** Document-wide presentation settings (font, spacing, page layout). */
 export interface DocumentStyle {
+  /** Handwritten annotation strokes, in document space. Present on imported
+   *  notes, where the ink IS the user's contribution. Vector data, so it is
+   *  small beside the imported file and rides along with sync and history. */
+  annotations?: unknown[];
   fontSize?: number; // px, default 14
   fontFamily?: string; // a key into the editor's font map, default "Computer Modern"
   lineSpacing?: number; // line-height multiplier, default 1.5
@@ -145,12 +168,36 @@ export interface DocumentStyle {
   foreground?: string;
 }
 
+/**
+ * Set when a note was IMPORTED rather than authored here.
+ *
+ * Its presence is what makes the note read-only-except-for-ink: you may
+ * annotate an imported PDF, but not restructure it, because there is nothing
+ * meaningful to restructure — the content is somebody else's document.
+ *
+ * `assetId` points at the stored bytes (`AssetRef.kind === "pdf"`). Deliberately
+ * NOT expressed through `CanvasMode`: that is a database-checked column
+ * (`mode in ('flow','spatial')`) about page layout, a different axis entirely.
+ */
+export interface DocumentSource {
+  kind: "pdf";
+  /** AssetRef.id of the imported file's bytes. */
+  assetId: string;
+  pageCount: number;
+  /** Page sizes in PDF points, so pages can be laid out before rendering. */
+  pageSizes?: { width: number; height: number }[];
+  filename?: string;
+  importedAt?: string;
+}
+
 export interface DocumentTree {
   /** Schema version of the tree; bump on breaking shape changes. */
   schema: 1;
   mode: CanvasMode;
   blocks: Block[];
   style?: DocumentStyle;
+  /** Present only on imported notes — see DocumentSource. */
+  source?: DocumentSource;
 }
 
 export type CanvasMode = "flow" | "spatial";

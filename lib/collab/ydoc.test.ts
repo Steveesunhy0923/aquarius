@@ -1,6 +1,7 @@
 import * as Y from "yjs";
 import { describe, expect, it } from "vitest";
 
+import { paragraphFromSource } from "@/lib/blocks/source";
 import type { Block, DocumentTree } from "@/lib/blocks/types";
 
 import { SEED_CLIENT_ID, applyTreeToYDoc, seedYDoc, yDocToTree } from "./ydoc";
@@ -11,6 +12,16 @@ function b(id: string, type: Block["type"], extra: Partial<Block> = {}): Block {
   return { id, type, ...extra };
 }
 
+/**
+ * A paragraph exactly as the editor writes one: `attrs.runs` is authoritative
+ * for the text (that's what `blockEditSource` reads) and `value` is its
+ * text-only projection. Paragraph text merges per CHARACTER, so tests must edit
+ * paragraphs through this helper rather than poking `.value` alone.
+ */
+function para(id: string, text: string): Block {
+  return { ...paragraphFromSource(text, id) };
+}
+
 /** A doc with prose, a heading (attrs), and a nested fraction (slots). */
 function sampleTree(): DocumentTree {
   return {
@@ -19,7 +30,7 @@ function sampleTree(): DocumentTree {
     style: { fontSize: 16, fontFamily: "Computer Modern", background: "#fff" },
     blocks: [
       b("h1", "heading", { value: "Title", attrs: { level: 1, numbered: false } }),
-      b("p1", "text", { value: "hello", attrs: { runs: [{ kind: "text", text: "hello" }] } }),
+      para("p1", "hello"),
       b("m1", "math", {
         slots: {
           body: [
@@ -72,8 +83,8 @@ describe("applyTreeToYDoc", () => {
   it("applies a value edit, a new block, and a reorder", () => {
     const doc = seedYDoc(sampleTree());
     const next = sampleTree();
-    next.blocks[1].value = "goodbye"; // edit p1
-    next.blocks.unshift(b("p0", "text", { value: "intro" })); // insert at front
+    next.blocks[1] = para("p1", "goodbye"); // edit p1
+    next.blocks.unshift(para("p0", "intro")); // insert at front
     // swap heading and math order
     const [, , math] = next.blocks; // after unshift: [p0, h1, p1, m1]
     void math;
@@ -123,7 +134,7 @@ describe("concurrent merge", () => {
     applyTreeToYDoc(a, ta);
 
     const tb = sampleTree();
-    tb.blocks[1].value = "B-edited-para"; // B edits paragraph
+    tb.blocks[1] = para("p1", "B-edited-para"); // B edits paragraph
     applyTreeToYDoc(b, tb);
 
     sync(a, b);
@@ -174,7 +185,7 @@ describe("concurrent merge", () => {
     applyTreeToYDoc(a, ta);
 
     const tb = sampleTree();
-    tb.blocks[1].value = "B-still-typing"; // B edits the same paragraph
+    tb.blocks[1] = para("p1", "B-still-typing"); // B edits the same paragraph
     applyTreeToYDoc(b, tb);
 
     sync(a, b);
@@ -183,5 +194,100 @@ describe("concurrent merge", () => {
     const rb = yDocToTree(b);
     expect(norm(ra)).toEqual(norm(rb)); // converged
     expect(ra.blocks.some((x) => x.id === "p1")).toBe(false); // deletion wins
+  });
+});
+
+// ─── Character-level merge inside ONE paragraph (the Google-Docs case) ───────
+
+/** The text of paragraph `id` as materialized from `doc`. */
+function textOf(doc: Y.Doc, id: string): string {
+  return yDocToTree(doc).blocks.find((x) => x.id === id)!.value ?? "";
+}
+/** Type `text` into paragraph `id` at `at`, the way the editor commits a draft. */
+function typeInto(doc: Y.Doc, id: string, at: number, text: string): void {
+  const tree = yDocToTree(doc);
+  const i = tree.blocks.findIndex((x) => x.id === id);
+  const cur = tree.blocks[i].value ?? "";
+  tree.blocks[i] = para(id, cur.slice(0, at) + text + cur.slice(at));
+  applyTreeToYDoc(doc, tree);
+}
+
+describe("character-level merge within one paragraph", () => {
+  /** Two peers mirroring the same seeded doc. */
+  function pair(): [Y.Doc, Y.Doc] {
+    const a = seedYDoc(sampleTree());
+    const b = new Y.Doc();
+    Y.applyUpdate(b, Y.encodeStateAsUpdate(a));
+    return [a, b];
+  }
+
+  it("keeps BOTH insertions when two people type in the same paragraph", () => {
+    const [a, b] = pair();
+    typeInto(a, "p1", 0, "A says "); // A types at the start…
+    typeInto(b, "p1", 5, " world"); // …B at the end, concurrently
+    sync(a, b);
+    expect(textOf(a, "p1")).toBe(textOf(b, "p1")); // converged
+    expect(textOf(a, "p1")).toContain("A says");
+    expect(textOf(a, "p1")).toContain("world"); // neither edit was clobbered
+    expect(textOf(a, "p1")).toContain("hello");
+  });
+
+  it("merges interleaved keystrokes typed one character at a time", () => {
+    const [a, b] = pair();
+    for (const ch of "abc") {
+      typeInto(a, "p1", textOf(a, "p1").length, ch);
+      sync(a, b);
+    }
+    for (const ch of "xyz") {
+      typeInto(b, "p1", 0, ch);
+      sync(a, b);
+    }
+    expect(textOf(a, "p1")).toBe(textOf(b, "p1"));
+    expect(textOf(a, "p1")).toBe("zyxhelloabc");
+  });
+
+  it("a peer's concurrent deletion survives the other's insertion", () => {
+    const [a, b] = pair();
+    const tree = yDocToTree(a);
+    tree.blocks[1] = para("p1", "hell"); // A backspaces the trailing "o"
+    applyTreeToYDoc(a, tree);
+    typeInto(b, "p1", 0, "Oh "); // B prepends, concurrently
+    sync(a, b);
+    expect(textOf(a, "p1")).toBe(textOf(b, "p1"));
+    expect(textOf(a, "p1")).toBe("Oh hell");
+  });
+
+  it("only the typed characters go on the wire, not the whole paragraph", () => {
+    const [a] = pair();
+    let bytes = 0;
+    a.on("update", (u: Uint8Array) => { bytes += u.length; });
+    typeInto(a, "p1", 5, "!"); // one keystroke into "hello"
+    // A whole-paragraph LWW replace would carry the full string plus its runs
+    // blob; a character splice is a handful of bytes.
+    expect(bytes).toBeLessThan(40);
+  });
+
+  it("inline math keeps stable run ids across materializations", () => {
+    const [a] = pair();
+    const tree = yDocToTree(a);
+    tree.blocks[1] = para("p1", "see \\(x^2\\) here");
+    applyTreeToYDoc(a, tree);
+    const first = yDocToTree(a).blocks.find((x) => x.id === "p1")!;
+    const second = yDocToTree(a).blocks.find((x) => x.id === "p1")!;
+    expect(norm({ schema: 1, mode: "flow", blocks: [first] })).toEqual(
+      norm({ schema: 1, mode: "flow", blocks: [second] }),
+    );
+  });
+
+  it("preserves a callout color (LWW attrs) alongside a character edit", () => {
+    const [a, b] = pair();
+    const ta = yDocToTree(a);
+    ta.blocks[1] = { ...para("p1", "hello"), attrs: { ...para("p1", "hello").attrs, color: "#f00" } };
+    applyTreeToYDoc(a, ta);
+    typeInto(b, "p1", 5, "!");
+    sync(a, b);
+    const merged = yDocToTree(a).blocks.find((x) => x.id === "p1")!;
+    expect(merged.value).toBe("hello!");
+    expect(merged.attrs?.color).toBe("#f00");
   });
 });

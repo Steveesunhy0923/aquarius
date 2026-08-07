@@ -1,13 +1,16 @@
 /**
  * Sync layer public barrel.
  *
- * Reconciles the local IndexedDB `LibraryStore` with the Supabase mirror.
- * Import surface:
+ * Reconciles a signed-in user's per-user IndexedDB mirror with the Supabase
+ * cloud: `SyncedStore` is the local-first `LibraryStore` that `getStore()`
+ * returns when signed in; `SyncEngine` is its background push/pull spine.
  *
- *   import { SyncEngine, type SyncResult, type SyncEvent } from "@/lib/sync";
+ *   import { SyncedStore, SYNC_APPLIED_EVENT, type SyncEvent } from "@/lib/sync";
  */
 
-export { SyncEngine } from "./engine";
+export { SyncEngine, SYNC_APPLIED_EVENT } from "./engine";
+export { SyncedStore } from "./store";
+export { SyncQueue, type SyncOp } from "./queue";
 export type {
   Reconcilable,
   SyncDirection,

@@ -10,6 +10,7 @@
  */
 
 export { ORIGIN_LOCAL, ORIGIN_REMOTE, applyTreeToYDoc, seedYDoc, yDocToTree } from "./ydoc";
+export { shiftCaret } from "./caret";
 export { SupabaseYjsProvider, type CollabCallbacks, type ProviderOpts } from "./provider";
 export { colorForUser, initials, type PeerInfo } from "./presence";
 export { base64ToBytes, bytesToBase64, bytesToPgHex, pgHexToBytes } from "./bytes";

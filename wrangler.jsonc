@@ -31,6 +31,17 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "aquarius-app",
   "compatibility_date": "2026-08-20",
+  // Declared here rather than clicked into the dashboard, so the hostname
+  // belongs to whichever Worker this config deploys and cannot drift. It was
+  // originally attached to `atorku-site`, which meant aquarius.atorku.com
+  // answered 200 with the marketing site and "Open Aquarius" looped back to
+  // the landing page. custom_domain creates/points the DNS record too.
+  "routes": [
+    {
+      "pattern": "aquarius.atorku.com",
+      "custom_domain": true
+    }
+  ],
   "assets": {
     "directory": "./out",
     // CAP_STATIC sets trailingSlash: true, so the export is directories of

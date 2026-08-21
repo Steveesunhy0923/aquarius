@@ -35,6 +35,10 @@ export interface EditBoxHandle {
   openMath: (seed: string) => void;
   /** Open the inline-chemistry editor, optionally seeded with mhchem source. */
   openChem: (seed: string) => void;
+  /** Commit an open inline formula popover, as if Done were pressed. Returns
+   *  true if one was open. Lets a click on blank document space close the
+   *  formula layer WITHOUT discarding what was typed into it. */
+  commitInline: () => boolean;
 }
 export const EditBox = forwardRef<EditBoxHandle, {
   taRef: RefObject<HTMLTextAreaElement | null>;
@@ -57,9 +61,15 @@ export const EditBox = forwardRef<EditBoxHandle, {
    *  picker; [from,to) is the `[[query` range the parent replaces with the
    *  picked link. (Typing `[[` itself opens the inline menu, not the picker.) */
   onNoteLink?: (from: number, to: number) => void;
+  /** Reports which inline formula editor is open ("math" | "chem"), or null.
+   *  The symbol strip is contextual — it follows a formula caret — and an inline
+   *  formula inside a PARAGRAPH is a formula caret even though the block is
+   *  still a text block. Without this signal the strip stays hidden and the
+   *  popover's own promise ("the toolbar & Σ symbols insert here too") is a lie. */
+  onInlineEditor?: (kind: "math" | "chem" | null) => void;
   sticky: MutableRefObject<boolean>;
 }>(function EditBox(
-  { taRef, para, draft, color, previewBlock, onChange, onColor, onExit, onInsertModule, onEditModule, onNoteLink, sticky },
+  { taRef, para, draft, color, previewBlock, onChange, onColor, onExit, onInsertModule, onEditModule, onNoteLink, onInlineEditor, sticky },
   ref,
 ) {
   const boxRef = useRef<HTMLDivElement>(null);
@@ -271,7 +281,24 @@ export const EditBox = forwardRef<EditBoxHandle, {
     setLink(null);
     setMathPopover({ mode: "insert", caret, initial: seed, chem: true });
   }, [taRef]);
-  useImperativeHandle(ref, () => ({ openMath, openChem }), [openMath, openChem]);
+  // The popovers own their draft; mirror it here so commitInline (a blank-space
+  // click) can commit the same value Done would.
+  const inlineValue = useRef("");
+  const commitInline = useCallback(() => {
+    if (!mathPopover) return false;
+    commitMath(mathPopover.chem ? wrapCe(inlineValue.current) : inlineValue.current);
+    return true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mathPopover]);
+  useImperativeHandle(ref, () => ({ openMath, openChem, commitInline }), [openMath, openChem, commitInline]);
+
+  // Mirror the popover's open state to the parent, and report "closed" on
+  // unmount so ending the edit can never leave the strip stranded open.
+  const inlineKind = mathPopover ? (mathPopover.chem ? "chem" : "math") : null;
+  useEffect(() => {
+    onInlineEditor?.(inlineKind);
+  }, [inlineKind, onInlineEditor]);
+  useEffect(() => () => onInlineEditor?.(null), [onInlineEditor]);
 
   function commitMath(latex: string) {
     // Read the popover state directly (NOT via a setState updater): calling the
@@ -463,6 +490,7 @@ export const EditBox = forwardRef<EditBoxHandle, {
             initial={mathPopover.initial}
             onCommit={commitMath}
             onCancel={() => setMathPopover(null)}
+            onValue={(v) => { inlineValue.current = v; }}
           />
         ) : (
           <InlineMathPopover
@@ -470,6 +498,7 @@ export const EditBox = forwardRef<EditBoxHandle, {
             initial={mathPopover.initial}
             onCommit={commitMath}
             onCancel={() => setMathPopover(null)}
+            onValue={(v) => { inlineValue.current = v; }}
           />
         );
       })()}
@@ -501,17 +530,19 @@ export const EditBox = forwardRef<EditBoxHandle, {
 // ─── Inline-chemistry popover — the chemistry twin of InlineMathPopover. ──────
 // `initial` is mhchem source; Done commits the \ce-wrapped LaTeX through the
 // same commitMath path, so the span in the paragraph stays ordinary inline math.
-function InlineChemPopover({ initial, onCommit, onCancel }: {
+function InlineChemPopover({ initial, onCommit, onCancel, onValue }: {
   initial: string;
   onCommit: (latex: string) => void;
   onCancel: () => void;
+  /** Report the live draft so the parent can commit it from outside. */
+  onValue?: (v: string) => void;
 }) {
   const latest = useRef(initial);
+  useEffect(() => { onValue?.(initial); }, [initial, onValue]);
   const done = () => onCommit(wrapCe(latest.current));
   return (
     <div className="absolute left-2 right-2 top-full z-30 mt-1 rounded-md border border-accent bg-surface p-2 shadow-lg">
-      <div className="mb-1 text-xs text-muted">Write the chemistry — formulas, arrows and charges are typed naturally; the ⚗ toolbar inserts here too.</div>
-      <ChemField value={initial} autoFocus onChange={(s) => { latest.current = s; }} onExit={onCancel} onEnter={done} className="block" />
+      <ChemField value={initial} autoFocus onChange={(s) => { latest.current = s; onValue?.(s); }} onExit={onCancel} onEnter={done} className="block" />
       <div className="mt-2 flex justify-end gap-2">
         <button onMouseDown={(e) => e.preventDefault()} onClick={onCancel} className="rounded border border-border px-2.5 py-1 text-xs text-muted hover:border-accent">Cancel</button>
         <button onMouseDown={(e) => e.preventDefault()} onClick={done} className="rounded bg-accent px-3 py-1 text-xs font-medium text-white">Done</button>
@@ -521,16 +552,18 @@ function InlineChemPopover({ initial, onCommit, onCancel }: {
 }
 
 // ─── Inline-math popover (Desmos-style editor for a formula inside prose) ─────
-function InlineMathPopover({ initial, onCommit, onCancel }: {
+function InlineMathPopover({ initial, onCommit, onCancel, onValue }: {
   initial: string;
   onCommit: (latex: string) => void;
   onCancel: () => void;
+  /** Report the live draft so the parent can commit it from outside. */
+  onValue?: (v: string) => void;
 }) {
   const latest = useRef(initial);
+  useEffect(() => { onValue?.(initial); }, [initial, onValue]);
   return (
     <div className="absolute left-2 right-2 top-full z-30 mt-1 rounded-md border border-accent bg-surface p-2 shadow-lg">
-      <div className="mb-1 text-xs text-muted">Build the formula — type to fill the boxes; the toolbar &amp; Σ symbols insert here too.</div>
-      <MathField value={initial} inline autoFocus onChange={(l) => { latest.current = l; }} onExit={onCancel} className="block min-h-[2.25rem] rounded border border-border bg-background px-2 py-1 text-base" />
+      <MathField value={initial} inline autoFocus onChange={(l) => { latest.current = l; onValue?.(l); }} onExit={onCancel} className="block min-h-[2.25rem] rounded border border-border bg-background px-2 py-1 text-base" />
       <div className="mt-2 flex justify-end gap-2">
         <button onMouseDown={(e) => e.preventDefault()} onClick={onCancel} className="rounded border border-border px-2.5 py-1 text-xs text-muted hover:border-accent">Cancel</button>
         <button onMouseDown={(e) => e.preventDefault()} onClick={() => onCommit(latest.current)} className="rounded bg-accent px-3 py-1 text-xs font-medium text-white">Done</button>

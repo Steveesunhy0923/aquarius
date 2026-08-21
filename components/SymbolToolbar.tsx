@@ -36,7 +36,7 @@ function readLS(key: string, fallback: string[]): string[] {
 
 /** Functions-and-symbols strip: fixed structure inserts plus eight editable,
  *  localStorage-backed symbol slots and the "browse all" entry point. */
-export function SymbolToolbar({ onInsert, onBrowse, keepFocus, markSticky, leading }: {
+export function SymbolToolbar({ onInsert, onBrowse, keepFocus, markSticky, leading, trailing }: {
   onInsert: (latex: string) => void;
   onBrowse: () => void;
   /** Mousedown handler that preserves the editor's focus (sticky semantics). */
@@ -45,6 +45,8 @@ export function SymbolToolbar({ onInsert, onBrowse, keepFocus, markSticky, leadi
   markSticky: () => void;
   /** Rendered first in the strip (the math ⇄ chemistry mode switch). */
   leading?: ReactNode;
+  /** Rendered last in the strip (the pin that keeps it open outside a formula). */
+  trailing?: ReactNode;
 }) {
   // Eight editable symbol slots (always exactly SYMBOL_COUNT), changed via "Edit".
   const [symbols, setSymbols] = useState<string[]>(() =>
@@ -81,13 +83,14 @@ export function SymbolToolbar({ onInsert, onBrowse, keepFocus, markSticky, leadi
         <span className="mx-2 h-7 w-px bg-border" />
         {/* Symbols — eight editable slots; "Edit" lets the user change any of them */}
         {symbols.map((latex, i) => (
-          <button key={i} onMouseDown={(e) => { if (!editSyms) keepFocus(e); else markSticky(); }} onClick={() => (editSyms ? setSlotPicker(i) : onInsert(latex))} title={editSyms ? "Click to change this symbol" : `Insert ${latex}`} aria-label={editSyms ? `Change symbol ${i + 1}` : `Insert ${latex}`} className={`${ICON_BTN} ${editSyms ? "border-dashed border-accent/60" : ""}`}>
+          <button key={i} onMouseDown={(e) => { if (!editSyms) keepFocus(e); else markSticky(); }} onClick={() => (editSyms ? setSlotPicker(i) : onInsert(latex))} title={editSyms ? "Click to change this symbol" : `Insert ${latex}`} aria-label={editSyms ? `Change symbol ${i + 1}` : `Insert ${latex}`} className={`${ICON_BTN} ${editSyms ? "border border-dashed border-accent/60" : ""}`}>
             <Katex latex={previewLatex(latex)} />
           </button>
         ))}
-        <button onMouseDown={keepFocus} onClick={() => setEditSyms((s) => !s)} title={editSyms ? "Done — finish changing symbols" : "Change the symbols"} aria-label={editSyms ? "Done changing symbols" : "Change the symbols"} aria-pressed={editSyms} className={`grid h-9 min-w-9 place-items-center rounded-md border px-2 ${editSyms ? "border-accent bg-accent-soft text-accent" : "border-border text-muted hover:border-accent"}`}><Icon name="editformula" size={17} /></button>
+        <button onMouseDown={keepFocus} onClick={() => setEditSyms((s) => !s)} title={editSyms ? "Done — finish changing symbols" : "Change the symbols"} aria-label={editSyms ? "Done changing symbols" : "Change the symbols"} aria-pressed={editSyms} className={`${ICON_BTN} ${editSyms ? "bg-accent-soft text-accent" : "text-muted"}`}><Icon name="editformula" size={17} /></button>
         <span className="mx-2 h-7 w-px bg-border" />
-        <button onMouseDown={keepFocus} onClick={onBrowse} title="Browse all functions & symbols" aria-label="Browse all functions and symbols" className={ICON_BTN}><Icon name="functions" size={20} /></button>
+        <button onMouseDown={keepFocus} onClick={onBrowse} title="Browse all functions & symbols" aria-label="Browse all functions and symbols" className={ICON_BTN}><Icon name="sigmapi" size={20} /></button>
+        {trailing}
       </div>
       {slotPicker != null && (
         <SymbolPicker title="Choose a symbol for this slot" onPick={onPickSymbol} onClose={() => setSlotPicker(null)} />

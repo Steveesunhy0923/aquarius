@@ -1,6 +1,38 @@
 @import "tailwindcss";
-/* Computer Modern (LaTeX's default font) web fonts — for the document body. */
-@import url("https://cdn.jsdelivr.net/gh/aaaakshat/cm-web-fonts@latest/fonts.css");
+
+/* Computer Modern (LaTeX's default font) — the document body face.
+   Vendored into public/fonts/cm by scripts/prepare-fonts.mjs rather than pulled
+   from a CDN, so the default style survives offline and inside the Capacitor
+   shell, which cannot reach one. `font-display: swap` keeps first paint on the
+   fallback rather than blocking on ~750 KB of fonts. */
+@font-face {
+  font-family: "CMU Serif";
+  src: url("/fonts/cm/cmu-serif-regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "CMU Serif";
+  src: url("/fonts/cm/cmu-serif-italic.woff2") format("woff2");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: "CMU Serif";
+  src: url("/fonts/cm/cmu-serif-bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "CMU Serif";
+  src: url("/fonts/cm/cmu-serif-bold-italic.woff2") format("woff2");
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
 
 :root {
   --background: #fbfbfd;
@@ -132,6 +164,83 @@ body {
 /* KaTeX renders a touch large by default inside list/grid cards */
 .katex {
   font-size: 1.05em;
+}
+
+/* Paragraph first-line indent. The page's content box sets --indent from the
+   document style (lib/blocks/docstyle → pageContentStyle); it lives in a rule
+   rather than inline on the <p> so `.aq-tex`'s exceptions can override it. */
+.aq-para {
+  text-indent: var(--indent, 0);
+}
+
+/* ── LaTeX page typography (.aq-tex) ──────────────────────────────────────
+   On the content box of a page whose style preset is "latex"
+   (lib/blocks/docstyle.ts → presetClass). The values a user can change — font,
+   size, leading, first-line indent — arrive as inline style; what lives here is
+   everything that is a RELATIONSHIP BETWEEN BLOCKS, taken from article.cls:
+
+     \parskip 0pt          paragraphs abut — the indent is what separates them
+     \@afterindentfalse    …but the first paragraph of a section is not indented
+     \abovedisplayskip     ~11pt around display math
+     \topsep + \partopsep  ~0.5\baselineskip around lists and floats
+     \section              3.5ex before, 2.3ex after (2.65/1.5ex by \subsection)
+
+   Deliberately PADDING and not margin: the paginator measures each block with
+   offsetHeight (app/editor/EditorClient), which counts padding and ignores
+   margins, so expressing the skips as padding keeps page breaks honest for
+   free. The blocks have no background or border, so it reads identically. */
+.aq-tex {
+  hyphens: auto; /* justified Computer Modern without it opens rivers */
+}
+.aq-tex p {
+  margin: 0;
+}
+/* First paragraph of the document, or of a section, takes no indent. Which
+   ones those are is decided by the renderer (docstyle → unindentedParagraphs),
+   since a CSS-only rule cannot see across a page break. */
+.aq-tex [data-noindent] p {
+  text-indent: 0;
+}
+.aq-tex [data-btype="heading"] {
+  padding-top: 1.4em; /* \subsection's 3.25ex, 1ex ≈ 0.43em in Computer Modern */
+  padding-bottom: 0.65em; /* 1.5ex */
+}
+.aq-tex [data-btype="heading"]:has([data-level="1"]) {
+  padding-top: 1.5em; /* \section: 3.5ex before, 2.3ex after */
+  padding-bottom: 1em;
+}
+.aq-tex [data-btype="heading"]:first-child {
+  padding-top: 0;
+}
+/* Heading sizes as LaTeX states them — relative to the body, not absolute:
+   \section \Large, \subsection \large, \subsubsection and \paragraph
+   \normalsize (14.4 / 12 / 10.95pt in the 11pt class). `!important` because
+   both renderers set a size of their own — BlockView inline, the editor's
+   HeadingDisplay through Tailwind — and the preset has to win over each. */
+.aq-tex .aq-heading {
+  line-height: 1.2;
+}
+.aq-tex .aq-heading[data-level="1"] {
+  font-size: 1.32em !important;
+}
+.aq-tex .aq-heading[data-level="2"] {
+  font-size: 1.1em !important;
+}
+.aq-tex .aq-heading[data-level="3"],
+.aq-tex .aq-heading[data-level="4"] {
+  font-size: 1em !important;
+}
+/* Display math takes NO skip here: KaTeX's own `.katex-display { margin: 1em 0 }`
+   already is \abovedisplayskip / \belowdisplayskip, which the 11pt class sets to
+   11pt — exactly 1em of the body. Adding padding on top of it double-counts. */
+.aq-tex [data-btype="list"],
+.aq-tex [data-btype="table"],
+.aq-tex [data-btype="image"],
+.aq-tex [data-btype="graph"],
+.aq-tex [data-btype="code"],
+.aq-tex [data-btype="tikz"] {
+  padding-top: 0.6em;
+  padding-bottom: 0.6em;
 }
 
 /* ── Print / Save-as-PDF ──────────────────────────────────────────────────

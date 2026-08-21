@@ -1,12 +1,12 @@
 "use client";
 
 /**
- * Auth context for Aquarius — now backed by the shared Orka account.
+ * Auth context for Aquarius — now backed by the shared Atorku account.
  *
- * This project's Supabase instance is THE Orka project: one `auth.users` row is
- * one Orka account, shared with Virgo. Signing in here and signing in there
+ * This project's Supabase instance is THE Atorku project: one `auth.users` row is
+ * one Atorku account, shared with Virgo. Signing in here and signing in there
  * reach the same identity. Nothing about Aquarius's data moved; only the
- * plumbing under the sign-in methods is now shared code (`@orka/auth`), so the
+ * plumbing under the sign-in methods is now shared code (`@atorku/auth`), so the
  * two apps cannot drift on PKCE handling, identity linking, or callback
  * exchange.
  *
@@ -16,7 +16,7 @@
  * in the package:
  *
  *   - `profile` / `refreshProfile` — the `profiles` table is Aquarius's, not
- *     Orka's, and Virgo has no use for it.
+ *     Atorku's, and Virgo has no use for it.
  *   - `deleteAccount` — the Storage purge below is specific to this app's
  *     `assets` table and `note-assets` bucket. The shared half (the RPC, the
  *     local sign-out) is the package's.
@@ -32,7 +32,7 @@ import {
   type ReactNode,
 } from "react";
 import type { Session, SupabaseClient, User } from "@supabase/supabase-js";
-import { OrkaAuthCore } from "@orka/auth";
+import { AtorkuAuthCore } from "@atorku/auth";
 
 import { getMyProfile, type Profile } from "@/lib/profile/profile";
 import { getSupabaseClient, isSupabaseConfigured } from "@/lib/supabase/client";
@@ -78,7 +78,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // One core for the lifetime of the provider, over the SAME client singleton
   // every other module gets from `getSupabaseClient()`.
   const core = useMemo(
-    () => new OrkaAuthCore(getSupabaseClient(), { redirectTo: callbackUrl() }),
+    () => new AtorkuAuthCore(getSupabaseClient(), { redirectTo: callbackUrl() }),
     [],
   );
   const [snapshot, setSnapshot] = useState(() => core.getSnapshot());
@@ -105,7 +105,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
    * guest library for a signed-in user, and their notes appear to be gone.
    *
    * That is also why `lib/supabase/session.ts` stays a plain Aquarius module
-   * and was not moved into @orka/auth: two copies of that module (the classic
+   * and was not moved into @atorku/auth: two copies of that module (the classic
    * dual-package hazard) would leave the cache permanently null.
    */
   useEffect(() => {
@@ -177,14 +177,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [core]);
 
   /**
-   * Delete the account. IRREVERSIBLE — and, under Orka, NOT app-scoped: this
-   * removes the shared Orka account across every Orka app.
+   * Delete the account. IRREVERSIBLE — and, under Atorku, NOT app-scoped: this
+   * removes the shared Atorku account across every Atorku app.
    *
    * Storage bytes first: `storage.objects` does not cascade from `auth.users`,
    * and only the Storage API removes the underlying bytes (a SQL delete would
    * just unlink the rows). Then the package's `deleteAccount()` calls
    * `delete_account()` (migration 0012), which drops the auth user and cascades
-   * through every application table — Aquarius's and Orka's alike — and clears
+   * through every application table — Aquarius's and Atorku's alike — and clears
    * the local session.
    */
   const deleteAccount = useCallback(async () => {

@@ -9,9 +9,9 @@ for words and is never surfaced in UI copy. Checkpoint filenames (`xl.pt`), env 
 (`INK_CHECKPOINT`), the `/ink` route and the HTTP paths are unchanged: branding lives at the
 reporting layer (`/health` → `{"name":"Ancha", …}`), not in the artifacts.
 
-_Last updated: 2026-08-07 — every Insert now saves a training sample; corrections and acceptances
-are collected in separate stores, and correction capture (dead since `auto` shipped) is fixed
-(build log Step 14)._
+_Last updated: 2026-08-07 — prose-vs-formula got a corpus, a benchmark and a trained classifier:
+math read as text is down from 24.5% to 16.3% on mixed pages and from 94.7% to 27.7% on
+letters-only formulas (build log Step 15). Step 14 added training-sample capture on every Insert._
 
 ## 1. Objective
 
@@ -439,6 +439,146 @@ The recognizer got a name and stopped asking the user what they were writing.
   strokes, a rendered PNG and a bare label; then the edited-before-insert path → one correction
   with `predicted` preserved. Test records were deleted afterwards; the corpus is back to its
   single 2026-07-11 sample. vitest 248/248, `tsc --noEmit` clean.
+
+### 2026-08-07 — Step 15: prose vs formula, measured and then fixed ✅
+
+User report: on a page mixing writing and mathematics, Ancha reads each as the other. Both
+directions, routinely.
+
+**Why.** The prose/formula decision is made BEFORE recognition, by the C1–C7 cascade plus the
+S0–S3 smoothing pass — eleven hand-written rules over five thresholds, tuned against ONE
+51-stroke fixture, arbitrating two engines that are both miscalibrated. Four mechanisms, and the
+two error directions have different causes:
+
+1. **No positive evidence for math exists unless math is structurally visible.** The only
+   non-lexical math signal is C1 `spanning` (a vinculum or a big operator). Everything else is a
+   lexical test on Vision's string, and `isalpha()` cannot separate `xy`, `PQ`, `nRT` or `mc`
+   from `be`, `of` and `the`. Probed directly: all thirteen letters-only formulas tested routed
+   to **text**.
+2. **Math is the default for every kind of uncertainty** — C2 (no Vision word for this run), C3,
+   C5 all fall through to math — and S2 actively converts any text run of ≤2 characters within
+   0.55 xh of a formula. English function words are overwhelmingly two letters.
+3. **The tie-breaker is not a signal.** S3 resolves the residue on decoder confidence ≥ 0.95, a
+   self-consistency score the code's own comment measures at 0.889 on a random scribble. During
+   this work a meaningless 4-stroke scribble drawn in the browser came back at **0.986**.
+4. **Nothing could measure any of it.** No held-out set for classification existed anywhere in
+   `ml/`; `eval_chem.py` was the only eval script and it measures chemistry.
+
+#### Phase 0 — a corpus and a benchmark, because there were none
+
+- **[ml/src/mixed_synth.py](../ml/src/mixed_synth.py)** stitches the corpus nobody publishes:
+  MathWriting is expressions with no prose, IAM-OnDB is prose with no math, neither has a line
+  where they meet. Formula runs are **real ink** (a whole MathWriting expression, similarity
+  transform only, matched to the line's x-height and baseline); prose runs are stitched
+  letter-by-letter from the symbols split through `chem_synth`'s layout engine. Word gaps are
+  sampled ACROSS the 0.55 xh boundary that S2 keys on, so the ambiguity is present rather than
+  designed out. Ground truth is per STROKE, since run boundaries are the pipeline's own choice.
+- **[ml/eval_mixed.py](../ml/eval_mixed.py)** reports the two directions **separately and never
+  averaged** — `math→text` loses a formula, `text→math` mangles words — sliced by
+  letters-only formulas, short-word adjacency, and the pure-prose/pure-formula regression cases.
+- Train and eval are disjoint on three axes: MathWriting split (train vs valid), symbol
+  INSTANCES (`split_bank`), and prose vocabulary (`split_vocab`).
+
+**Baseline (300 lines, 8,309 strokes):** per-stroke kind accuracy **80.9%**, math→text **24.5%**,
+text→math **14.9%**, source similarity 76.5%. A formula ON ITS OWN is read correctly ~99% of the
+time; put it in a sentence and a quarter of it becomes prose. On the letters-only stress corpus
+(`PQ`, `AB`, `nRT` — 0.26% of MathWriting, routine in a real notebook) math→text was **94.7%**.
+Short words next to a formula: **56.8%** swallowed.
+
+_(A corpus bug found and fixed during this work, worth recording because it is easy to repeat:
+the expression index is built by regex over raw InkML bytes for speed, but `parse_inkml` goes
+through ElementTree, which decodes XML entities. **5.38% of the train split** contains `&lt;`,
+`&gt;` or `&amp;`, so the first corpus carried them literally and the phase-2 decoder duly
+learned to emit `&lt;`. Classification metrics were unaffected — the router never reads the
+label — but every number here is from the corrected corpus.)_
+
+#### Phase 1 — replace the cascade with a calibrated classifier
+
+- **[ml/src/lexicon.py](../ml/src/lexicon.py)** supplies the evidence the router never had: *is
+  this an English word*. Two corrections to a naive dictionary lookup — the two-letter tail is
+  noise (web2 lists `ab`, `am`, `hu`, `si`), so those are an explicit list of the ~30 real ones;
+  and web2 holds base forms only, so regular suffixes are stripped and retried (`follows` →
+  `follow`).
+- **[ml/src/run_features.py](../ml/src/run_features.py)** — 28 features, all in x-heights and
+  self-tested for scale and translation invariance: the lexicon, case shape (`nRT` carries an
+  internal capital; English words do not), vertical structure (a run with a subscript rises and
+  drops far more than a word), gap context, and line-level context (a line containing a fraction
+  bar anywhere makes a bare `xy` overwhelmingly math).
+- **[ml/src/run_classifier.py](../ml/src/run_classifier.py)** — 28-weight logistic model fitted by
+  IRLS, numpy only. The point is not capacity, it is producing a PROBABILITY so the two error
+  directions can be traded with one threshold instead of taken in rule order.
+- `unified.classify_runs` uses it when a model and the strokes are present and falls back to the
+  cascade otherwise — a missing model, a missing lexicon or a stale feature list all degrade
+  rather than fail, and every self-test in that module still exercises the cascade. When the
+  classifier decides, **S0 and S2 are skipped**: they exist to patch the cascade's blind spots,
+  the classifier has both as weighted features, and left on, S2 re-broke three quarters of the
+  short words it had just got right.
+- Threshold **0.4**, chosen by minimax — it minimizes the WORSE of the two directions on both
+  corpora (16.4/15.3 and 27.7/11.1, against 20.2/11.2 and 36.0/8.4 at 0.5).
+
+| per-stroke | cascade | trained | |
+|---|---|---|---|
+| natural mixed — accuracy | 80.9% | **85.0%** | |
+| natural mixed — math→text | 24.5% | **16.3%** | −33% relative |
+| natural mixed — text→math | 14.9% | **13.9%** | −7% |
+| natural mixed — per-run accuracy | 78.6% | **83.0%** | |
+| natural mixed — source similarity | 76.5% | **81.8%** | |
+| letters-only — accuracy | 78.4% | **85.6%** | |
+| letters-only — math→text | 94.7% | **27.7%** | −71% relative |
+| letters-only — text→math | 3.4% | 11.1% | the cost side of the trade |
+| letters-only — source similarity | 74.0% | **84.0%** | |
+
+Both directions improve on the natural corpus, and the catastrophic case is no longer
+catastrophic. Qualitatively, on six letters-only lines the cascade returned a single `text`
+segment for **every one of them** — the formula vanished entirely — where the trained router
+recovered the math span in four, at the cost of one false positive on a pure-prose line.
+
+Ablating the lexicon feature costs 1.8 points overall and takes letters-only math→text from 33%
+to 50% — so the dictionary carries a large share of that fix but not all of it; geometry and
+structure alone still halve the failure.
+
+#### Phase 2 — stop deciding the boundary up front
+
+The residual `text→math` did not move, and a direct measurement says why: of the short words
+swallowed by an adjacent formula, **11 of 12 were already inside the formula's RUN before the
+router ran at all**. That is a segmentation error, upstream of classification, and no classifier
+can repair a boundary that has already been drawn wrongly.
+
+- **[ml/train_mixed.py](../ml/train_mixed.py)** trains a decoder whose target is the assembled
+  reading itself — `let \(x^{2}\) be the root` — so the model emits the boundary jointly with the
+  content, having seen the whole line. Two forced departures: the canvas is **96×1536** (mixed
+  lines have median aspect 9.2 and p90 13.9, so 65% of them were being squashed by the 768-wide
+  grid; `InkToLatex` already takes height/width, but the checkpoint is therefore NOT
+  interchangeable with the math ones), and **whitespace becomes a token**
+  ([ml/src/mixed_tokens.py](../ml/src/mixed_tokens.py)) — `latex_tokenizer` discards it, which
+  turns `be the root` into `betheroot`. The separator is spelled `\wordsep` so the existing lexer
+  passes it through unchanged and no shipped math checkpoint is disturbed. Data is synthesized
+  on the fly (index → seed), so an epoch is reproducible and the corpus is never materialized.
+- **[ml/eval_mixed_model.py](../ml/eval_mixed_model.py)** scores it on the same corpus and the
+  same `source_similarity` the pipeline is scored on, plus **math-span F1** — did it find where
+  the formulas start and stop, independently of decoding them right.
+
+**Result of the local proof run (base, 5.5M params, 9,000 steps, ~15 min on MPS): it works, and
+it is not yet competitive.**
+
+| | pipeline (phase 1) | mixed decoder (proof run) |
+|---|---|---|
+| source similarity | **81.8%** | 70.0% |
+| exact match | — | 2.0% |
+| math-span F1 | — | 20.1% |
+
+Validation loss fell monotonically (2.42 → 1.87 → 1.75 at 3k/6k/9k) and had not plateaued. The
+outputs are the interesting part: they are **well-formed mixed readings** — prose words with
+inline math in plausible places and balanced `\(`/`\)` — whose CONTENT is largely wrong, e.g.
+`we speed \(I_{x}=I_{y}=\pi r^{3}t\)` read as `we space \(I_{x}=I_{y}^{3}t^{3}\) ring`. That is
+exactly what an undertrained seq2seq looks like: the output language is learned, the grounding in
+the image is not. Which is the expected place to be after 15 minutes, against a pipeline whose
+math half had a 6-hour GPU run behind it and whose text half is Apple Vision.
+
+**So phase 2 ships as a demonstrated path, not as the recognizer.** `auto` still serves through
+the phase-1 pipeline; `mixed.pt` is not wired into `serve.py`. The remaining work is a full run
+on the same footing as S2-XL (`ml/cloud/`), which is a GPU day — and the honest open question is
+whether one model can beat a pipeline that gets Apple Vision's text engine for free.
 
 ## 7. Serving & deployment
 

@@ -165,8 +165,43 @@ src/text_ocr.py               text mode via Apple Vision (macOS)
 src/layout.py                 pure-geometry stroke segmentation: strokes -> lines -> runs
 src/vision_layout.py          Apple Vision layout: line/word boxes mapped back into stroke space
 src/unified.py                the `auto` mode: classify runs, merge, decode, assemble to source
+src/mixed_synth.py            MIXED prose+formula lines with per-run ground truth (real formula
+                              ink + words stitched from symbol ink) — the corpus none exists for
+src/lexicon.py                "is this an English word", with morphology; the evidence the router
+                              never had (--build regenerates data/lexicon.txt)
+src/run_features.py           28 features describing one run, all in x-heights (scale-invariant)
+src/run_classifier.py         calibrated logistic prose-vs-formula classifier (IRLS, numpy only)
+src/mixed_tokens.py           tokenizing a mixed reading: word separator that survives the lexer
 train.py                      training CLI
+train_run_clf.py              fit the run classifier -> checkpoints/run_clf.json
+train_mixed.py                train the MIXED-AWARE decoder (96x1536 canvas) -> checkpoints/mixed.pt
 serve.py                      Ancha's FastAPI server (port 8787)
 eval_chem.py                  chem-mode benchmark (exact/similarity/conversion metrics)
+eval_mixed.py                 prose-vs-formula benchmark: per-stroke, both error directions, sliced
 export/export_coreml.py       CoreML conversion of encoder + decoder step
 ```
+
+## Telling prose from formulas
+
+The `auto` mode has to decide, per run of ink, whether it is a word or a
+formula. That decision used to be eleven hand-written rules over five
+thresholds, tuned against a single 51-stroke fixture, with no way to measure a
+change. `eval_mixed.py` measures it and `run_classifier` replaces it.
+
+```bash
+.venv/bin/python -m src.mixed_synth --out data/mixed/eval.jsonl --n 300 --seed 11 \
+    --split valid --half 0 --vocab-half 1              # build the corpus
+.venv/bin/python eval_mixed.py data/mixed/eval.jsonl   # measure
+.venv/bin/python eval_mixed.py data/mixed/eval.jsonl --no-classifier   # the old cascade
+.venv/bin/python train_run_clf.py --n 1200 --ablate --sweep            # refit
+```
+
+Two error directions, never averaged: **math→text** loses a formula to prose,
+**text→math** mangles words into symbols. `--sweep` prints both across the
+decision threshold so the trade is explicit; the shipped threshold (0.4) is the
+one that minimizes the worse of the two.
+
+The classifier is optional at every level. No `checkpoints/run_clf.json`, no
+`data/lexicon.txt`, or a model trained against a stale feature list, and
+`unified.classify_runs` falls back to the original cascade — which is also what
+every self-test in that module exercises.

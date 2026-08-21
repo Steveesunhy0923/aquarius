@@ -1,0 +1,42 @@
+{
+  // Cloudflare Workers config for aquarius.atorku.com — an assets-only Worker
+  // with no `main` script, serving the static export in out/.
+  //
+  // WHY STATIC AND NOT OPENNEXT. Aquarius has two API routes, and neither can
+  // run on Workers:
+  //
+  //   /api/pdf     spawns Tectonic via node:child_process and writes temp files.
+  //                Workers has no processes and no filesystem — not a porting
+  //                problem, an impossibility.
+  //   /api/unfurl  resolves the target hostname with node:dns and rejects
+  //                private IPs. That lookup IS its SSRF defense, on a route
+  //                whose whole job is fetching user-supplied URLs. Workers has
+  //                no DNS resolution API, so "porting" it means shipping it
+  //                with the check removed. Not worth doing.
+  //
+  // Both are conveniences the client already degrades around (lib/api.ts,
+  // lib/export/pdf.ts): link previews quietly do not render, and PDF falls back
+  // to the browser's print-to-PDF. The data path is IndexedDB and is untouched
+  // — the app is local-first, so the static export is a genuine full build of
+  // it, not a crippled one.
+  //
+  // Build with `npm run build:static`, NOT `npm run build`: that script parks
+  // app/api, builds with CAP_STATIC=1, and restores it afterwards. Deploy from
+  // the repo root, since that is where out/ lands:
+  //
+  //     npm run build:static && npx wrangler deploy
+  //
+  // If the API routes are ever wanted for real, they need a Node host and
+  // NEXT_PUBLIC_API_ORIGIN pointed at it; nothing here has to change.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "aquarius-app",
+  "compatibility_date": "2026-08-20",
+  "assets": {
+    "directory": "./out",
+    // CAP_STATIC sets trailingSlash: true, so the export is directories of
+    // index.html. auto-trailing-slash (the default) resolves /editor to
+    // /editor/index.html; 404.html is Next's own styled page.
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
+  }
+}

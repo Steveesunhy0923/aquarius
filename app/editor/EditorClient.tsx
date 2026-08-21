@@ -1,7 +1,9 @@
 "use client";
 
 import { BlockView } from "@/components/BlockView";
-import { DocStyleBar } from "@/components/DocStyleBar";
+import { DocumentInspector } from "@/components/DocumentInspector";
+import { FormatPopover } from "@/components/FormatPopover";
+import { InsertMenu, type InsertAction } from "@/components/InsertMenu";
 import { ChemToolbar } from "@/components/ChemToolbar";
 import { activeChemField } from "@/components/ChemField";
 import { EditBox, type EditBoxHandle } from "@/components/EditBox";
@@ -20,14 +22,12 @@ import { Icon } from "@/components/Icon";
 import { TablePicker } from "@/components/TablePicker";
 import { TableRowEditor } from "@/components/TableRowEditor";
 import {
-  CodeToolButton,
+  GROUP,
+  GROUP_BTN,
   HEAD_BTN,
   HEAD_BTN_BASE,
   HEAD_BTN_HOVER,
-  HighlightButton,
-  ICON_BTN,
-  ListToolButton,
-  ToolButton,
+  TEXT_BTN,
 } from "@/components/ToolbarControls";
 import { CodeBlockView } from "@/components/CodeBlockView";
 import { makeCodeBlock } from "@/lib/blocks/codeblock";
@@ -102,7 +102,7 @@ import {
 } from "@/lib/blocks/source";
 import { defaultGraph, fitViewToExpr, graphModel, makeGraphBlock, newGraphId, SHAPE_PALETTE, withGraph, type GraphData } from "@/lib/blocks/graph";
 import { DEFAULT_HIGHLIGHT } from "@/lib/blocks/format";
-import { A4_W, A4_H, fontFamilyOf } from "@/lib/blocks/docstyle";
+import { A4_W, A4_H, pageContentStyle, presetClass, resolveStyle, unindentedParagraphs } from "@/lib/blocks/docstyle";
 import { listItems, listOrdered, makeList, withList, type ListMarker } from "@/lib/blocks/lists";
 import {
   demoRows,
@@ -157,8 +157,19 @@ const TABLE_ROW: RowItems<TableData> = { items: tableItems, withItems: withTable
 // Which strip the symbol bar shows (math or chemistry) — persisted like the
 // toolbar's editable slots: a global preference, last write wins across panes.
 const BAR_MODE_KEY = "aquarius.symbolbar";
+/** "Keep the symbol strip open even outside a formula" — a global preference. */
+const SYMBOL_PIN_KEY = "aquarius.symbolpin";
 /** Min gap between throttled auto version-history snapshots (4 min). */
 const AUTO_VERSION_INTERVAL_MS = 4 * 60 * 1000;
+/**
+ * Click-to-edit hit target around a rendered block. The padding gives the hover
+ * highlight some air; the matching negative margins keep it OUT of the layout,
+ * so the block occupies exactly the space its text does — otherwise every
+ * paragraph would be 8px taller and 16px narrower than the document says, and
+ * neither the LaTeX preset's abutting paragraphs nor the line breaks would
+ * match the typeset PDF.
+ */
+const EDIT_HIT = "-mx-2 -my-1 w-full rounded-md px-2 py-1 text-left";
 
 function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, onSaved, handleRef }: DocProps) {
   const { loading: authLoading, user } = useAuth();
@@ -268,10 +279,40 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   const collab = useCollab({ noteId: id, access, enabled: shared, pkg, applyRemoteTree });
   // null = closed; { id: null } = drawing a new graph; { id } = editing an existing one.
   const [graphEdit, setGraphEdit] = useState<{ id: string | null } | null>(null);
-  const [listMenu, setListMenu] = useState<null | "bullet" | "number">(null);
-  const [codeMenu, setCodeMenu] = useState(false);
   const [hlMenu, setHlMenu] = useState(false);
   const [zoom, setZoom] = useState(1); // page size ratio
+  // Document settings panel (typeface, leading, indent, zoom, page flow). Open
+  // by default on a full-width pane; a split pane is too narrow to give 240px
+  // away before the user has asked for it.
+  const [inspectorOpen, setInspectorOpen] = useState(!split);
+  // Pin the symbol strip open. It is otherwise raised by a math caret — see
+  // `symbolBarOpen` below — and the pin is for people who want it permanent.
+  const [symbolsPinned, setSymbolsPinned] = useState(() =>
+    typeof window !== "undefined" && localStorage.getItem(SYMBOL_PIN_KEY) === "1",
+  );
+  function toggleSymbolPin() {
+    setSymbolsPinned((v) => {
+      const next = !v;
+      if (typeof window !== "undefined") try { localStorage.setItem(SYMBOL_PIN_KEY, next ? "1" : "0"); } catch { /* noop */ }
+      return next;
+    });
+  }
+  // A non-empty selection inside the prose textarea raises the format popover.
+  const [hasSelection, setHasSelection] = useState(false);
+  // Pane too narrow to give the inspector its own column (see DocumentInspector).
+  const [paneNarrow, setPaneNarrow] = useState(false);
+  // Which inline formula editor is open inside the paragraph being edited, if
+  // any. A paragraph is a `text` block, so block type alone cannot tell us the
+  // caret is in a formula — EditBox reports it.
+  const [inlineEditor, setInlineEditor] = useState<"math" | "chem" | null>(null);
+  // Opening an inline editor swaps the strip to that editor's symbol set for the
+  // duration. setBarModeState (not setBarMode) on purpose: this is a transient
+  // follow-the-caret change and must not overwrite the stored preference. The
+  // Σ/⚗ switch still works afterwards.
+  const onInlineEditor = useCallback((kind: "math" | "chem" | null) => {
+    setInlineEditor(kind);
+    if (kind) setBarModeState(kind);
+  }, []);
 
   // ── Imported PDF ───────────────────────────────────────────────────────────
   const pdfSource = pkg?.tree.source?.kind === "pdf" ? pkg.tree.source : null;
@@ -412,6 +453,23 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     document.addEventListener("selectionchange", onSel);
     return () => document.removeEventListener("selectionchange", onSel);
   }, [collab.active, editingId, collab.setCursor]);
+  // Does the prose textarea hold a non-empty selection? That is what raises the
+  // format popover, so formatting appears where it can act instead of sitting
+  // inert in a permanent row. Same `selectionchange` source as the collab caret
+  // above, but unconditional — it drives our own chrome, not a peer broadcast.
+  useEffect(() => {
+    if (!editingPara) { setHasSelection(false); return; }
+    const read = () => {
+      const ta = taRef.current;
+      // Only OUR textarea counts: a selection in the title field or a table cell
+      // must not raise a popover that would splice into the paragraph instead.
+      if (!ta || document.activeElement !== ta) { setHasSelection(false); return; }
+      setHasSelection((ta.selectionEnd ?? 0) > (ta.selectionStart ?? 0));
+    };
+    read();
+    document.addEventListener("selectionchange", read);
+    return () => document.removeEventListener("selectionchange", read);
+  }, [editingPara, editingId]);
   // Map of blockId → peers (excluding self) currently editing that block.
   const selfId = user?.id ?? null;
   const remoteEditing = useMemo(() => {
@@ -741,6 +799,37 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     return () => document.removeEventListener("keydown", onKey);
   }, [primary, undo, redo]);
 
+  // Watch the pane's own width, not the window's: in split view two panes share
+  // the viewport, so the window size says nothing about how much room this one
+  // has for a side panel.
+  // Keyed on `pkg`, not []: <main> doesn't exist until the note has loaded (the
+  // component returns a placeholder before then), so a mount-only effect would
+  // observe nothing and never retry.
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(([entry]) => setPaneNarrow(entry.contentRect.width < 1024));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [pkg]);
+
+  // ⌘/Ctrl+/ pins the symbol strip open. The strip is otherwise contextual (it
+  // follows a maths caret), and this is the escape hatch for anyone who would
+  // rather have it permanently — the old behaviour, now opt-in.
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.key !== "/") return;
+      const root = rootRef.current;
+      const ae = document.activeElement as HTMLElement | null;
+      const focusedHere = !!root && !!ae && root.contains(ae);
+      if (!focusedHere && (!primary || (ae && ae !== document.body))) return;
+      e.preventDefault();
+      toggleSymbolPin();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [primary]);
+
   // ── tree mutations ────────────────────────────────────────────────────────
   // `coalesce` merges rapid same-burst edits (text typing) into one undo step.
   function setBlocks(update: (blocks: Block[]) => Block[], coalesce = false) {
@@ -1024,6 +1113,30 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     );
     setSaved(false);
   }
+  /**
+   * Click on the empty space below the last block: start a fresh paragraph at
+   * the END of the document.
+   *
+   * Deliberately NOT addBlock(), which inserts after whatever is under the
+   * cursor — clicking the bottom of the page means "write here", so it appends
+   * regardless of where the caret happened to be.
+   */
+  function appendParagraph() {
+    if (!capsRef.current.editBlocks) return;
+    const bs = pkgRef.current?.tree.blocks ?? [];
+    const openId = editingIdRef.current;
+    const open = openId ? bs.find((b) => b.id === openId) : null;
+    // Already sitting in an empty paragraph: clicking below it should leave the
+    // cursor where it is rather than stack a second empty block.
+    if (open && isParagraph(open) && isEmptyBlock(open)) return;
+    const last = bs[bs.length - 1];
+    if (last && isParagraph(last) && isEmptyBlock(last)) { startEdit(last); return; }
+    if (openId) endEdit(openId); // commits, and drops it if it was left empty
+    const fresh = paragraphFromSource("");
+    setBlocks((cur) => [...cur, fresh]);
+    startEdit(fresh);
+  }
+
   /** Finish editing a block; auto-remove it if it was left empty. */
   function endEdit(blockId: string) {
     setEditingId(null);
@@ -1271,7 +1384,6 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     const l = makeList(ordered, marker);
     addBlock(l, false);
     setEditingId(l.id);
-    setListMenu(null);
   }
   function setListText(blockId: string, text: string) {
     updateById(blockId, (b) => withList(b, text.split("\n")));
@@ -1287,7 +1399,8 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   /** Insert a runnable code block after the cursor. Its own mini IDE manages
    *  focus (like graph/table/image), so never route it into startEdit. */
   function insertCode(langId?: string) {
-    setCodeMenu(false);
+    // Language is switched on the block itself (CodeBlockView owns that picker),
+    // so the toolbar no longer carries a second one.
     addBlock(makeCodeBlock(langId ?? "python"), false);
   }
 
@@ -1344,6 +1457,28 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     const fields = moduleFields(m.blocks);
     if (fields.length === 0) { proceed({}); return; }
     setFieldsPrompt({ name: m.name, fields, proceed });
+  }
+
+  /** Dispatch a row of the toolbar's Insert menu. Everything here already had a
+   *  home in the editor — the menu only changes how it is reached, so each arm
+   *  is a straight call rather than a second implementation. */
+  function onInsertAction(action: InsertAction) {
+    switch (action) {
+      case "paragraph": addBlock(paragraphFromSource("")); break;
+      case "heading": insertHeading(2); break;
+      case "bulletList": insertList(false); break;
+      case "numberList": insertList(true); break;
+      case "equation": insertEquation(); break;
+      // A chemical equation is a math block tagged `attrs.kind = "chem"`, which
+      // is what opens it in the mhchem editor rather than the maths one.
+      case "chemistry": addBlock(displayFromSource(""), true, true); break;
+      case "graph": setGraphEdit({ id: null }); break;
+      case "table": setTablePicker(true); break;
+      case "code": insertCode(); break;
+      case "image": newImageRow(); break;
+      case "link": void insertLink(); break;
+      case "noteLink": toolbarNoteLink(); break;
+    }
   }
 
   /** Dispatch a named palette command to the matching editor action. */
@@ -1599,6 +1734,32 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   const editingBlock = editingId ? blocks.find((b) => b.id === editingId) : null;
   const currentStyle: "text" | HeadingLevel =
     editingBlock && editingBlock.type === "heading" ? headingLevel(editingBlock) : "text";
+  /**
+   * A click on empty document space ends the current edit.
+   *
+   * Exiting used to depend entirely on the edit box losing focus, which fails
+   * three ways: the one-shot `sticky` flag (armed by EVERY toolbar click) eats
+   * the first blur; once focus has left the textarea without exiting, no later
+   * click produces another blur, so the box stays open indefinitely; and a
+   * MathLive field never blurs to the page at all. Making blank space an
+   * explicit exit removes the dependency on blur entirely.
+   *
+   * Layered, like Escape: an open inline formula popover is committed first
+   * (never discarded), and the block edit ends on the next click.
+   */
+  const exitOnBlankClick = (e: MouseEvent) => {
+    if (!editingId && !selected) return;
+    const t = e.target as HTMLElement | null;
+    // Blank = inside the document surface, but not on a block and not on a
+    // control. Anything interactive handles its own click.
+    if (!t || t.closest("[data-btype]")) return;
+    if (t.closest("button, a, input, select, textarea, math-field, [contenteditable]")) return;
+    sticky.current = false; // an explicit exit must not be swallowed by a pending one-shot
+    if (editBoxRef.current?.commitInline()) return;
+    setSelected(null);
+    if (editingId) endEdit(editingId);
+  };
+
   const keepFocus = (e: MouseEvent) => {
     if (editingId) { e.preventDefault(); sticky.current = true; return; }
     // Also hold focus for a focused MathField or a table-cell textbox (which
@@ -1627,17 +1788,22 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   // A4 page geometry (size adjustable via `zoom`) + document style + pagination.
   const pageW = Math.round(A4_W * zoom);
   const pageH = Math.round(A4_H * zoom);
-  const margin = Math.round(pageW * 0.09);
-  const pageContent = pageH - 2 * margin;
   const docStyle = pkg.tree.style ?? {};
-  const fontSize = docStyle.fontSize ?? 14;
-  const fontKey = docStyle.fontFamily ?? "Computer Modern";
-  const fontFamily = fontFamilyOf(docStyle.fontFamily);
-  const lineSpacing = docStyle.lineSpacing ?? 1.5;
-  const indent = docStyle.indent ?? 0;
-  const layout = docStyle.pageLayout ?? "vertical";
+  const style = resolveStyle(docStyle);
+  const margin = Math.round(pageW * style.marginRatio);
+  const pageContent = pageH - 2 * margin;
+  const layout = style.pageLayout;
+  // The symbol strip follows the caret: it is on screen while a formula is open
+  // for editing, and otherwise only if the user pinned it (⌘/). Derived from the
+  // block's TYPE rather than `editingPara`, because heading edits set
+  // `editingId` without touching that flag and would otherwise count as maths.
+  // "The caret is somewhere a symbol can land": a formula block being edited, or
+  // an inline formula opened inside a paragraph.
+  const inFormula = editingBlock?.type === "math" || inlineEditor !== null;
+  const symbolBarOpen = caps.editBlocks && (symbolsPinned || inFormula);
   const indexById = new Map(blocks.map((b, i) => [b.id, i] as const));
-  const packed = paginate(visibleBlocks, heights, pageContent);
+  const noIndent = unindentedParagraphs(visibleBlocks);
+  const packed = paginate(visibleBlocks, heights, pageContent, style.paraSkip);
   // Always keep one completely blank page at the end so the canvas never feels
   // "full". paginate() only ends on an empty page for an empty document; once
   // there's content, append a fresh blank sheet. Same page list drives both the
@@ -1647,81 +1813,102 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   // The last page with content — used so print suppresses the break after it
   // (`:last-child` would match the hidden, appended blank page instead).
   const lastContentPage = pages.reduce((acc, ids, i) => (ids.length ? i : acc), -1);
-  const contentStyle = {
-    padding: margin,
-    fontSize: `${fontSize}px`,
-    fontFamily,
-    lineHeight: lineSpacing,
-    ["--indent" as string]: `${indent}em`,
-  } as CSSProperties;
+  const contentStyle = pageContentStyle(style, pageW) as CSSProperties;
 
   return (
     <main ref={rootRef} className="relative flex h-full min-h-0 flex-col" onMouseDown={onActivate}>
       <input ref={fileRef} type="file" accept="image/*" onChange={onPickImage} className="hidden" />
 
-      <header className="print-hide flex items-center gap-3 border-b border-border px-4 py-3">
+      {/* ── Header: what the document IS and what you do TO it ───────────────
+          Per-block actions live in the bar below; nothing here changes text. */}
+      <header className="print-hide flex items-center gap-2 border-b border-border px-4 py-2.5">
         {split && <span className="rounded bg-foreground/5 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted">{primary ? "A" : "B"}</span>}
-        <input value={title} readOnly={!caps.editTitle} onChange={(e) => { setTitle(e.target.value); setSaved(false); }} className="flex-1 bg-transparent text-lg font-semibold outline-none" />
+        <input value={title} readOnly={!caps.editTitle} onChange={(e) => { setTitle(e.target.value); setSaved(false); }} className="min-w-0 flex-1 bg-transparent text-lg font-semibold outline-none" />
         {!readOnly && (
           <div className="flex items-center">
             <button onMouseDown={(e) => e.preventDefault()} onClick={undo} disabled={undoStack.current.length === 0} title="Undo (⌘/Ctrl+Z)" aria-label="Undo" className={HEAD_BTN}><Icon name="undo" size={18} /></button>
             <button onMouseDown={(e) => e.preventDefault()} onClick={redo} disabled={redoStack.current.length === 0} title="Redo (⌘/Ctrl+Shift+Z)" aria-label="Redo" className={HEAD_BTN}><Icon name="redo" size={18} /></button>
           </div>
         )}
-        {caps.editBlocks && <button onClick={() => setTemplatesOpen(true)} title="Design — templates, modules & backgrounds" aria-label="Design — templates, modules and backgrounds" className={HEAD_BTN}><Icon name="templates" size={18} /></button>}
         {collab.active && <PresenceAvatars peers={collab.peers} selfId={user?.id ?? null} connected={collab.connected} />}
-        {isCloudActive() && <button onClick={() => setShareOpen(true)} title="Share this document" aria-label="Share" className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent"><Icon name="share" size={16} />Share</button>}
-        <button onClick={() => setShowSource((s) => !s)} title={showSource ? "Back to the visual editor" : "Show the LaTeX source"} aria-label={showSource ? "Show visual editor" : "Show LaTeX source"} aria-pressed={showSource} className={`${HEAD_BTN_BASE} ${showSource ? "bg-accent-soft text-accent" : HEAD_BTN_HOVER}`}><Icon name="code" size={18} /></button>
-        {caps.editHistory && <button onClick={() => setHistoryOpen(true)} title="Version history" aria-label="Version history" className={`${HEAD_BTN_BASE} ${HEAD_BTN_HOVER}`}><Icon name="history" size={18} /></button>}
-        <ExportMenu noteId={id} title={title} beforeExport={save} onPdf={printPdf} label={<Icon name="export" size={18} />} className={HEAD_BTN} />
+        {/* Save is a STATUS, not an action: the note autosaves, so a floppy-disk
+            button spent premium header space implying work the app already did.
+            It stays clickable (and ⌘S still works) for the "save right now"
+            reflex, but it reads as the state it reports. */}
         {!caps.persist
-          ? <span className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm text-muted"><Icon name="lock" size={15} />{access === "commenter" ? "Comment only" : "View only"}</span>
-          : <button onClick={save} title={saving ? "Saving…" : saved ? "Saved — up to date" : "Unsaved changes — click to save now"} aria-label={saving ? "Saving" : saved ? "Saved" : "Save now"} className={`grid h-9 w-9 place-items-center rounded-md transition ${saving ? "animate-pulse text-accent" : saved ? `${HEAD_BTN_HOVER}` : "text-accent hover:bg-accent-soft"}`}><Icon name="save" size={18} /></button>}
+          ? <span className="flex items-center gap-1.5 whitespace-nowrap rounded-md px-2 py-1 text-sm text-muted"><Icon name="lock" size={14} />{access === "commenter" ? "Comment only" : "View only"}</span>
+          : (
+            <button
+              onClick={save}
+              title={saving ? "Saving…" : saved ? "All changes saved" : "Unsaved changes — click to save now"}
+              className={`flex items-center gap-1.5 whitespace-nowrap rounded-md px-2 py-1 text-sm transition ${saving ? "text-accent" : saved ? "text-muted hover:bg-foreground/[0.06]" : "text-accent hover:bg-accent-soft"}`}
+            >
+              <span aria-hidden className={`h-1.5 w-1.5 rounded-full ${saving ? "animate-pulse bg-accent" : saved ? "bg-faint" : "bg-accent"}`} />
+              {saving ? "Saving…" : saved ? "Saved" : "Unsaved"}
+            </button>
+          )}
+        {isCloudActive() && <button onClick={() => setShareOpen(true)} title="Share this document" aria-label="Share" className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent"><Icon name="share" size={16} />Share</button>}
+        <ExportMenu noteId={id} title={title} beforeExport={save} onPdf={printPdf} label={<Icon name="download" size={18} />} className={HEAD_BTN} />
+        {caps.editHistory && <button onClick={() => setHistoryOpen(true)} title="Version history" aria-label="Version history" className={HEAD_BTN}><Icon name="history" size={18} /></button>}
         {onClose && <button onClick={onClose} title="Close this pane" aria-label="Close pane" className="grid h-9 w-9 place-items-center rounded-md text-muted transition hover:bg-danger/10 hover:text-danger"><Icon name="close" size={17} /></button>}
       </header>
 
-      {/* Block tools — hidden in read-only (viewer/commenter) mode */}
-      <div className={`print-hide flex-wrap items-center justify-center gap-2 border-b border-border px-6 py-2 ${readOnly ? "hidden" : "flex"}`}>
-        {/* Title — the only control that keeps a word label */}
-        <select value={typeof currentStyle === "number" ? String(currentStyle) : ""} onChange={(e) => { if (e.target.value) applyStyle(Number(e.target.value) as HeadingLevel); }} title="Make the current block a heading" className="h-9 rounded-md border border-border bg-background px-2 text-sm">
-          <option value="" disabled>Heading…</option>
+      {/* ── The one permanent bar ─────────────────────────────────────────────
+          Insert is a labelled menu, so a glyph no longer has to carry a whole
+          action on its own; what stays visible is the small set worth muscle
+          memory. Formatting that needs a selection lives in FormatPopover. */}
+      <div className={`print-hide flex flex-wrap items-center gap-2 border-b border-border px-4 py-2 ${readOnly ? "hidden" : "flex"}`}>
+        <InsertMenu onPick={onInsertAction} proseActive={!!editingId && editingPara} keepFocus={keepFocus} />
+
+        {/* Block style — the one control that always kept a word label. */}
+        <select
+          value={typeof currentStyle === "number" ? String(currentStyle) : "text"}
+          onChange={(e) => applyStyle(e.target.value === "text" ? "text" : (Number(e.target.value) as HeadingLevel))}
+          title="Style of the current block"
+          aria-label="Block style"
+          className="h-9 rounded-md border border-border bg-surface px-2 text-sm outline-none hover:border-accent focus:border-accent"
+        >
+          <option value="text">Body text</option>
           <option value={1}>Title</option>
           <option value={2}>Subtitle</option>
           <option value={3}>Subsubtitle</option>
           <option value={4}>Subsubsubtitle</option>
         </select>
-        <span className="mx-1 h-7 w-px bg-border" />
-        {/* Text · Equation */}
-        <ToolButton onClick={() => addBlock(paragraphFromSource(""))} title="New paragraph (normal text)"><Icon name="paragraph" size={17} /></ToolButton>
-        <ToolButton onClick={insertEquation} title="Insert centered equation ($$…$$)"><Icon name="displayeq" size={19} /></ToolButton>
-        <ToolButton onClick={() => setGraphEdit({ id: null })} title="Insert interactive graph"><Icon name="graph" size={19} /></ToolButton>
-        <CodeToolButton open={codeMenu} onToggle={() => setCodeMenu((o) => !o)} onInsert={insertCode} />
-        <span className="mx-1 h-7 w-px bg-border" />
-        {/* Bold · Italic · Underline · Strike · Highlight */}
-        <button onMouseDown={keepFocus} onClick={() => wrapSelection("**")} title="Bold (**…**)" aria-label="Bold" className={ICON_BTN}><Icon name="bold" size={16} /></button>
-        <button onMouseDown={keepFocus} onClick={() => wrapSelection("*")} title="Italic (*…*)" aria-label="Italic" className={ICON_BTN}><Icon name="italic" size={16} /></button>
-        <button onMouseDown={keepFocus} onClick={() => wrapSelection("__")} title="Underline (__…__)" aria-label="Underline" className={ICON_BTN}><Icon name="underline" size={16} /></button>
-        <button onMouseDown={keepFocus} onClick={() => wrapSelection("~~")} title="Strikethrough (~~…~~)" aria-label="Strikethrough" className={ICON_BTN}><Icon name="strike" size={16} /></button>
-        <HighlightButton color={hlColor} open={hlMenu} onToggle={() => setHlMenu((o) => !o)} onApply={() => wrapSelection(`==#${hlColor.replace("#", "")}:`, "==")} onColor={setHlColor} keepFocus={keepFocus} onColorMouseDown={() => { if (editingId) sticky.current = true; }} />
-        <span className="mx-1 h-7 w-px bg-border" />
-        {/* Picture · Table · Link */}
-        <ToolButton onClick={newImageRow} title="Insert image"><Icon name="image" size={18} /></ToolButton>
-        <ToolButton onClick={() => setTablePicker(true)} title="Insert table"><Icon name="table" size={18} /></ToolButton>
-        <button onMouseDown={keepFocus} onClick={insertLink} title="Insert link" aria-label="Insert link" className={ICON_BTN}><Icon name="link" size={18} /></button>
-        <button onMouseDown={keepFocus} onClick={toolbarNoteLink} title="Link to another note (or type [[ while writing)" aria-label="Link to another note" className={ICON_BTN}><Icon name="notelink" size={18} /></button>
+
+        <span className="mx-0.5 h-6 w-px bg-border" />
+
+        {/* Character formatting. Also reachable from the selection popover; here
+            they double as "wrap the word I'm about to type". */}
+        <span className={GROUP}>
+          <button onMouseDown={keepFocus} onClick={() => wrapSelection("**")} title="Bold (**…**)" aria-label="Bold" className={GROUP_BTN}><Icon name="bold" size={16} /></button>
+          <button onMouseDown={keepFocus} onClick={() => wrapSelection("*")} title="Italic (*…*)" aria-label="Italic" className={GROUP_BTN}><Icon name="italic" size={16} /></button>
+          <button onMouseDown={keepFocus} onClick={() => wrapSelection("__")} title="Underline (__…__)" aria-label="Underline" className={GROUP_BTN}><Icon name="underline" size={16} /></button>
+          <button onMouseDown={keepFocus} onClick={() => wrapSelection("~~")} title="Strikethrough (~~…~~)" aria-label="Strikethrough" className={GROUP_BTN}><Icon name="strike" size={16} /></button>
+        </span>
+
+        <span className={GROUP}>
+          <button onMouseDown={keepFocus} onClick={() => insertList(false)} title="Bulleted list" aria-label="Bulleted list" className={GROUP_BTN}><Icon name="list" size={16} /></button>
+          <button onMouseDown={keepFocus} onClick={() => insertList(true)} title="Numbered list" aria-label="Numbered list" className={GROUP_BTN}><Icon name="listnumber" size={16} /></button>
+        </span>
+
+        <span className="mx-0.5 h-6 w-px bg-border" />
+
+        <button onClick={() => setShowSource((s) => !s)} title={showSource ? "Back to the visual editor" : "Show the LaTeX source"} aria-label={showSource ? "Show visual editor" : "Show LaTeX source"} aria-pressed={showSource} className={`${TEXT_BTN} ${showSource ? "bg-accent-soft text-accent" : ""}`}><Icon name="tex" size={20} /></button>
         {/* keepFocus (like Insert link): opening the sheet while editing prose keeps the block editor
             alive, so Insert routes the recognized LaTeX into it as inline math. */}
-        <button onMouseDown={keepFocus} onClick={() => setInkOpen((o) => !o)} title="Handwrite notes — Ancha reads words and formulas together" aria-label="Handwrite notes with Ancha" aria-pressed={inkOpen} className={`grid h-9 min-w-9 place-items-center rounded-md border px-2 text-sm ${inkOpen ? "border-accent bg-accent-soft text-accent" : "border-border hover:border-accent"}`}><Icon name="ink" size={18} /></button>
-        <span className="mx-1 h-7 w-px bg-border" />
-        {/* Unnumbered · Numbered list */}
-        <ListToolButton ordered={false} open={listMenu === "bullet"} onToggle={() => setListMenu((m) => (m === "bullet" ? null : "bullet"))} onInsert={(marker) => insertList(false, marker)} />
-        <ListToolButton ordered={true} open={listMenu === "number"} onToggle={() => setListMenu((m) => (m === "number" ? null : "number"))} onInsert={(marker) => insertList(true, marker)} />
+        <button onMouseDown={keepFocus} onClick={() => setInkOpen((o) => !o)} title="Handwrite notes — Ancha reads words and formulas together" aria-label="Handwrite notes with Ancha" aria-pressed={inkOpen} className={`${TEXT_BTN} ${inkOpen ? "bg-accent-soft text-accent" : ""}`}><Icon name="penline" size={17} />Handwrite</button>
+
+        <span className="flex-1" />
+
+        {caps.editBlocks && <button onClick={() => setTemplatesOpen(true)} title="Design — templates, modules & backgrounds" aria-label="Design — templates, modules and backgrounds" className={TEXT_BTN}><Icon name="colorwheel" size={17} />Design</button>}
+        <button onClick={() => setInspectorOpen((v) => !v)} title="Document settings — typeface, spacing, page flow" aria-label="Document settings" aria-pressed={inspectorOpen} className={`${TEXT_BTN} ${inspectorOpen ? "bg-accent-soft text-accent" : ""}`}><Icon name="textstyle" size={17} />Document</button>
       </div>
 
-      {/* Functions & symbols — the strip shows either the math set or its
-          chemistry mirror; the Σ/⚗ switch swaps them (persisted globally).
-          Hidden when the tree can't be edited: every glyph in it inserts. */}
-      {caps.editBlocks && (() => {
+      {/* ── Symbols — contextual ──────────────────────────────────────────────
+          On screen while a formula is being edited (the only moment its glyphs
+          can act), or permanently if pinned with ⌘/. The strip shows either the
+          math set or its chemistry mirror; the Σ/⚗ switch swaps them. */}
+      {symbolBarOpen && (() => {
         const barSwitch = (
           <>
             <div className="flex items-center overflow-hidden rounded-md border border-border" role="group" aria-label="Symbol bar mode">
@@ -1731,6 +1918,19 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
             <span className="mx-2 h-7 w-px bg-border" />
           </>
         );
+        // Pinning is the strip's own state, so its control belongs to the strip.
+        const trailing = (
+          <button
+            onMouseDown={keepFocus}
+            onClick={toggleSymbolPin}
+            title={symbolsPinned ? "Unpin — show symbols only while editing a formula (⌘/)" : "Pin the symbol strip open (⌘/)"}
+            aria-label={symbolsPinned ? "Unpin symbol strip" : "Pin symbol strip open"}
+            aria-pressed={symbolsPinned}
+            className={`grid h-9 min-w-9 place-items-center rounded-md px-2 transition ${symbolsPinned ? "bg-accent-soft text-accent" : "text-faint hover:bg-foreground/[0.06] hover:text-foreground"}`}
+          >
+            <Icon name="pin" size={15} />
+          </button>
+        );
         return barMode === "chem" ? (
           <ChemToolbar
             onInsert={onInsertChem}
@@ -1739,6 +1939,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
             keepFocus={keepFocus}
             markSticky={() => { if (editingId) sticky.current = true; }}
             leading={barSwitch}
+            trailing={trailing}
           />
         ) : (
           <SymbolToolbar
@@ -1747,24 +1948,10 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
             keepFocus={keepFocus}
             markSticky={() => { if (editingId) sticky.current = true; }}
             leading={barSwitch}
+            trailing={trailing}
           />
         );
       })()}
-
-      {/* Document settings */}
-      {!showSource && caps.editDocStyle && (
-        <DocStyleBar
-          fontKey={fontKey}
-          fontFamily={fontFamily}
-          fontSize={fontSize}
-          lineSpacing={lineSpacing}
-          indent={indent}
-          layout={layout}
-          zoom={zoom}
-          onStyle={setDocStyle}
-          onZoom={setZoom}
-        />
-      )}
 
       {locked === "access" && (
         <div className="print-hide flex items-center justify-center gap-1.5 border-b border-border bg-warning/10 px-6 py-2 text-center text-sm text-warning">
@@ -1775,10 +1962,16 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
           not borrow the sharing copy — nothing here is going unsaved. */}
       {locked === "pdf" && (
         <div className="print-hide flex items-center justify-center gap-1.5 border-b border-border bg-accent-soft px-6 py-2 text-center text-sm text-accent">
-          <Icon name="ink" size={14} /> Imported {pkg.tree.source?.filename ? `“${pkg.tree.source.filename}”` : "PDF"} — you can handwrite on it. Other editing is off for imported files.
+          <Icon name="penline" size={14} /> Imported {pkg.tree.source?.filename ? `“${pkg.tree.source.filename}”` : "PDF"} — you can handwrite on it. Other editing is off for imported files.
         </div>
       )}
 
+      {/* Body + inspector. The row exists so document settings can sit BESIDE
+          the page: they are tuned while watching the text reflow, which a strip
+          above the canvas could never show at the same time. `min-w-0` keeps
+          the canvas from pushing the panel off-screen at narrow widths. */}
+      <div className="relative flex min-h-0 flex-1">
+        <div className="flex min-w-0 flex-1 flex-col">
       {/* Body — an imported PDF replaces the block canvas entirely: its content
           is the attached file, and its tree is deliberately block-less. */}
       {pdfSource ? (
@@ -1796,15 +1989,15 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
           <textarea readOnly value={documentToLatex(pkg.tree)} className="h-[70vh] w-full rounded-lg border border-border bg-surface p-4 font-mono text-sm" />
         </div>
       ) : (
-        <div className={`print-surface flex-1 overflow-auto p-8 ${inkOpen ? "pb-[52vh]" : ""}`} style={{ background: "var(--background)" }}>
+        <div onMouseDown={exitOnBlankClick} className={`print-surface flex-1 overflow-auto p-8 ${inkOpen ? "pb-[52vh]" : ""}`} style={{ background: "var(--background)" }}>
           <div className={`print-stack ${layout === "horizontal" ? "flex items-start gap-8" : "flex flex-col items-center gap-8"}`}>
             {pages.map((ids, p) => (
               <div key={p} className={`print-page relative shrink-0 text-foreground shadow-xl ring-1 ring-border ${docStyle.background ? "" : "bg-surface"} ${ids.length === 0 ? "print-hide" : ""} ${p === lastContentPage ? "last-print-page" : ""}`} style={{ width: pageW, minHeight: pageH, background: docStyle.background || undefined, color: docStyle.foreground || undefined }}>
-                <div style={contentStyle}>
+                <div className={`${presetClass(style.preset)} flex flex-col`} style={{ ...contentStyle, minHeight: pageH }}>
                   {blocks.length === 0 ? (
                     caps.editBlocks ? <button onClick={() => addBlock(paragraphFromSource(""))} className="w-full rounded-lg border border-dashed border-border p-8 text-center text-muted hover:border-accent">Empty note — click to start a paragraph, or use the toolbar.</button> : null
                   ) : (
-                    <div className="space-y-1">
+                    <div className="flex flex-col" style={{ gap: "var(--para-skip)" }}>
                       {ids.map((id) => {
                         const gi = indexById.get(id) ?? -1;
                         const b = blocks[gi];
@@ -1817,6 +2010,8 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
                           <div
                             key={id}
                             ref={setBlockRef(id)}
+                            data-btype={b.type}
+                            data-noindent={noIndent.has(id) ? "" : undefined}
                             className="relative"
                             style={editors ? { outline: `2px solid ${editors[0].color}`, outlineOffset: "3px", borderRadius: "3px" } : undefined}
                           >
@@ -1836,8 +2031,24 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
                       })}
                     </div>
                   )}
-                  {p === pages.length - 1 && blocks.length > 0 && caps.editBlocks && !editingId && !selected && (
-                    <button onClick={() => addBlock(paragraphFromSource(""))} className="print-hide mt-1 block w-full rounded-md px-3 py-2 text-left text-sm text-muted hover:bg-foreground/[0.04]">Click to add text…</button>
+                  {/* The rest of the sheet is a write target: clicking the empty
+                      space below the last block starts a paragraph at the end.
+                      No chrome at rest — the affordance is a text cursor plus a
+                      caret that fades in where the line would begin. It is a
+                      <button>, so exitOnBlankClick leaves it alone and this
+                      handler wins. */}
+                  {blocks.length > 0 && caps.editBlocks && p >= lastContentPage && (
+                    <button
+                      onClick={appendParagraph}
+                      title="Write here"
+                      aria-label="Add a paragraph at the end"
+                      // items-start: a <button> centres its content, which would
+                      // float the caret halfway down the sheet instead of where
+                      // the new line actually begins.
+                      className="group print-hide flex min-h-10 flex-1 cursor-text items-start rounded-md text-left"
+                    >
+                      <span aria-hidden className="mt-1 block h-[1.15em] w-px bg-foreground/50 opacity-0 transition-opacity duration-100 group-hover:opacity-100" />
+                    </button>
                   )}
                 </div>
                 <span className="pointer-events-none absolute bottom-1.5 right-3 text-[10px] text-muted">{p < pages.length - 1 || ids.length > 0 ? p + 1 : null}</span>
@@ -1845,6 +2056,51 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
             ))}
           </div>
         </div>
+      )}
+        </div>
+        {/* The PDF viewer owns its own zoom/annotation chrome and has no block
+            tree to style, so the inspector would be all dead controls there. */}
+        {inspectorOpen && !pdfSource && (
+          <DocumentInspector
+            preset={style.preset}
+            fontKey={style.fontKey}
+            fontFamily={style.fontFamily}
+            fontSize={style.fontSize}
+            lineSpacing={style.lineSpacing}
+            indent={style.indent}
+            layout={layout}
+            zoom={zoom}
+            showSource={showSource}
+            canEditStyle={caps.editDocStyle}
+            onStyle={setDocStyle}
+            onZoom={setZoom}
+            onToggleSource={() => setShowSource((v) => !v)}
+            onClose={() => setInspectorOpen(false)}
+            overlay={paneNarrow}
+          />
+        )}
+      </div>
+
+      {/* Formatting for a live selection — see FormatPopover for why it anchors
+          to the edit box rather than the selection rectangle. */}
+      {caps.editBlocks && (
+        <FormatPopover
+          // The block wrapper, not the textarea: EditBox stacks its own colour
+          // and insert-formula rows above the text, and anchoring to the
+          // textarea would drop the popover on top of them.
+          getAnchor={() => (editingId ? blockEls.current.get(editingId) ?? null : null)}
+          visible={hasSelection && !!editingId && editingPara}
+          hlColor={hlColor}
+          hlOpen={hlMenu}
+          onHlToggle={() => setHlMenu((o) => !o)}
+          onHlApply={() => wrapSelection(`==#${hlColor.replace("#", "")}:`, "==")}
+          onHlColor={setHlColor}
+          onWrap={(marker) => wrapSelection(marker)}
+          onLink={() => void insertLink()}
+          onNoteLink={toolbarNoteLink}
+          keepFocus={keepFocus}
+          markSticky={() => { if (editingId) sticky.current = true; }}
+        />
       )}
 
       {symbolsOpen && (
@@ -1964,9 +2220,15 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     };
     // A display formula that parses to y = f(x) gets a hover "Plot" action.
     const plotExpr = b.id === editingId ? null : plottableExpr(b);
+    // The hover row carries NO vertical padding: it would sit between every
+    // pair of paragraphs, which under the LaTeX preset are meant to abut.
     return (
-      <div className="group relative flex items-start gap-1 rounded-lg px-1 py-0.5 hover:bg-foreground/[0.03]" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); moveBlock(dragFrom.current, i); dragFrom.current = null; }}>
-        <div className="print-hide flex flex-col items-center gap-0.5 pt-1 text-faint opacity-0 transition group-hover:opacity-100">
+      <div className="group relative flex items-start gap-1 rounded-lg px-1 hover:bg-foreground/[0.03]" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); moveBlock(dragFrom.current, i); dragFrom.current = null; }}>
+        {/* Reorder controls live in the page margin, positioned OUT of flow: in
+            flow they are ~50px of invisible column that sets a floor under every
+            block's height and insets the text, so a two-line paragraph could not
+            abut the next one and the on-screen measure did not match the PDF's. */}
+        <div className="print-hide absolute right-full top-0 mr-1 flex flex-col items-center gap-0.5 pt-1 text-faint opacity-0 transition group-hover:opacity-100">
           <button onClick={() => moveVisible(-1)} disabled={!canUp} title="Move up" aria-label="Move block up" className="grid place-items-center rounded hover:text-accent disabled:opacity-30"><Icon name="moveup" size={14} /></button>
           <span draggable onDragStart={() => (dragFrom.current = i)} title="Drag to reorder block" aria-label="Drag to reorder block" className="grid cursor-grab place-items-center select-none hover:text-accent active:cursor-grabbing"><Icon name="drag" size={14} /></span>
           <button onClick={() => moveVisible(1)} disabled={!canDown} title="Move down" aria-label="Move block down" className="grid place-items-center rounded hover:text-accent disabled:opacity-30"><Icon name="movedown" size={14} /></button>
@@ -2014,7 +2276,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
                 <div className="pointer-events-none mt-2 border-t border-border pt-2"><BlockView block={b} /></div>
               </div>
             ) : (
-              <button onClick={() => { if (!capsRef.current.editBlocks) return; setSelected(null); setEditingId(b.id); }} className="w-full rounded-md px-2 py-1 text-left"><BlockView block={b} /></button>
+              <button onClick={() => { if (!capsRef.current.editBlocks) return; setSelected(null); setEditingId(b.id); }} className={EDIT_HIT}><BlockView block={b} /></button>
             )
           ) : isImage ? (
             <>
@@ -2078,7 +2340,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
             />
           ) : b.id === editingId ? (
             editingPara ? (
-              <EditBox ref={editBoxRef} taRef={taRef} para={editingPara} draft={draft} color={color} previewBlock={withCalloutColor(paragraphFromSource(draft, b.id), color)} onChange={onDraftChange} onColor={pickColor} onExit={() => endEdit(b.id)} onInsertModule={insertModule} onEditModule={editModule} onNoteLink={openNoteLinkPicker} sticky={sticky} />
+              <EditBox ref={editBoxRef} taRef={taRef} para={editingPara} draft={draft} color={color} previewBlock={withCalloutColor(paragraphFromSource(draft, b.id), color)} onChange={onDraftChange} onColor={pickColor} onExit={() => endEdit(b.id)} onInsertModule={insertModule} onEditModule={editModule} onNoteLink={openNoteLinkPicker} onInlineEditor={onInlineEditor} sticky={sticky} />
             ) : editingChem ? (
               <ChemFormulaBox draft={draft} onChange={onDraftChange} onExit={() => endEdit(b.id)} sticky={sticky} />
             ) : getSettings().mathEditorBeta && isStructural(b) ? (
@@ -2087,7 +2349,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
               <FormulaEditBox draft={draft} onChange={onDraftChange} onExit={() => endEdit(b.id)} sticky={sticky} />
             )
           ) : (
-            <button onClick={() => startEdit(b)} className="w-full rounded-md px-2 py-1 text-left">
+            <button onClick={() => startEdit(b)} className={EDIT_HIT}>
               {hasContent(b) ? <BlockView block={b} /> : <span className="text-muted">{isParagraph(b) ? "Empty paragraph" : "Empty formula"} — click to edit</span>}
             </button>
           )}
@@ -2095,7 +2357,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
 
         <div className="print-hide flex flex-col items-center">
           {plotExpr && (
-            <button onClick={() => plotEquation(b, plotExpr)} title="Plot this equation" aria-label="Plot this equation" className="mt-1 grid place-items-center px-1 text-faint opacity-0 transition hover:text-accent group-hover:opacity-100"><Icon name="plot" size={16} /></button>
+            <button onClick={() => plotEquation(b, plotExpr)} title="Plot this equation" aria-label="Plot this equation" className="mt-1 grid place-items-center px-1 text-faint opacity-0 transition hover:text-accent group-hover:opacity-100"><Icon name="plotaxes" size={16} /></button>
           )}
           <button onClick={() => deleteBlock(b.id)} title="Delete block" aria-label="Delete block" className="mt-1 grid place-items-center px-1 text-faint opacity-0 transition hover:text-danger group-hover:opacity-100"><Icon name="trash" size={16} /></button>
         </div>
@@ -2272,5 +2534,7 @@ function HeadingDisplay({ block, number }: { block: Block; number?: string }) {
   const lvl = headingLevel(block);
   const cls = lvl === 1 ? "text-2xl font-bold" : lvl === 2 ? "text-xl font-semibold" : lvl === 3 ? "text-lg font-semibold" : "text-base font-semibold";
   const text = block.value || "Untitled heading";
-  return <div className={cls} style={{ textAlign: headingAlign(block) }}>{number ? `${number} ` : ""}{text}</div>;
+  // `aq-heading` + the level: under the LaTeX preset these absolute sizes are
+  // restated as \Large / \large / \normalsize of the body (app/globals.css).
+  return <div className={`aq-heading ${cls}`} data-level={lvl} style={{ textAlign: headingAlign(block) }}>{number ? `${number} ` : ""}{text}</div>;
 }

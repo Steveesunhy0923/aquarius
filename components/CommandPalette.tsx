@@ -35,24 +35,24 @@ interface Row {
  * `cap: null` means always available.
  */
 const COMMANDS: { id: EditorCommand; label: string; icon: IconName; group: "Insert" | "Actions"; cap: keyof EditorCapabilities | null; keywords?: string[] }[] = [
-  { id: "insertParagraph", label: "Paragraph", icon: "paragraph", group: "Insert", cap: "editBlocks", keywords: ["text", "body"] },
+  { id: "insertParagraph", label: "Paragraph", icon: "textstyle", group: "Insert", cap: "editBlocks", keywords: ["text", "body"] },
   { id: "insertHeading", label: "Heading", icon: "heading", group: "Insert", cap: "editBlocks", keywords: ["title", "section"] },
   { id: "insertList", label: "List", icon: "list", group: "Insert", cap: "editBlocks", keywords: ["bullet", "bulleted", "item"] },
-  { id: "insertEquation", label: "Equation", icon: "displayeq", group: "Insert", cap: "editBlocks", keywords: ["formula", "math", "latex"] },
+  { id: "insertEquation", label: "Equation", icon: "mathblock", group: "Insert", cap: "editBlocks", keywords: ["formula", "math", "latex"] },
   { id: "insertTable", label: "Table", icon: "table", group: "Insert", cap: "editBlocks", keywords: ["grid", "rows", "columns"] },
   { id: "insertGraph", label: "Graph", icon: "graph", group: "Insert", cap: "editBlocks", keywords: ["plot", "chart", "figure", "curve"] },
-  { id: "insertCode", label: "Code block", icon: "codeblock", group: "Insert", cap: "editBlocks", keywords: ["python", "javascript", "run", "jupyter", "script", "program", "cell"] },
+  { id: "insertCode", label: "Code block", icon: "terminal", group: "Insert", cap: "editBlocks", keywords: ["python", "javascript", "run", "jupyter", "script", "program", "cell"] },
   { id: "insertImage", label: "Image", icon: "image", group: "Insert", cap: "editBlocks", keywords: ["picture", "photo", "figure"] },
-  { id: "openSymbols", label: "Symbol library…", icon: "choosesymbol", group: "Insert", cap: "editBlocks", keywords: ["math", "greek", "operator"] },
-  { id: "openInk", label: "Handwriting input (Ancha)…", icon: "ink", group: "Insert", cap: "editBlocks", keywords: ["draw", "pencil", "ipad", "ancha", "ink", "recognize", "handwrite"] },
-  { id: "openTemplates", label: "Templates & designs…", icon: "templates", group: "Insert", cap: "editBlocks", keywords: ["preset", "design", "layout"] },
+  { id: "openSymbols", label: "Symbol library…", icon: "sigmapi", group: "Insert", cap: "editBlocks", keywords: ["math", "greek", "operator"] },
+  { id: "openInk", label: "Handwriting input (Ancha)…", icon: "penline", group: "Insert", cap: "editBlocks", keywords: ["draw", "pencil", "ipad", "ancha", "ink", "recognize", "handwrite"] },
+  { id: "openTemplates", label: "Templates & designs…", icon: "colorwheel", group: "Insert", cap: "editBlocks", keywords: ["preset", "design", "layout"] },
   { id: "undo", label: "Undo", icon: "undo", group: "Actions", cap: "editBlocks" },
   { id: "redo", label: "Redo", icon: "redo", group: "Actions", cap: "editBlocks" },
   { id: "save", label: "Save now", icon: "save", group: "Actions", cap: "persist", keywords: ["store"] },
   { id: "openHistory", label: "Version history…", icon: "history", group: "Actions", cap: "editHistory", keywords: ["timeline", "snapshot", "revision", "restore"] },
-  { id: "toggleSource", label: "Toggle LaTeX source", icon: "code", group: "Actions", cap: null, keywords: ["latex", "source", "raw"] },
+  { id: "toggleSource", label: "Toggle LaTeX source", icon: "tex", group: "Actions", cap: null, keywords: ["latex", "source", "raw"] },
   { id: "openShare", label: "Share…", icon: "share", group: "Actions", cap: "share", keywords: ["collaborate", "invite", "publish"] },
-  { id: "print", label: "Export / print PDF", icon: "export", group: "Actions", cap: null, keywords: ["pdf", "download", "print"] },
+  { id: "print", label: "Export / print PDF", icon: "download", group: "Actions", cap: null, keywords: ["pdf", "download", "print"] },
 ];
 
 /** A preset behaves like a big multi-section module when inserted from the palette. */

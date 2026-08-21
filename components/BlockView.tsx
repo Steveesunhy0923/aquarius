@@ -47,11 +47,10 @@ export function BlockView({ block }: { block: Block }) {
           </div>
         );
       }
+      // `aq-para` carries the first-line indent (app/globals.css) rather than an
+      // inline style, so the LaTeX preset's "no indent here" rules can win.
       return (
-        <p
-          className="whitespace-pre-wrap break-words text-foreground"
-          style={{ textIndent: "var(--indent, 0)" }}
-        >
+        <p className="aq-para whitespace-pre-wrap break-words text-foreground">
           {renderRuns(block)}
         </p>
       );
@@ -61,9 +60,12 @@ export function BlockView({ block }: { block: Block }) {
       const lvl = headingLevel(block);
       const size =
         lvl === 1 ? "1.9em" : lvl === 2 ? "1.45em" : lvl === 3 ? "1.2em" : "1.05em";
+      // `aq-heading` lets the LaTeX preset restate the size in LaTeX's terms
+      // (\Large / \large / \normalsize) — see app/globals.css.
       return (
         <div
-          className={lvl === 1 ? "font-bold" : "font-semibold"}
+          className={`aq-heading ${lvl === 1 ? "font-bold" : "font-semibold"}`}
+          data-level={lvl}
           style={{ fontSize: size, textAlign: headingAlign(block) }}
         >
           {block.value || "Untitled heading"}

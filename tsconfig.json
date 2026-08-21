@@ -18,9 +18,9 @@
     "paths": {
       "@/*": ["./*"],
       /*
-       * `@orka/auth` is linked from a sibling checkout (`file:../orka/...`), and
+       * `@atorku/auth` is linked from a sibling checkout (`file:../atorku/...`), and
        * TypeScript resolves a linked package's own imports from its REAL path —
-       * so the `SupabaseClient` in its .d.ts came from ~/orka/node_modules while
+       * so the `SupabaseClient` in its .d.ts came from ~/atorku/node_modules while
        * ours came from ./node_modules. `SupabaseClient` is a class with a
        * protected member, which makes it NOMINALLY typed: two physical copies
        * are two incompatible types even at the identical version, and every
@@ -29,7 +29,7 @@
        * Pinning the specifier here gives the whole program one declaration.
        * Aquarius imports supabase-js for types only (four files, all `import
        * type`), so at runtime there is a single client instance — the one
-       * @orka/auth constructs — and this mapping makes the types describe
+       * @atorku/auth constructs — and this mapping makes the types describe
        * exactly that object rather than a second copy of it.
        */
       "@supabase/supabase-js": ["./node_modules/@supabase/supabase-js"]

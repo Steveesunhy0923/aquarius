@@ -1,21 +1,34 @@
 "use client";
 
 /**
- * Toolbar button widgets shared by the editor's block-tools strip: the plain
- * bordered ToolButton, the split list buttons (insert + style dropdown), and
- * the highlight button (apply + color dropdown). Stateless — dropdown open
- * state is lifted to the caller.
+ * Shared toolbar button styling, plus the one widget that carries its own state
+ * shape: the highlight split (apply + colour dropdown).
+ *
+ * The buttons are deliberately borderless. Block inserts now live behind the
+ * labelled "Insert" menu rather than a row of glyphs, so what remains on the
+ * bar is the small always-visible set, banded into groups (GROUP) instead of
+ * separated by per-button outlines.
  */
 
-import { Icon, type IconName } from "@/components/Icon";
-import { CODE_LANGS } from "@/lib/blocks/codeblock";
+import { Icon } from "@/components/Icon";
 import { HIGHLIGHT_COLORS } from "@/lib/blocks/format";
-import { BULLET_MARKERS, NUMBER_MARKERS, type ListMarker } from "@/lib/blocks/lists";
-import type { MouseEvent, ReactNode } from "react";
+import type { MouseEvent } from "react";
 
-/** Shared sizing so every toolbar icon button is about the same size. */
+/** Shared sizing so every toolbar icon button is about the same size.
+ *  Borderless by design: a bordered icon button is fine alone, but a strip of
+ *  twenty turns into a wall of competing rectangles with no ranking between
+ *  them. The affordance moves to a hover well, which only the button under the
+ *  pointer pays for. */
 export const ICON_BTN =
-  "grid h-9 min-w-9 place-items-center rounded-md border border-border px-2 text-sm hover:border-accent";
+  "grid h-9 min-w-9 place-items-center rounded-md px-2 text-sm transition hover:bg-foreground/[0.06]";
+/** Icon button that sits inside a grouped well (see GROUP) — slightly tighter. */
+export const GROUP_BTN =
+  "grid h-8 min-w-8 place-items-center rounded px-1.5 text-sm transition hover:bg-surface hover:shadow-sm";
+/** A related run of buttons, banded together on a faint well instead of borders. */
+export const GROUP = "flex items-center gap-0.5 rounded-lg bg-foreground/[0.04] p-1";
+/** Toolbar button that keeps a word label (the rare/ambiguous actions). */
+export const TEXT_BTN =
+  "inline-flex h-9 items-center gap-1.5 rounded-md px-2.5 text-sm text-muted transition hover:bg-foreground/[0.06] hover:text-foreground";
 
 /** Borderless icon button for the top bar (drawn glyphs, not word labels).
  *  `_BASE` is layout + resting/disabled color only; `HEAD_BTN` adds the hover
@@ -26,86 +39,6 @@ export const HEAD_BTN_BASE =
   "grid h-9 w-9 place-items-center rounded-md transition disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-muted";
 export const HEAD_BTN_HOVER = "text-muted hover:bg-foreground/[0.06] hover:text-foreground";
 export const HEAD_BTN = `${HEAD_BTN_BASE} ${HEAD_BTN_HOVER}`;
-
-export function ToolButton({ onClick, title, children }: { onClick: () => void; title: string; children: ReactNode }) {
-  // The glyph is aria-hidden, so an icon-only button needs its own name; use
-  // the tooltip text rather than leaning on the weak title-as-name fallback.
-  return <button onClick={onClick} title={title} aria-label={title} className={ICON_BTN}>{children}</button>;
-}
-
-// ─── List buttons (icon + style-dropdown) ────────────────────────────────────
-// Bullet markers preview as drawn glyphs; text markers stay literal text.
-const MARKER_ICON: Partial<Record<ListMarker, IconName>> = {
-  disc: "markerdisc", circle: "markercircle", square: "markersquare",
-};
-const MARKER_TEXT: Partial<Record<ListMarker, string>> = {
-  decimal: "1.", "lower-alpha": "a.", "lower-roman": "i.",
-};
-const MARKER_NAME: Record<ListMarker, string> = {
-  disc: "Disc", circle: "Circle", square: "Square",
-  decimal: "Decimal", "lower-alpha": "Lower alpha", "lower-roman": "Lower roman",
-};
-
-export function ListToolButton({ ordered, open, onToggle, onInsert }: {
-  ordered: boolean;
-  open: boolean;
-  onToggle: () => void;
-  onInsert: (marker?: ListMarker) => void;
-}) {
-  const markers = ordered ? NUMBER_MARKERS : BULLET_MARKERS;
-  return (
-    <span className="relative inline-flex">
-      <button onClick={() => onInsert()} title={ordered ? "Numbered list" : "Bulleted list"} aria-label={ordered ? "Numbered list" : "Bulleted list"} className="relative z-30 grid h-9 w-9 place-items-center rounded-l-md border border-border hover:border-accent">
-        <Icon name={ordered ? "listnumber" : "list"} size={16} />
-      </button>
-      <button onClick={onToggle} title="List style" aria-label="List style" aria-expanded={open} className={`relative z-30 grid h-9 w-5 place-items-center rounded-r-md border border-l-0 hover:border-accent ${open ? "border-accent text-accent" : "border-border text-muted"}`}><Icon name="chevron" size={11} /></button>
-      {open && (
-        <>
-          <button className="fixed inset-0 z-20 cursor-default" aria-hidden tabIndex={-1} onClick={onToggle} />
-          <div className="absolute left-0 top-full z-30 mt-1 w-44 rounded-md border border-border bg-surface p-1 shadow-lg">
-            {markers.map((m) => (
-              <button key={m} onClick={() => onInsert(m)} className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-sm hover:bg-foreground/[0.06]">
-                <span className="inline-grid w-6 place-items-center font-mono text-xs text-muted">
-                  {MARKER_ICON[m] ? <Icon name={MARKER_ICON[m]} size={14} /> : MARKER_TEXT[m]}
-                </span>
-                {MARKER_NAME[m]}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-    </span>
-  );
-}
-
-// ─── Code button (icon + language dropdown) ──────────────────────────────────
-export function CodeToolButton({ open, onToggle, onInsert }: {
-  open: boolean;
-  onToggle: () => void;
-  onInsert: (langId?: string) => void;
-}) {
-  return (
-    <span className="relative inline-flex">
-      <button onClick={() => onInsert()} title="Insert code block (Python)" aria-label="Insert code block" className="relative z-30 grid h-9 w-9 place-items-center rounded-l-md border border-border hover:border-accent">
-        <Icon name="codeblock" size={17} />
-      </button>
-      <button onClick={onToggle} title="Code language" aria-label="Code language" aria-expanded={open} className={`relative z-30 grid h-9 w-5 place-items-center rounded-r-md border border-l-0 hover:border-accent ${open ? "border-accent text-accent" : "border-border text-muted"}`}><Icon name="chevron" size={11} /></button>
-      {open && (
-        <>
-          <button className="fixed inset-0 z-20 cursor-default" aria-hidden tabIndex={-1} onClick={onToggle} />
-          <div className="absolute left-0 top-full z-30 mt-1 max-h-80 w-48 overflow-y-auto rounded-md border border-border bg-surface p-1 shadow-lg">
-            {CODE_LANGS.map((l) => (
-              <button key={l.id} onClick={() => onInsert(l.id)} className="flex w-full items-center rounded px-2 py-1 text-left text-sm hover:bg-foreground/[0.06]">
-                <span className="flex-1">{l.label}</span>
-                {l.kernel && <span className="text-[10px] uppercase tracking-wide text-muted">runs</span>}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-    </span>
-  );
-}
 
 // ─── Highlight button (marker icon + color dropdown) ─────────────────────────
 export function HighlightButton({ color, open, onToggle, onApply, onColor, keepFocus, onColorMouseDown }: {
@@ -119,8 +52,10 @@ export function HighlightButton({ color, open, onToggle, onApply, onColor, keepF
 }) {
   return (
     <span className="relative inline-flex">
-      <button onMouseDown={keepFocus} onClick={onApply} title="Highlight selection" aria-label="Highlight selection" className={`${ICON_BTN} relative z-30 rounded-r-none`} style={{ background: color, color: "#1f2937" }}><Icon name="highlight" size={16} /></button>
-      <button onMouseDown={keepFocus} onClick={onToggle} title="Highlight color" aria-label="Highlight color" aria-expanded={open} className={`relative z-30 grid h-9 w-5 place-items-center rounded-r-md border border-l-0 hover:border-accent ${open ? "border-accent text-accent" : "border-border text-muted"}`}><Icon name="chevron" size={11} /></button>
+      {/* The swatch IS the button's background, so the current colour needs no
+          separate chip; the chevron only opens the palette. */}
+      <button onMouseDown={keepFocus} onClick={onApply} title="Highlight selection" aria-label="Highlight selection" className="relative z-30 grid h-8 w-8 place-items-center rounded-l transition hover:brightness-95" style={{ background: color, color: "#1f2937" }}><Icon name="highlight" size={15} /></button>
+      <button onMouseDown={keepFocus} onClick={onToggle} title="Highlight colour" aria-label="Highlight colour" aria-expanded={open} className={`relative z-30 grid h-8 w-4 place-items-center rounded-r transition ${open ? "bg-accent-soft text-accent" : "text-muted hover:bg-foreground/[0.06]"}`}><Icon name="chevron" size={10} /></button>
       {open && (
         <>
           <button className="fixed inset-0 z-20 cursor-default" aria-hidden tabIndex={-1} onClick={onToggle} />

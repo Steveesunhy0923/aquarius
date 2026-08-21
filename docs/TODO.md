@@ -105,13 +105,63 @@ Product features every platform inherits:
       Aquarius becomes commercial (nothing exists — a deliberate decision, not a gap, until
       there's a business model).
 
-## Orka (franchise account) — manual steps, BLOCKING
+## Atorku (franchise account) — manual steps, BLOCKING
 
-Aquarius's Supabase project has been promoted to **the Orka project**: one `auth.users` row
-is now one Orka account, shared with [Virgo](https://github.com/Steveesunhy0923/Virgo). The
-code is in — `lib/auth/AuthProvider.tsx` delegates to `@orka/auth` (`~/orka/packages/auth`),
-and `supabase/migrations/0015_orka.sql` adds the account/app/subscription/entitlement
+Aquarius's Supabase project has been promoted to **the Atorku project**: one `auth.users` row
+is now one Atorku account, shared with [Virgo](https://github.com/Steveesunhy0923/Virgo). The
+code is in — `lib/auth/AuthProvider.tsx` delegates to `@atorku/auth` (`~/atorku/packages/auth`),
+and `supabase/migrations/0015_atorku.sql` adds the account/app/subscription/entitlement
 tables. Nothing below can be done from a repo; all of it is dashboard or database work.
+
+**Naming.** The franchise was renamed Orka → **Atorku** on 2026-08-18, before 0015 was ever
+pushed, so the tables are `atorku_*` from birth and no rename migration exists or is needed.
+The domain is **atorku.com**, with each app on its own subdomain (`aquarius.atorku.com`).
+That is why one redirect entry, `https://*.atorku.com/**`, covers the whole franchise.
+
+The rename did NOT touch the Supabase URL, and must not: supabase-js derives the session
+storage key `sb-<project-ref>-auth-token` from that URL. A new project — or a Supabase
+custom domain such as `auth.atorku.com` in front of the existing one — changes the derived
+key and signs out every existing session, and because Aquarius's guest data lives in a
+per-user IndexedDB (`aquarius-u-<uid>`) those users' libraries come back EMPTY rather than
+merely logged out. Project ref stays `zpwztaitfnulbmscznmt`.
+
+### Shipping the shared packages — BLOCKING, and blocking the deploy too
+
+`package.json` depends on `file:../atorku/packages/*`, which only resolves on a machine that
+has both repos as siblings. **CI has been red since 0.8.0 for exactly this reason** (run
+31136493392: three × TS2307 `Cannot find module '@atorku/auth'`), and any host that clones
+only this repo — Vercel included — fails the same way. The atorku repo currently has **no
+git remote at all**; it exists only on the development Mac.
+
+- [ ] **Push the atorku repo to GitHub.** Everything below depends on it existing.
+- [ ] **Pick how the packages travel.** Two workable answers:
+      - *Sibling checkout* (already wired up in `.github/workflows/ci.yml`): CI checks out
+        `Steveesunhy0923/atorku` beside this repo and runs `build:packages` first. Needs an
+        `ATORKU_REPO_TOKEN` secret while atorku is private. On Vercel this has to be
+        reproduced as a custom install command, which is the fragile part.
+      - *Publish `@atorku/auth` + `@atorku/entitlements` to npm* — the packages are
+        framework-free and hold no secrets (config is injected, never read), so publishing
+        them public does not expose either app's source. Both apps then depend on a version
+        range, CI and Vercel both work with no special casing, and the "repos must be
+        siblings" constraint in the atorku README disappears. Requires owning the `@atorku`
+        scope on npmjs.
+- [ ] **Deploy Aquarius to `aquarius.atorku.com`.** [wrangler.jsonc](../wrangler.jsonc) is in
+      and verified: `npm run build:static && npx wrangler deploy` publishes out/ as Workers
+      static assets (40 MB, 458 files — inside the 25 MiB/file and 20k-file limits).
+      **Not OpenNext, deliberately.** Neither API route can run on Workers: `/api/pdf`
+      spawns Tectonic through `node:child_process` and writes temp files, and `/api/unfurl`
+      resolves the target host with `node:dns` to reject private IPs — which IS its SSRF
+      defense, so "porting" it would mean shipping that route with the check removed. Both
+      are conveniences the client already degrades around (link previews silently absent,
+      PDF falls back to print-to-PDF), and the data path is IndexedDB, so the export is a
+      full build of the app rather than a crippled one. Wanting the routes for real means a
+      Node host plus `NEXT_PUBLIC_API_ORIGIN`; no config here changes.
+- [ ] **`aquarius.atorku.com` currently serves the Atorku marketing site** — the hostname
+      was attached to the `atorku-site` Worker, so it answers 200 with the wrong app and
+      "Open Aquarius" loops back to the landing page. Detach it there before pointing it at
+      the Aquarius Worker.
+- [ ] **Set `NEXT_PUBLIC_API_ORIGIN=https://aquarius.atorku.com`** for the static-export /
+      Capacitor builds, which have no server of their own ([lib/api.ts](../lib/api.ts)).
 
 - [ ] **Verify what is actually applied on `zpwztaitfnulbmscznmt` before pushing.**
       `supabase db push` for 0015 will also apply the outstanding **0012, 0013 and 0014**
@@ -120,29 +170,34 @@ tables. Nothing below can be done from a repo; all of it is dashboard or databas
       writers, and unshares soft-deleted notes — live behaviour changes, on a checklist
       [SECURITY_RLS_0013_VERIFY.md](SECURITY_RLS_0013_VERIFY.md) still marks "not yet
       executed against a database". Check the applied-migration list first.
-- [ ] **Push `0015_orka.sql`.** Then verify with the two-JWT harness: user A cannot
-      `PATCH /orka_subscriptions` (the tables are SELECT-only for `authenticated` on
+- [ ] **Push `0015_atorku.sql`.** Then verify with the two-JWT harness: user A cannot
+      `PATCH /atorku_subscriptions` (the tables are SELECT-only for `authenticated` on
       purpose — the house `for all` policy would let anyone set their own plan to `pro`);
-      user A cannot read user B's entitlements; a new signup gets an `orka_accounts` row;
-      `orka_entitlements_for('virgo')` returns `[]` for a free user without erroring.
+      user A cannot read user B's entitlements; a new signup gets an `atorku_accounts` row;
+      `atorku_entitlements_for('virgo')` returns `[]` for a free user without erroring.
 - [ ] **Enable "Manual linking"** in the dashboard. `linkIdentity()` requires it and it has
       no representation in `config.toml`. Without it the Google/Apple linking UI just
-      errors, and "one Orka account" is not actually true.
-- [ ] **Add every redirect URL.** `config.toml` sets only `site_url`, so these are all
-      dashboard-side: the Orka site origin, Aquarius's origin, Virgo's web origin, and
+      errors, and "one Atorku account" is not actually true.
+- [ ] **Set `site_url` to `https://atorku.com` and add every redirect URL.** `config.toml`
+      sets only `site_url` (and only for local dev), so these are all dashboard-side:
+      `https://atorku.com/**`, `https://aquarius.atorku.com/**`, Virgo's web origin, and
       `virgo://auth-callback` for the Virgo desktop deep link. A miss shows up as the
       generic provider error on `/auth/callback`. If the custom scheme is refused,
-      allowlist `<orka-site>/auth/desktop` instead — that page forwards to the deep link.
+      allowlist `https://atorku.com/auth/desktop` instead — that page forwards to the deep
+      link. Keep `http://localhost:3000/**` and `http://localhost:3100/**` for local dev.
 - [ ] **Apple provider** — still dashboard-only, and `config.toml` has no
       `[auth.external.*]` blocks, so Google and Apple do not work against a local
       `supabase start` at all. Local dev is email+password only.
 - [ ] **Decide on email confirmations.** Not enforced anywhere in code today. Turning them
       on has a real cost: with `flowType: "pkce"` the `code_verifier` lives in the browser
       that STARTED the flow, so a confirmation link opened on a phone after signing up on a
-      laptop fails at `exchangeCodeForSession`. `@orka/auth` now explains that in the error
+      laptop fails at `exchangeCodeForSession`. `@atorku/auth` now explains that in the error
       text, but the failure itself is not fixable client-side.
-- [ ] **Rename the project** from "Steveesunhy0923's Project" to "Orka" in the dashboard,
-      so the OAuth consent screen says something a user recognises.
+- [ ] **Rename the project** from "Steveesunhy0923's Project" to "Atorku" in the dashboard,
+      so the OAuth consent screen says something a user recognises. Same for the Google
+      Cloud OAuth consent screen (app name → Atorku, `atorku.com` as an authorized domain).
+      Apple's Services ID still returns to `<project-ref>.supabase.co`, so the domain change
+      does not affect it — only the display name does.
 
 ## Website
 
@@ -158,8 +213,11 @@ tables. Nothing below can be done from a repo; all of it is dashboard or databas
       needs "copy link → anyone can view".
 - [ ] **Import surface** — `.aqnote` import exists; add paste-LaTeX / Markdown-file import
       so switchers aren't typing notes in from scratch.
-- [ ] **Legal + landing** — privacy policy and terms pages (also an App Store submission
-      requirement), a marketing/landing page, OG metadata for shared links.
+- [ ] **Legal + landing** — the Atorku site already ships
+      `atorku.com/legal/privacy` and `/legal/terms`, and one account means one privacy
+      policy, so link to those rather than writing a second pair. Still missing here: OG
+      metadata for shared links (no `metadataBase`, no `openGraph` block anywhere), and the
+      marketing/landing page — which `atorku.com/apps/aquarius` now largely is.
 - [ ] **Performance pass** — `app/editor/[id]/page.tsx` is a ~2,000-line client
       component; split it, lazy-load heavy panels (Graph editor, pickers), and virtualize
       long documents.
@@ -181,6 +239,25 @@ Sequenced roughly as [IPAD_APP_PLAN.md](IPAD_APP_PLAN.md) §5; that doc has the 
 - [ ] **Ancha on-device** — native plugin running Ancha's exported CoreML model +
       Apple Vision for text; no PencilKit/CoreML plugin exists yet (shell has only base
       Capacitor).
+- [ ] **Finish the mixed-aware decoder** — `ml/train_mixed.py` trains a decoder that emits the
+      prose/formula boundary itself (target: `let \(x^{2}\) be`), which is the only fix for the
+      residual failure: **11 of 12** short words swallowed by a formula were already inside its
+      run before any classifier ran. A local proof run exists; the real one is a cloud GPU day on
+      the same footing as S2-XL (`ml/cloud/`), and it needs the RunPod balance sorted first.
+      Then decide how it serves — a second checkpoint beside `xl.pt`, or a replacement.
+- [ ] **Measure run geometry on raw ink, not `Run.box`** — `src/run_features.py` takes
+      `width_xh`/`height_xh`/`rise_xh`/`drop_xh` from `Run.box`, and a run built from a Vision
+      word box carries Vision's uniform padding (the same trap `unified.py` documents for S2's
+      gap test, which is why the GAP features already use `layout.extent_gap`). Train and eval
+      both see the padding so the measured numbers are valid, but recomputing these four from
+      the run's own stroke extents should sharpen them for free. Cheap to test now that
+      `eval_mixed.py` exists: refit, re-measure, keep it only if it wins.
+- [ ] **Real handwriting for the mixed corpus** — `src/mixed_synth.py` stitches prose from
+      isolated symbol ink, so its words are PRINTED and evenly spaced. Apple Vision reads that
+      far better than cursive, which makes every text-side number in `eval_mixed.py` an upper
+      bound. Cursive word ink (IAM-OnDB, or the `/collect` capture once there is enough of it)
+      would make the benchmark honest — note IAM-OnDB carries the same non-commercial licence
+      problem as MathWriting.
 - [ ] **Train on the collected ink** — every Insert has been saving a labelled sample since
       2026-08-07: corrections in `ml/data/corrections/` (ground truth, oversampled x32) and
       acceptances in `ml/data/accepted/` (self-labelled, currently unused by training). When

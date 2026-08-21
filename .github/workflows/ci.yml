@@ -10,13 +10,51 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      # `@atorku/auth` and `@atorku/entitlements` are linked from a SIBLING
+      # checkout ("file:../atorku/packages/*" in package.json), so CI has to
+      # reproduce the ~/atorku + ~/aquarius layout. Without it `npm ci` resolves
+      # the links to nothing and typecheck dies with TS2307 "Cannot find module
+      # '@atorku/auth'" — which is exactly how this workflow broke at 0.8.0.
       - uses: actions/checkout@v4
+        with:
+          path: aquarius
+
+      - uses: actions/checkout@v4
+        with:
+          repository: Steveesunhy0923/atorku
+          path: atorku
+          # The default GITHUB_TOKEN is scoped to THIS repository only, so a
+          # private atorku needs a PAT with `repo` scope stored as the
+          # ATORKU_REPO_TOKEN secret. Public atorku needs no secret at all.
+          token: ${{ secrets.ATORKU_REPO_TOKEN || github.token }}
+
+      # 22, not the 20 in .nvmrc: the atorku workspace declares `node >= 22`.
+      # Aquarius's own engines field is `>= 20`, so one runtime satisfies both.
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
-      - run: npm ci
+          cache-dependency-path: aquarius/package-lock.json
+
+      # Both packages ship compiled dist/ rather than source, and dist/ is
+      # gitignored — so it must be built here or the link points at an empty
+      # directory and the failure looks identical to the one above.
+      - name: Build shared packages
+        working-directory: atorku
+        run: npm install && npm run build:packages
+
+      - name: Install
+        working-directory: aquarius
+        run: npm ci
+
       - name: Typecheck
+        working-directory: aquarius
         run: npm run typecheck
+
+      - name: Test
+        working-directory: aquarius
+        run: npm test
+
       - name: Build
+        working-directory: aquarius
         run: npm run build

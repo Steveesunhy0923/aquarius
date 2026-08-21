@@ -85,6 +85,30 @@ string). Whatever the input method, the result is a structural edit to `Document
 fraction/root/sum/integral/text blocks); the symbol palette and shorthand autocomplete are
 **planned**.
 
+### Editor chrome: contextual, not permanent
+
+The editor used to stack four toolbars (header, block tools, symbol strip,
+document style) above the canvas — 209px and 59 controls, all at equal
+priority. Chrome is now ranked by when a control can actually act:
+
+| Surface | Lives in | Shown |
+| --- | --- | --- |
+| Header | `EditorClient` | always — title, undo/redo, save *status*, share, export, history |
+| The one bar | `EditorClient` + `InsertMenu` | always — Insert menu, block style, B/I/U/S, lists, TeX view, handwriting, Design, Document |
+| Symbol strip | `SymbolToolbar` / `ChemToolbar` | while a `math` block is open for editing, or pinned with ⌘/ |
+| Format popover | `FormatPopover` | while the prose textarea holds a non-empty selection |
+| Document settings | `DocumentInspector` | toggled; open by default on a full-width pane |
+
+Two rules keep it that way. **Block inserts go behind the labelled `InsertMenu`,
+not onto the bar** — a glyph on a bar must carry its whole meaning alone, which
+is what made `square-sigma` (equation), `Σ` (math mode) and `square-function`
+(browse symbols) collide. **A control that needs a selection or a caret does not
+get permanent space**; it is raised by the state that makes it useful.
+
+Block-level properties (`FigureControls`, table style) deliberately stay next to
+their block rather than moving into the inspector — only document-wide state
+moved.
+
 **Outputs** read the tree and emit a target format:
 
 | Adapter        | Output                          | Status      |
@@ -118,6 +142,42 @@ dispatches each block (math through `blockToKatex`, text/code/image/tikz nativel
 [`../components/Katex.tsx`](../components/Katex.tsx) calls `katex.renderToString`. The
 minimal editor at [`../app/editor/[id]/page.tsx`](../app/editor/%5Bid%5D/page.tsx) drives it,
 with a Source-view toggle that shows `documentToLatex(tree)`.
+
+## Document style: the LaTeX preset
+
+`DocumentTree.style` carries the document's typography, and every document authored here
+starts in the **LaTeX preset** (`style.preset === "latex"`, stamped by `emptyDocument`).
+That is not a theme — it is `article` at 11pt, reproduced from the class files:
+
+| | LaTeX preset | Plain (pre-0.8.1) |
+|---|---|---|
+| body | Computer Modern, 10.95pt (`[11pt]`'s `\normalsize`) | 14px |
+| leading | 1.242 (13.6pt baseline) | 1.5 |
+| paragraphs | justified, `\parindent` 17pt, `\parskip` 0 | ragged right, no indent, 4px gap |
+| margins | 22mm, matching the export's `geometry` | 9% of page width |
+| headings | `\Large` / `\large` / `\normalsize`, `article`'s own skips | 24 / 20 / 18 / 16px |
+
+[`../lib/blocks/docstyle.ts`](../lib/blocks/docstyle.ts) is the single source for all of it:
+`resolveStyle()` fills a document's blanks from its preset, and the editor, the library
+cover thumbnails ([`../components/NoteCover.tsx`](../components/NoteCover.tsx)) and the
+typeset PDF export ([`../lib/export/pdf.ts`](../lib/export/pdf.ts), which derives
+`\documentclass`, `geometry`, `\linespread`, `\parindent` and `\parskip` from the same
+values) all read from it — so the page on screen and the compiled PDF agree.
+
+What is a *relationship between blocks* — section skips, the absent paragraph gap, the
+paragraphs that take no first-line indent — lives in the `.aq-tex` rules in
+[`../app/globals.css`](../app/globals.css) instead, since no single block can know it.
+Two consequences worth remembering when touching the editor:
+
+- Those skips are **padding, not margin**, because the paginator measures blocks with
+  `offsetHeight`. A margin would make page breaks drift.
+- Editor chrome (the reorder column, the click-to-edit hit target) must not take layout
+  space, or blocks stop matching the document — hence `EDIT_HIT`'s negative margins and
+  the absolutely-positioned reorder controls in `EditorClient`.
+
+The body font is vendored, not fetched: [`../scripts/prepare-fonts.mjs`](../scripts/prepare-fonts.mjs)
+copies the OFL Computer Modern faces into `public/fonts/cm`, so the default style also
+holds offline and in the iPad shell.
 
 ## Undo / redo on the tree
 

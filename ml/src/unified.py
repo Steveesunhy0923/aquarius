@@ -216,16 +216,46 @@ def route_word(run: Run) -> str:
     return TEXT
 
 
-def classify_runs(line: Line, p: LayoutParams = LayoutParams()) -> None:
-    """Write `run.kind` for every run of a line (in place).
+def classify_runs(
+    line: Line,
+    p: LayoutParams = LayoutParams(),
+    *,
+    strokes: Sequence[dict] | None = None,
+    clf=None,
+) -> bool:
+    """Write `run.kind` for every run of a line (in place); True if the trained
+    classifier decided, False if the C1-C7 cascade did.
+
+    The trained model (`src/run_classifier.py`) is used when one is loaded AND
+    the caller passed the strokes its features are measured from; otherwise this
+    is exactly the cascade it has always been. That fallback is load-bearing,
+    not decorative: a checkout with no `checkpoints/run_clf.json`, a Linux box
+    with no lexicon file, or a corrupt model must still recognize, and every
+    self-test in this module deliberately exercises the cascade path by not
+    passing a classifier.
 
     Runs the user has already corrected (`run.forced`) keep the kind they were
     given: a correction that the router could overturn is not a correction.
     """
-    for run in line.runs:
-        if run.forced:
-            continue
+    free = [r for r in line.runs if not r.forced]
+    if clf is not None and strokes is not None and free:
+        try:
+            from .run_features import line_features
+
+            probs = clf.proba(line_features(line, strokes))
+            for run, pm in zip(line.runs, probs):
+                if run.forced:
+                    continue
+                run.kind = MATH if pm >= clf.threshold else TEXT
+            return True
+        except Exception:
+            # A missing lexicon, a stale model, anything: degrade to the rules
+            # rather than fail the request. Recognition losing accuracy is
+            # recoverable; recognition raising is not.
+            pass
+    for run in free:
         run.kind = route_word(run)
+    return False
 
 
 def _core(run: Run) -> str:
@@ -238,8 +268,19 @@ def smooth_line(
     p: LayoutParams = LayoutParams(),
     *,
     decode: Callable[[list[list[int]]], list[tuple[str, float]]] | None = None,
+    heuristics: bool = True,
 ) -> None:
     """S0-S3: the per-line repair pass, where the residual router errors die.
+
+    `heuristics=False` disables S0 and S2 — the two rules that OVERRULE a kind
+    already assigned. They exist to patch the cascade's lexical blind spots, and
+    the trained classifier already has both signals as features
+    (`is_operator_name`, `is_differential`, `core_len`, `gap_left_xh`,
+    `gap_right_xh`) weighed against everything else rather than applied as a
+    hard override. Left on, S2 alone re-converted three quarters of the short
+    words the classifier had just got right — it is the single largest source of
+    text->math error in the measured baseline. S1/S3 are unaffected either way:
+    they resolve AMBIGUOUS, which only the cascade ever emits.
 
     Classification is not independent per word — a token's neighbours carry
     most of the evidence about it — so this runs after `classify_runs` over the
@@ -277,7 +318,7 @@ def smooth_line(
 
     # ---- S0 operator stoplist
     snap = [r.kind for r in runs]
-    for i in free:
+    for i in free if heuristics else ():
         if snap[i] != TEXT:
             continue
         core = _core(runs[i]).lower()
@@ -296,7 +337,7 @@ def smooth_line(
 
     # ---- S2 short text swallowed by an adjacent formula
     snap = [r.kind for r in runs]
-    for i in free:
+    for i in free if heuristics else ():
         if snap[i] != TEXT or len(_core(runs[i])) > SHORT_TEXT_LEN:
             continue
         for j in neighbours(i):
@@ -812,6 +853,7 @@ def recognize_unified(
     params: LayoutParams = LayoutParams(),
     device=None,
     engine_name: str | None = None,
+    use_classifier: bool = True,
 ) -> tuple[list[Segment], str, float, dict]:
     """The whole pipeline: strokes -> (segments, source, confidence, engine).
 
@@ -835,6 +877,80 @@ def recognize_unified(
     `confidence` is the MINIMUM over segments, never a mean: the Insert button
     is gated on this number, and an unweighted mean is precisely what lets one
     garbage segment hide behind three good ones.
+    """
+    lines, vlines, wordrefs, vision_ok = prepare_lines(
+        strokes, page_breaks=page_breaks, vision=vision, analyze=analyze, params=params
+    )
+
+    _apply_overrides(lines, overrides)
+
+    decode = decoder
+    if decode is None:
+        # chem decodes with the chem checkpoint when the caller has one; the
+        # fallback to the math model is `serve.py`'s existing behaviour, where
+        # CHEM_MODEL IS the math model until a chem fine-tune exists.
+        use_model = chem_model if (chem and chem_model is not None) else model
+        use_tok = chem_tokenizer if (chem and chem_tokenizer is not None) else tokenizer
+
+        def decode(groups: list[list[int]]) -> list[tuple[str, float]]:
+            # Demanded lazily so a page of pure prose recognizes on a server
+            # that has no checkpoint loaded at all.
+            if not groups:
+                return []
+            if use_model is None or use_tok is None:
+                raise ValueError("recognize_unified needs a model+tokenizer or a decoder")
+            return decode_math(
+                [[strokes[i] for i in g] for g in groups],
+                use_model,
+                use_tok,
+                device=device,
+                params=params,
+            )
+
+    clf = None
+    if use_classifier:
+        from .run_classifier import load_default
+
+        clf = load_default()
+    for line in lines:
+        trained = classify_runs(line, params, strokes=strokes, clf=clf)
+        smooth_line(line, strokes, params, decode=decode, heuristics=not trained)
+
+    segments = build_segments(
+        lines,
+        strokes,
+        decode=decode,
+        text_for=_text_slicer(vlines, wordrefs),
+        chem=chem,
+        degraded=not vision_ok,
+    )
+    source, spans = assemble_source(segments)
+    segments = [
+        replace(s, source_start=a, source_end=b) for s, (a, b) in zip(segments, spans)
+    ]
+    confidence = min((s.confidence for s in segments), default=0.0)
+    engine = {
+        "layout": "vision" if vision_ok else "geometry",
+        "text": "apple-vision" if vision_ok else None,
+        "math": engine_name,
+    }
+    return segments, source, confidence, engine
+
+
+def prepare_lines(
+    strokes: Sequence[dict],
+    *,
+    page_breaks: Sequence[float] = (),
+    vision: bool = True,
+    analyze: Callable[[list[dict], float], object] | None = None,
+    params: LayoutParams = LayoutParams(),
+) -> tuple[list[Line], list, dict[int, _WordRef], bool]:
+    """Everything before classification: geometry, then Vision's word boundaries.
+
+    Split out of `recognize_unified` so the run-classifier's feature extractor
+    (`src/run_features.py`) sees byte-identical inputs to the ones the live
+    router sees. A trainer that prepared its runs even slightly differently
+    would learn a distribution the product never presents to it.
     """
     lines = segment_geometric(strokes, params, page_breaks)
 
@@ -870,54 +986,7 @@ def recognize_unified(
             except errors:
                 vision_ok = False
 
-    _apply_overrides(lines, overrides)
-
-    decode = decoder
-    if decode is None:
-        # chem decodes with the chem checkpoint when the caller has one; the
-        # fallback to the math model is `serve.py`'s existing behaviour, where
-        # CHEM_MODEL IS the math model until a chem fine-tune exists.
-        use_model = chem_model if (chem and chem_model is not None) else model
-        use_tok = chem_tokenizer if (chem and chem_tokenizer is not None) else tokenizer
-
-        def decode(groups: list[list[int]]) -> list[tuple[str, float]]:
-            # Demanded lazily so a page of pure prose recognizes on a server
-            # that has no checkpoint loaded at all.
-            if not groups:
-                return []
-            if use_model is None or use_tok is None:
-                raise ValueError("recognize_unified needs a model+tokenizer or a decoder")
-            return decode_math(
-                [[strokes[i] for i in g] for g in groups],
-                use_model,
-                use_tok,
-                device=device,
-                params=params,
-            )
-
-    for line in lines:
-        classify_runs(line, params)
-        smooth_line(line, strokes, params, decode=decode)
-
-    segments = build_segments(
-        lines,
-        strokes,
-        decode=decode,
-        text_for=_text_slicer(vlines, wordrefs),
-        chem=chem,
-        degraded=not vision_ok,
-    )
-    source, spans = assemble_source(segments)
-    segments = [
-        replace(s, source_start=a, source_end=b) for s, (a, b) in zip(segments, spans)
-    ]
-    confidence = min((s.confidence for s in segments), default=0.0)
-    engine = {
-        "layout": "vision" if vision_ok else "geometry",
-        "text": "apple-vision" if vision_ok else None,
-        "math": engine_name,
-    }
-    return segments, source, confidence, engine
+    return lines, vlines, wordrefs, vision_ok
 
 
 # --------------------------------------------------------------------------

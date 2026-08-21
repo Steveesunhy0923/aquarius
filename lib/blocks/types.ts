@@ -13,6 +13,10 @@
  *    `lib/blocks/serialize.ts` for the LaTeX/KaTeX adapter.
  */
 
+// Type-only import in the other direction (docstyle imports these types), so
+// the cycle exists for the checker but never at runtime.
+import { LATEX_STYLE } from "./docstyle";
+
 export type BlockId = string;
 
 /**
@@ -150,16 +154,30 @@ export type InlineRun =
  * In "flow" mode blocks stack linearly; in "spatial" mode each block carries
  * an optional position (attrs.x / attrs.y).
  */
+/**
+ * Which typographic rulebook the page follows.
+ *
+ * "latex" is the default for documents created since 0.8.1: `article` at 11pt
+ * in Computer Modern, justified, first-line-indented paragraphs with no gap
+ * between them, and LaTeX's own skips around headings, display math and lists.
+ * "plain" is the looser pre-0.8.1 look — ragged right, no indent, every block
+ * separated by the same small gap — kept so existing notes are not restyled
+ * under their author. See lib/blocks/docstyle.ts for the metrics of each.
+ */
+export type DocPreset = "latex" | "plain";
+
 /** Document-wide presentation settings (font, spacing, page layout). */
 export interface DocumentStyle {
   /** Handwritten annotation strokes, in document space. Present on imported
    *  notes, where the ink IS the user's contribution. Vector data, so it is
    *  small beside the imported file and rides along with sync and history. */
   annotations?: unknown[];
-  fontSize?: number; // px, default 14
+  /** Absent means "plain": only pre-0.8.1 documents lack it. */
+  preset?: DocPreset;
+  fontSize?: number; // px; default from the preset (11pt = 14.6px under latex)
   fontFamily?: string; // a key into the editor's font map, default "Computer Modern"
-  lineSpacing?: number; // line-height multiplier, default 1.5
-  indent?: number; // first-line paragraph indent in em, default 0
+  lineSpacing?: number; // line-height multiplier; default from the preset
+  indent?: number; // first-line paragraph indent in em; default from the preset
   pageLayout?: "vertical" | "horizontal"; // how the A4 pages are arranged
   // CSS `background` value for the page surface (color/gradient/pattern). Shows
   // on screen and in the printed PDF; used for poster-style designs.
@@ -202,9 +220,15 @@ export interface DocumentTree {
 
 export type CanvasMode = "flow" | "spatial";
 
-/** Convenience: the canonical empty document. */
+/**
+ * Convenience: the canonical empty document.
+ *
+ * Every document authored here starts in the LaTeX style — stamped explicitly
+ * rather than left to a fallback, so that changing the app's default later can
+ * never restyle a note somebody has already written.
+ */
 export function emptyDocument(mode: CanvasMode = "flow"): DocumentTree {
-  return { schema: 1, mode, blocks: [] };
+  return { schema: 1, mode, blocks: [], style: { ...LATEX_STYLE } };
 }
 
 /**

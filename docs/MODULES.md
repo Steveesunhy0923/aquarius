@@ -428,6 +428,13 @@ shell; it also closes on any overlay click and lacks Dialog's press-started-on-s
 `FigureControls`/`FigureBox`, `TablePicker`/`TableView`, `ExternalLink`, `NoteLink`/`NoteLinkPicker`,
 `GraphEditor`, `ink/*`.
 
+> **Superseded (0.8.x, editor-chrome pass).** `DocStyleBar.tsx` no longer exists —
+> its controls moved into `DocumentInspector.tsx`, a side panel, and it adopted
+> the full `SELECT` primitive on the way. A4's "pick one icon-button hover idiom"
+> is likewise settled for the toolbar: `ICON_BTN` dropped its border and now uses
+> `hover:bg-foreground/[0.06]` everywhere, with `GROUP`/`GROUP_BTN` banding
+> related buttons instead of outlining each one.
+
 ## B — Separate chemistry from math input
 
 The two systems are already cleanly separate in **catalog, toolbar strip, field component and

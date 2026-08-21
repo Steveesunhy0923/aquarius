@@ -6,8 +6,8 @@
  * of the app treats cloud sync as unavailable rather than crashing. Wire real
  * keys in `.env.local` (see `.env.example`) to enable cloud backup / sync.
  *
- * The client itself now comes from `@orka/auth`, because this project is the
- * ORKA project: one `auth.users` row is one Orka account, shared with Virgo and
+ * The client itself now comes from `@atorku/auth`, because this project is the
+ * ATORKU project: one `auth.users` row is one Atorku account, shared with Virgo and
  * whatever else joins the franchise. What stays here is everything that is
  * genuinely Aquarius-specific —
  *
@@ -23,7 +23,7 @@
  *     two GoTrueClients racing on one storage key.
  */
 
-import { createOrkaClient } from "@orka/auth";
+import { createAtorkuClient } from "@atorku/auth";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -42,7 +42,7 @@ export function isSupabaseConfigured(): boolean {
  */
 export function getSupabaseClient(): SupabaseClient | null {
   if (cached !== undefined) return cached;
-  cached = createOrkaClient({
+  cached = createAtorkuClient({
     url,
     anonKey,
     // supabase-js defaults to 10 outbound events/sec, shared across the

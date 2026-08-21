@@ -20,12 +20,12 @@ hold Notebooks hold Notes — and everything runs local-first in the browser.
 Aquarius is **local-first**. It runs with **no Supabase keys** — all data lives in
 IndexedDB in your browser, and the app is fully usable offline. Cloud sync is optional.
 
-> **Aquarius signs in with an [Orka](https://orka.app) account.** Orka is the umbrella over
+> **Aquarius signs in with an [Atorku](https://atorku.com) account.** Atorku is the umbrella over
 > Aquarius and [Virgo](https://github.com/Steveesunhy0923/Virgo), and one account works in
-> both. This project's Supabase instance *is* the Orka project — signing in here and signing
-> in there reach the same identity. The sign-in plumbing is shared code (`@orka/auth`); none
+> both. This project's Supabase instance *is* the Atorku project — signing in here and signing
+> in there reach the same identity. The sign-in plumbing is shared code (`@atorku/auth`); none
 > of Aquarius's data moved, and the account remains optional. Note that account **deletion**
-> is now franchise-wide: it ends the Orka account everywhere, not just here.
+> is now franchise-wide: it ends the Atorku account everywhere, not just here.
 
 ```bash
 npm install

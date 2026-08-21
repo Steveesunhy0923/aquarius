@@ -13,9 +13,9 @@ const CONFIRM_WORD = "DELETE";
  * `deleteAccount()` — Storage bytes, then the `delete_account()` RPC
  * (migration 0012), then a local sign-out back to guest mode.
  *
- * SCOPE CHANGED WITH ORKA. `delete_account()` deletes the `auth.users` row, and
- * that row is no longer "the Aquarius account" — it is the shared Orka account.
- * Deleting from here therefore ends the account for every Orka app, not just
+ * SCOPE CHANGED WITH ATORKU. `delete_account()` deletes the `auth.users` row, and
+ * that row is no longer "the Aquarius account" — it is the shared Atorku account.
+ * Deleting from here therefore ends the account for every Atorku app, not just
  * this one. The copy below says so, because a user who reads "delete my
  * Aquarius account" and loses their Virgo sign-in has been misled by us.
  */
@@ -38,11 +38,11 @@ export function DeleteAccountDialog({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <Dialog title="Delete Orka account" onClose={busy ? () => {} : onClose} maxWidth="max-w-sm">
+    <Dialog title="Delete Atorku account" onClose={busy ? () => {} : onClose} maxWidth="max-w-sm">
       <div className="px-5 py-4">
         <p className="text-sm">
-          This permanently deletes your <strong>Orka account</strong> — the one you use for every
-          Orka app, not just Aquarius. You will be signed out of Virgo and anything else Orka too.
+          This permanently deletes your <strong>Atorku account</strong> — the one you use for every
+          Atorku app, not just Aquarius. You will be signed out of Virgo and anything else Atorku too.
         </p>
         <p className="mt-3 text-sm">
           It also deletes every cloud note, notebook, subject, image, version

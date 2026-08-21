@@ -11,20 +11,30 @@
 
 import { apiUrl } from "@/lib/api";
 import { documentToLatex } from "@/lib/blocks";
+import { A4_W, pxToMm, pxToPt, resolveStyle, type ResolvedStyle } from "@/lib/blocks/docstyle";
 import { imageItems } from "@/lib/blocks/images";
-import type { DocumentTree } from "@/lib/blocks/types";
+import type { DocumentStyle, DocumentTree } from "@/lib/blocks/types";
 import { getStore } from "@/lib/storage";
 import type { LibraryStore } from "@/lib/storage/types";
 import { downloadBlob, safeName } from "./download";
 
-/** Wrap a serialized body in a compilable article document. The preamble
- *  covers everything the serializer can emit: math (amsmath/amssymb), chem
- *  (mhchem — flagged per-document but harmless when unused), lists (enumitem),
- *  images + subfigures (graphicx/subcaption), graphs (tikz), and code
- *  (listings, with no-op definitions for web language names it lacks). */
-export function fullLatexDocument(body: string): string {
-  return `\\documentclass[11pt]{article}
-\\usepackage[a4paper,margin=2.2cm]{geometry}
+/**
+ * Wrap a serialized body in a compilable article document. The preamble covers
+ * everything the serializer can emit: math (amsmath/amssymb), chem (mhchem —
+ * flagged per-document but harmless when unused), lists (enumitem), images +
+ * subfigures (graphicx/subcaption), graphs (tikz), and code (listings, with
+ * no-op definitions for web language names it lacks).
+ *
+ * The typography comes from the document's own style, so the typeset PDF is the
+ * page the user was looking at. Under the "latex" preset that is a plain
+ * `article` and the \setlength lines mostly restate the class defaults; the
+ * point is that a document set another way still exports as itself.
+ */
+export function fullLatexDocument(body: string, style?: DocumentStyle): string {
+  const r = resolveStyle(style);
+  const cls = texClass(pxToPt(r.fontSize));
+  return `\\documentclass[${cls.option}pt]{article}
+\\usepackage[a4paper,margin=${round(pxToMm(A4_W * r.marginRatio), 2)}mm]{geometry}
 \\usepackage{amsmath,amssymb}
 \\usepackage{graphicx}
 \\usepackage{enumitem}
@@ -39,13 +49,56 @@ export function fullLatexDocument(body: string): string {
 \\lstdefinelanguage{json}{}
 \\lstdefinelanguage{julia}{}
 \\lstdefinelanguage{css}{}
-\\setlength{\\parindent}{0pt}
-\\setlength{\\parskip}{0.5\\baselineskip}
-\\begin{document}
+${typography(r, cls)}\\begin{document}
 ${body}
 \\end{document}
 `;
 }
+
+/**
+ * `article`'s three size options and what each actually sets — the body size
+ * and the baseline it sits on (size1{0,1,2}.clo). Note that `[11pt]` gives a
+ * 10.95pt body on a 13.6pt baseline, i.e. its natural leading is 1.242, not the
+ * 1.2 people assume; getting that wrong makes every exported document set at
+ * LaTeX's own spacing come out fractionally too loose.
+ */
+const CLASSES = [
+  { option: 10, normalPt: 10, baselinePt: 12 },
+  { option: 11, normalPt: 10.95, baselinePt: 13.6 },
+  { option: 12, normalPt: 12, baselinePt: 14.5 },
+] as const;
+
+type TexClass = (typeof CLASSES)[number];
+
+/** Nearest class option to the document's body size. Sizes outside the three
+ *  land on the closest one — the leading and indent below stay proportional. */
+function texClass(bodyPt: number): TexClass {
+  return CLASSES.reduce((a, b) =>
+    Math.abs(b.normalPt - bodyPt) < Math.abs(a.normalPt - bodyPt) ? b : a,
+  );
+}
+
+/**
+ * \linespread, \parindent and \parskip from the resolved style. Both lengths
+ * are measured against the CLASS's body size rather than the on-screen pixel
+ * size, so a document exported one class size off still has the same indent and
+ * paragraph gap *relative to its text* as the page it was written on.
+ */
+function typography(r: ResolvedStyle, cls: TexClass): string {
+  const bodyPt = cls.normalPt;
+  const lines: string[] = [];
+  const spread = r.lineSpacing / (cls.baselinePt / cls.normalPt);
+  if (Math.abs(spread - 1) > 0.01) lines.push(`\\linespread{${round(spread, 3)}}`);
+  // The page is ragged right on screen; \raggedright makes the PDF agree. It
+  // must come first: LaTeX's \raggedright zeroes \parindent as a side effect.
+  if (r.align === "left") lines.push("\\raggedright");
+  lines.push(`\\setlength{\\parindent}{${round(r.indent * bodyPt, 2)}pt}`);
+  const parskip = r.paraSkip > 0 ? (r.paraSkip / r.fontSize) * bodyPt : 0;
+  lines.push(`\\setlength{\\parskip}{${round(parskip, 2)}pt}`);
+  return lines.map((l) => `${l}\n`).join("");
+}
+
+const round = (n: number, dp: number): number => Math.round(n * 10 ** dp) / 10 ** dp;
 
 export type PdfResult =
   | { ok: true }
@@ -108,7 +161,7 @@ async function blobToBase64(blob: Blob): Promise<string> {
 export async function exportTypesetPdf(noteId: string, title: string): Promise<PdfResult> {
   const store = getStore();
   const pkg = await store.openNote(noteId);
-  const latex = fullLatexDocument(documentToLatex(pkg.tree));
+  const latex = fullLatexDocument(documentToLatex(pkg.tree), pkg.tree.style);
   const assets = await collectImageAssets(pkg.tree, store);
 
   let res: Response;

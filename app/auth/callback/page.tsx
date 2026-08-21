@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { handleAuthCallback } from "@orka/auth";
+import { handleAuthCallback } from "@atorku/auth";
 import { getSupabaseClient } from "@/lib/supabase/client";
 
 /**
@@ -18,7 +18,7 @@ import { getSupabaseClient } from "@/lib/supabase/client";
  * throughout, and the code below has always exchanged explicitly. Corrected
  * rather than carried forward.)
  *
- * The exchange itself now lives in `@orka/auth`, so this route, the Orka site's
+ * The exchange itself now lives in `@atorku/auth`, so this route, the Atorku site's
  * callback and Virgo's boot-time hook cannot drift apart.
  */
 export default function AuthCallback() {

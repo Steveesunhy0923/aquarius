@@ -100,6 +100,31 @@ const PATHS = {
   copy: '<rect width="14" height="14" x="8" y="8" rx="2" ry="2" /><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />', // lucide/copy
   warning: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" /><path d="M12 9v4" /><path d="M12 17h.01" />', // lucide/triangle-alert
   indent: '<path d="M21 12H11" /><path d="M21 18H11" /><path d="M21 6H11" /><path d="m3 8 4 4-4 4" />', // lucide/indent-increase
+
+  // ── Wordmark / literal glyphs ──────────────────────────────────────────────
+  // Where a mark can BE the thing rather than stand for it, it should: the
+  // symbol strip already proves this by rendering real KaTeX on its buttons.
+  // These carry their own fill/stroke because the wrapper sets fill:none.
+  /** The LaTeX-source view. A wordmark can't collide with `codeblock` the way `<>` did. */
+  tex: '<text x="12" y="15.8" text-anchor="middle" style="fill:currentColor;stroke:none;font-size:12px;font-weight:700;font-family:ui-monospace,Menlo,monospace;letter-spacing:.3px">TEX</text>', // bespoke
+  /** A note link — literally the `[[ ]]` you type. Four stroked brackets read as "||||" at 18px, so this is text. */
+  notebrackets: '<text x="12" y="16.6" text-anchor="middle" style="fill:currentColor;stroke:none;font-size:17px;font-weight:600;font-family:ui-monospace,Menlo,monospace;letter-spacing:-1.4px">[[]]</text>', // bespoke
+  /** Browse all symbols. Two literal symbols, so Σ alone is free to mean "math mode". */
+  sigmapi: '<text x="12" y="16.5" text-anchor="middle" style="fill:currentColor;stroke:none;font-size:15px;font-family:Georgia,serif">Σπ</text>', // bespoke
+  /** Insert an equation — rendered math, not a boxed sigma. */
+  mathblock: '<text x="9" y="17.5" text-anchor="middle" style="fill:currentColor;stroke:none;font-size:17px;font-style:italic;font-family:Georgia,serif">x</text><text x="17.5" y="10" text-anchor="middle" style="fill:currentColor;stroke:none;font-size:11px;font-family:Georgia,serif">2</text>', // bespoke
+  /** Body text / new paragraph. The pilcrow means "show formatting marks" to Word users. */
+  textstyle: '<path d="M4 20h16" /><path d="m7.5 16 4.5-11 4.5 11" /><path d="M9.2 12h5.6" />', // bespoke
+  /** A runnable code block — a prompt caret says "this executes". */
+  terminal: '<path d="m4 17 6-6-6-6" /><path d="M12 19h8" />', // lucide/terminal
+  /** Handwriting (Ancha). lucide/pen-tool is the Bézier anchor tool — the opposite of loose handwriting. */
+  penline: '<path d="M12 20h9" /><path d="M16.376 3.622a1 1 0 0 1 3.002 3.002L7.368 18.635a2 2 0 0 1-.855.506l-2.872.838a.5.5 0 0 1-.62-.62l.838-2.872a2 2 0 0 1 .506-.854z" />', // lucide/pen-line
+  /** Export — "get a file out", without a second page-with-arrow metaphor. */
+  download: '<path d="M12 16V4" /><path d="m6.5 10.5 5.5 5.5 5.5-5.5" /><path d="M19 20H5" />', // lucide/arrow-down-to-line
+  /** Keep a contextual strip on screen. A padlock would say "read-only" instead. */
+  pin: '<path d="M12 17v5" /><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />', // lucide/pin
+  /** Plot this equation — axes plus an emphasised point, so it can't be the graph block. */
+  plotaxes: '<path d="M4 3v17a1 1 0 0 0 1 1h16" /><path d="M6.5 17c2.5 0 4-9 7-9s3.5 5 6 5" /><circle cx="19.5" cy="13" r="1.5" style="fill:currentColor;stroke:none" />', // bespoke
 } as const;
 
 export type IconName = keyof typeof PATHS;

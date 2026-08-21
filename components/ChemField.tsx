@@ -126,16 +126,13 @@ export const ChemField = forwardRef<ChemFieldHandle, {
         placeholder="Type chemistry, e.g. 2H2 + O2 -> 2H2O"
         className="w-full rounded border border-border bg-background px-2 py-1 font-mono text-sm outline-none focus:border-accent"
       />
+      {/* The rendered result is the only feedback the box needs — the syntax
+          cheatsheet that used to sit under it read as instructions for a field
+          you are already looking at. `min-h-7` reserves the row while it is
+          empty so the box doesn't jump the moment you type the first character. */}
       <div className="pointer-events-none mt-2 min-h-7 border-t border-border pt-2">
-        {text.trim() ? (
-          <Katex display={display} latex={wrapCe(text)} />
-        ) : (
-          <span className="text-xs text-muted">preview</span>
-        )}
+        {text.trim() ? <Katex display={display} latex={wrapCe(text)} /> : null}
       </div>
-      <p className="mt-1 text-[11px] text-muted">
-        Formulas: H2O · charges: SO4^2- · states: (aq) (s) (g) · arrows: -&gt; &lt;=&gt; · gas/precipitate: ^ v · isotopes: ^{"{"}14{"}"}_{"{"}6{"}"}C
-      </p>
     </div>
   );
 });

@@ -2047,7 +2047,12 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
                       // the new line actually begins.
                       className="group print-hide flex min-h-10 flex-1 cursor-text items-start rounded-md text-left"
                     >
-                      <span aria-hidden className="mt-1 block h-[1.15em] w-px bg-foreground/50 opacity-0 transition-opacity duration-100 group-hover:opacity-100" />
+                      {/* The caret is a "your cursor would land here" hint, so
+                          it must not show while a real caret already exists —
+                          clicking the zone opens an edit box directly above it,
+                          and the pointer is still hovering, which showed two
+                          insertion points at once. */}
+                      <span aria-hidden className={`mt-1 block h-[1.15em] w-px bg-foreground/50 opacity-0 transition-opacity duration-100 ${editingId || selected ? "" : "group-hover:opacity-100"}`} />
                     </button>
                   )}
                 </div>

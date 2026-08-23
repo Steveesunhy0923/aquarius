@@ -52,7 +52,7 @@ presets + custom templates + modules into one underlying thing.
 1. ✅ **`Module` type + presets as module stacks** — `lib/templates/modules.ts`:
    `Module = { id, name, icon, category, description, keywords?, fields?, blocks: Block[] }`
    (`fields` is a reserved placeholder for fillable fields). `builtinModules()` is the catalog
-   (~18 modules: structural / study / science / planning); `builtinPresets()` rebuilds the five
+   (structural / study / science / writing / career / planning); `builtinPresets()` builds the
    note templates as ordered `Module` stacks (`Preset.stack`, materialized by `presetTree()` with
    id-freshening). `templates.ts` note templates now derive from presets — DesignPicker unchanged.
 2. ✅ **Slash-insert at the cursor** — type `/` in a paragraph → fuzzy-filtered, keyboard-navigable
@@ -104,6 +104,22 @@ presets + custom templates + modules into one underlying thing.
    7 cases) and verified end-to-end in a real browser (slash insert with 2/3 fields filled →
    values land, blank `Date` shows a chip; preset apply prompts, Skip keeps chips).
 
+7. ✅ **The template gallery refresh** *(unreleased)* — the original five note layouts and three
+   posters were replaced wholesale; the Designs dialog's sections ("Note layouts", "Posters",
+   "Your templates") are unchanged. **15 note layouts**: Notes · Problem Set · Study Guide ·
+   Cheat Sheet · Theorems & Proofs · Lab Report · Research Paper · Essay · Reading Notes ·
+   Resume · Cover Letter · Meeting Notes · Weekly Planner · Project Plan · Daily Journal.
+   **3 posters**: Conference Poster · Session Flyer · Theorem Card. The catalog grew to 42
+   built-ins with two new categories — **Writing** (abstract, thesis, essay outline, body
+   paragraph, counterargument, key quotes, references) and **Career** (name & contact,
+   experience entry, education, skills, projects) — plus study (questions, quiz-yourself,
+   revision checklist), science (hypothesis, theorem & proof) and planning (priorities, agenda,
+   action items, milestones, week grid, journal entry) additions; every preset section that is
+   reusable outside its template lives in the catalog, one-off sections stay preset-private.
+   Stack module ids are unique per preset (`PresetCard` keys chips by id) — enforced by
+   `lib/templates/templates.test.ts`. Verified in a real browser: all 18 cards render, Resume
+   and Weekly Planner apply with their field prompts, no console errors.
+
 ## Todo next
 
 - **Per-subject default stack** — each Subject defines a skeleton so new notes in *Physics*
@@ -129,28 +145,13 @@ presets + custom templates + modules into one underlying thing.
 - **Recently-used / favorites / frequency ranking** in the inserter.
 - **Nested sub-modules** — modules containing modules (slot system already nests arbitrarily).
 
-**Default module catalog (grouped by function)**
+**Catalog gaps still open** (the rest of the wishlist shipped in item 7 above)
 
-- *Universal / structural:* Title block · Section (heading + body) · Summary / TL;DR callout ·
-  Table of Contents *(dynamic)* · Divider · Two-column split.
-- *Study & learning:* Cornell notes · Concept card (term → definition → why it matters) ·
-  Vocabulary table · Q&A / flashcard pair *(→ Anki)* · Worked example · Practice problems ·
-  Mnemonic / memory hook.
-- *Math & science:* Lab report skeleton · Hypothesis → method → result · Data table (with
-  uncertainty column) · Graph / plot *(interactive graph block)* · Derivation (step-by-step) ·
-  Theorem–proof (statement · proof · ∎) · Formula sheet section.
-- *Humanities & writing:* Essay outline (thesis · arguments · evidence · conclusion) ·
-  Reading notes (citation · summary · key quotes · response) · Source / bibliography entry ·
-  Compare & contrast table · Timeline.
-- *Planning & productivity:* Meeting notes (attendees · agenda · decisions · action items) ·
-  Weekly planner · Checklist / task list · Project brief (goal · scope · milestones) ·
-  Daily log / journal entry.
-- *Design / poster (exist today):* Event poster · Quote poster · Concept poster · Title banner.
-
-**Presets to ship (curated module stacks)**
-
-- Existing 5: Lecture Notes · Problem Set · Lab Report · Cornell Notes · Formula Sheet.
-- New: Reading / Literature Notes · Meeting Notes · Weekly Planner · Essay Draft · Project Doc.
+- *Structural:* Table of Contents *(dynamic)* · Divider · Two-column split — all three need a
+  block type or a dynamic module the catalog can't express yet.
+- *Study:* Q&A / flashcard pair *(→ Anki)* · Mnemonic / memory hook.
+- *Math & science:* Graph / plot *(interactive graph block — needs a `graph` block in a module)*.
+- *Writing:* Compare & contrast table · Timeline.
 
 ## Notes
 
@@ -489,7 +490,7 @@ nearly identical to the current `Icon` SVG conventions (`Icon.tsx:125-138`), so 
 Two ways: **(a, recommended, zero new runtime)** replace each `PATHS[name]` body with Lucide's path
 data under the **same key** — no dependency, no call-site changes, same `dangerouslySetInnerHTML`
 render; or **(b)** add `lucide-react` and render `<LucideIcon>` behind the `Icon` wrapper. Keep the
-`IconName` union and every name stable — modules store `icon: IconName` (`lib/templates/modules.ts:144,158,460`)
+`IconName` union and every name stable — modules store `icon: IconName` (the `Module` type, the `mod()` builder, and `listSavedModules()` in `lib/templates/modules.ts`)
 and graph tools reference names (`lib/blocks/graph-edit.ts:36-46`), so renaming breaks stored data;
 add aliases where a Lucide name differs. **Caveat:** a few app-specific glyphs have no clean Lucide
 equal (`parabola`, `plot`, the `marker*` list markers; Lucide has `flask-conical`/`atom` for chem) —

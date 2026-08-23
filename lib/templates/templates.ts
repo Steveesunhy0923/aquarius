@@ -60,50 +60,59 @@ const notePresets: BuiltInTemplate[] = builtinPresets().map((p) => ({
 // Posters — full designs with a background + centered elements.
 const posters: BuiltInTemplate[] = [
   {
-    id: "event-poster",
-    name: "Event Poster",
-    scenario: "Bold title, tagline, and a details banner on a deep gradient.",
+    id: "conference-poster",
+    name: "Conference Poster",
+    scenario: "Research title, authors, an abstract banner, then methods and results.",
     category: "poster",
     build: () =>
       posterTree(
         [
-          centerHeading(1, "EVENT TITLE"),
-          centerHeading(2, "A short, punchy tagline goes here"),
-          banner("📅  Day, Month Date · 0:00 PM      📍  Venue / Location", "#6366f1"),
-          centerHeading(3, "Featuring · Hosted by · RSVP link"),
+          centerHeading(1, "RESEARCH TITLE"),
+          centerHeading(3, "{{Authors}} · {{Affiliation}}"),
+          banner("**Abstract** — the question, what you did, and the headline finding, in three sentences.", "#1d4ed8"),
+          centerHeading(2, "Methods"),
+          bullets(["How the data was collected", "How it was analysed", "What was controlled for"]),
+          centerHeading(2, "Results"),
+          eq("\\hat{y} = \\beta_0 + \\beta_1 x"),
+          banner("**Takeaway** — the one sentence a passer-by should leave with.", "#0f766e"),
         ],
-        { background: "linear-gradient(135deg, #0f2027, #203a43, #2c5364)", foreground: "#f8fafc" },
+        { background: "linear-gradient(160deg, #0b1e3a, #14344f, #1f4d5f)", foreground: "#f8fafc" },
       ),
   },
   {
-    id: "quote-poster",
-    name: "Quote Poster",
-    scenario: "A large centered quotation with attribution.",
+    id: "session-flyer",
+    name: "Session Flyer",
+    scenario: "A study session or event: headline, details banner, and what to bring.",
     category: "poster",
     build: () =>
       posterTree(
         [
-          centerHeading(1, "“The only way to learn mathematics is to do mathematics.”"),
-          centerHeading(2, "— Paul Halmos"),
+          centerHeading(1, "STUDY SESSION"),
+          centerHeading(2, "{{Course}} — final review"),
+          banner("🗓  {{Day}} · {{Time}}        📍  {{Place}}", "#047857"),
+          centerHeading(3, "What we'll cover"),
+          bullets(["Topic one", "Topic two", "Past-paper questions"]),
+          banner("Bring your notes, a pen, and the questions you got stuck on. Everyone welcome.", "#065f46"),
         ],
-        { background: "linear-gradient(135deg, #fdfcfb, #e2d1c3)" },
+        { background: "linear-gradient(135deg, #d4fc79, #96e6a1)" },
       ),
   },
   {
-    id: "concept-poster",
-    name: "Concept Poster",
-    scenario: "Headline a single concept with a definition banner and key points.",
+    id: "theorem-card",
+    name: "Theorem Card",
+    scenario: "One result on a page: the statement, what it means, and why it holds.",
     category: "poster",
     build: () =>
       posterTree(
         [
-          centerHeading(1, "KEY CONCEPT"),
-          banner("Definition — state the concept in one clear sentence.", "#22c55e"),
-          centerHeading(2, "Why it matters"),
-          bullets(["Reason it's important", "Where it shows up", "A common pitfall"]),
-          eq("E = mc^2"),
+          centerHeading(2, "THEOREM"),
+          centerHeading(1, "{{Name of the result}}"),
+          eq("a^2 + b^2 = c^2"),
+          banner("**In words** — what the statement is actually saying, with no symbols.", "#6d28d9"),
+          centerHeading(3, "Why it's true"),
+          bullets(["The key idea of the proof", "The hypothesis that does the work", "A case where it fails without it"]),
         ],
-        { background: "linear-gradient(135deg, #a1c4fd, #c2e9fb)" },
+        { background: "linear-gradient(135deg, #fbc2eb, #a6c1ee)" },
       ),
   },
 ];

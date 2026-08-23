@@ -55,8 +55,6 @@ export function InkLab() {
         <span className="rounded border border-border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.09em] text-muted">
           testbed
         </span>
-        <span className="hidden text-xs text-muted md:inline">Ancha · handwriting → LaTeX</span>
-
         <div className="ml-auto flex items-center gap-2">
           {/* Where Ancha is. Only ever needs touching on a real iPad, where the
               default loopback address points at the tablet, not the Mac. */}
@@ -105,11 +103,6 @@ export function InkLab() {
               setStrokeSeq((n) => n + 1);
             }}
           />
-          {empty && (
-            <p className="pointer-events-none absolute inset-0 grid place-items-center text-sm text-faint">
-              Write here — words and formulas together; Ancha sorts them out
-            </p>
-          )}
         </div>
         <RecognitionPanel rec={rec} />
       </main>

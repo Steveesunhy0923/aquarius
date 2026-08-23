@@ -388,7 +388,7 @@ export function ConvertButton({ busy, disabled, onClick }: { busy: boolean; disa
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
 
 export function RecognitionPanel({ rec }: { rec: Recognition }) {
-  const { busy, result, error, offline, hasInk } = rec;
+  const { busy, result, error, offline } = rec;
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -409,10 +409,15 @@ export function RecognitionPanel({ rec }: { rec: Recognition }) {
 
   const pct = result ? Math.round(clamp01(result.confidence) * 100) : 0;
 
+  // Nothing to report yet. The panel used to sit here empty under an "Ancha
+  // reads" label explaining what would eventually appear in it; with that
+  // caption gone it would be a blank framed box, so it stays out of the way
+  // entirely and the canvas gets the room until there is a reading to show.
+  if (!busy && !result && !error && !offline) return null;
+
   return (
     <section aria-label="Recognition result" className="shrink-0 rounded-xl border border-border bg-surface">
       <div className="flex items-center gap-3 border-b border-border-soft px-4 py-2">
-        <p className="text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted">Ancha reads</p>
         {busy && <span className="text-xs text-faint">reading…</span>}
         {result && (
           <span className="ml-auto flex items-center gap-2 text-xs text-muted" title="How sure Ancha is (her least certain run)">
@@ -470,13 +475,7 @@ export function RecognitionPanel({ rec }: { rec: Recognition }) {
             </div>
             <Correction rec={rec} guess={result.latex} />
           </>
-        ) : (
-          <p className="text-sm text-faint">
-            {hasInk
-              ? "Press Convert — or wait a beat with Auto on — and Ancha will read your ink."
-              : "Write on the canvas above; words and formulas together. Ancha's reading appears here."}
-          </p>
-        )}
+        ) : null}
       </div>
     </section>
   );

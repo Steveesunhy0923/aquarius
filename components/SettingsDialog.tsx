@@ -71,6 +71,16 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           </div>
         </div>
 
+        {/* Editor */}
+        <DialogSection>Editor</DialogSection>
+        <div className={ROW}>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm">Fold sections</span>
+            <span className="block text-xs text-muted">Put an arrow beside each heading that hides or shows its section. Off shows every section.</span>
+          </span>
+          <Toggle on={s.sectionFolding} onClick={() => update({ sectionFolding: !s.sectionFolding })} />
+        </div>
+
         {/* Math input */}
         <DialogSection>Math input</DialogSection>
         <div className={ROW}>

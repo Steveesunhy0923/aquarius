@@ -4,15 +4,19 @@ import { Icon } from "@/components/Icon";
 import { renderItem, renderPoint, SceneBase } from "@/components/GraphView";
 import { uiConfirm } from "@/components/ui/dialogs";
 import { EYEBROW } from "@/components/ui/primitives";
+import { DRAG_HANDLE, useDragPanel } from "@/components/ui/useDragPanel";
 import {
   buildScene,
   defaultGraph,
   findSnap,
   makeProj,
   newGraphId,
+  niceStep,
+  panView,
   resolveGeometry,
   resolvePoint,
   SHAPE_PALETTE,
+  zoomView,
   type CoordSystem,
   type GPoint,
   type GraphData,
@@ -26,13 +30,18 @@ import {
   HINTS,
   HIT_PX,
   hitTest,
+  isValidLineEquation,
+  lineAnchors,
+  lineEquationText,
   nextName,
+  parseLineEquation,
   previewPrims,
   rotatable,
   rotatablePointIds,
   rotateShapeData,
   samePair,
   shapeCentroid,
+  shapeUsesAny,
   STICKY_TOOLS,
   TOOLS,
   type Selection,
@@ -42,6 +51,16 @@ import { isValidExpr } from "@/lib/blocks/expr";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const SNAP_PX = 12; // magnet radius
+/** Frame-size limits in px — small enough to sit in a paragraph, big enough to
+ *  fill the dialog, and never zero (a 0-wide canvas has no projection). */
+const MIN_FRAME = 160;
+const MAX_FRAME = 1600;
+/** Wheel/pinch events closer together than this belong to ONE zoom gesture, and
+ *  so to one undo step. */
+const ZOOM_BURST_MS = 500;
+/** Wheel delta → zoom factor. Tuned so a notched mouse wheel (±100) moves about
+ *  16% a click and a trackpad flick stays smooth. */
+const WHEEL_ZOOM = 0.0015;
 
 const HEAD_BTN_BASE =
   "grid h-9 w-9 place-items-center rounded-md transition disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-muted";
@@ -53,11 +72,16 @@ const segBtn = (on: boolean) =>
   `rounded-md px-2 py-1 transition ${on ? "bg-foreground text-background" : "text-muted hover:text-foreground"}`;
 const SECTION = `mb-1.5 ${EYEBROW}`;
 const DANGER_BTN = "w-full rounded-control border border-border px-3 py-1.5 text-sm text-danger hover:border-danger";
+const ZOOM_BTN = "grid h-7 w-7 place-items-center rounded-control border border-border text-muted transition hover:border-accent hover:text-foreground";
 
 type DragState =
   | { mode: "point"; id: string }
   | { mode: "rotate"; ids: string[]; ellipseId: string | null; centroid: [number, number]; startAngle: number }
-  | { mode: "rect"; start: [number, number] };
+  | { mode: "rect"; start: [number, number] }
+  // Shoving the paper about: the press point in MATH coords, held fixed under
+  // the pointer for the whole gesture (recomputing from px each move would
+  // compound rounding as the view moves out from under it).
+  | { mode: "pan"; grab: [number, number] };
 
 /** The interactive "drawing box": draw/edit a graph, then commit it to the doc. */
 export function GraphEditor({
@@ -77,9 +101,14 @@ export function GraphEditor({
   const [cursor, setCursor] = useState<{ px: number; py: number; mx: number; my: number; snap: SnapTarget | null } | null>(null);
   const [funcExpr, setFuncExpr] = useState("sin(x)");
   const [funcDomain, setFuncDomain] = useState<[string, string]>(["", ""]);
+  const [lineExpr, setLineExpr] = useState("y = 2x + 1");
   const [histLen, setHistLen] = useState(0); // mirrors history.current.length for render
 
   const drag = useRef<DragState | null>(null);
+  // Moving the whole dialog (its header is the handle) + the scrim-press guard
+  // that keeps a drag ending outside the panel from reading as "click away".
+  const panel = useDragPanel();
+  const pressOnScrim = useRef(false);
   const dragSnapshot = useRef<GraphData | null>(null); // pre-drag snapshot (undo + rotate base)
   const dragMoved = useRef(false);
   const preConstruct = useRef<GraphData | null>(null); // pre-construction snapshot (multi-click)
@@ -143,6 +172,34 @@ export function GraphEditor({
       danger: true,
     }).then((ok) => { if (ok) onClose(); });
   }, [isDirty, onClose]);
+
+  /**
+   * Wheel / trackpad zoom, anchored on the pointer.
+   *
+   * Attached by hand rather than through React's `onWheel`, because React
+   * registers wheel listeners passively at the root: `preventDefault` there is
+   * ignored (with a console warning) and the dialog would scroll away under the
+   * gesture instead of zooming.
+   */
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg || data.coords === "none") return; // no-coordinate grids have no window to move
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const r = svg.getBoundingClientRect();
+      const [mx, my] = proj.toMath(
+        ((e.clientX - r.left) * W) / (r.width || W),
+        ((e.clientY - r.top) * H) / (r.height || H),
+      );
+      // Line-mode wheels report ~3 lines instead of ~100px; normalise so a mouse
+      // and a trackpad zoom by comparable amounts.
+      const delta = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+      zoomAbout(Math.min(2, Math.max(0.5, Math.exp(delta * WHEEL_ZOOM))), mx, my);
+    };
+    svg.addEventListener("wheel", onWheel, { passive: false });
+    return () => svg.removeEventListener("wheel", onWheel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [proj, W, H, data]);
 
   // ── keyboard: Esc cancels pending/closes, Del removes selection, Cmd/Ctrl+Z undo
   useEffect(() => {
@@ -264,9 +321,71 @@ export function GraphEditor({
   }
 
   // ── pointer handlers ─────────────────────────────────────────────────────────
+
+  /** Take pointer capture, if this pointer can be captured — a synthetic or
+   *  already-released pointer throws, and losing the gesture to that would be
+   *  worse than dragging without capture. */
+  function capture(el: Element | null | undefined, pointerId: number) {
+    try {
+      el?.setPointerCapture(pointerId);
+    } catch {
+      /* not capturable — the window still gets the moves */
+    }
+  }
+
+  /** Begin a pan gesture from a press anywhere on the canvas. */
+  function startPan(e: React.PointerEvent<SVGSVGElement>, pos: { mx: number; my: number }) {
+    drag.current = { mode: "pan", grab: [pos.mx, pos.my] };
+    dragSnapshot.current = data;
+    dragMoved.current = false;
+    setCursor(null); // no snap ring or rubber band while the paper moves
+    capture(svgRef.current, e.pointerId);
+  }
+
+  /**
+   * Two fingers on the canvas = pinch to zoom (and pan with the midpoint), the
+   * gesture an iPad user will try first. Tracked here rather than through the
+   * `drag` state machine because it is the only gesture that owns two pointers.
+   */
+  const pinch = useRef<Map<number, { px: number; py: number }>>(new Map());
+  const pinchLast = useRef<{ dist: number; mx: number; my: number } | null>(null);
+  const pinchMetrics = () => {
+    const [a, b] = [...pinch.current.values()];
+    if (!a || !b) return null;
+    const mid = proj.toMath((a.px + b.px) / 2, (a.py + b.py) / 2);
+    return { dist: Math.hypot(a.px - b.px, a.py - b.py), mx: mid[0], my: mid[1] };
+  };
+
   function onPointerDown(e: React.PointerEvent<SVGSVGElement>) {
     const pos = evtPos(e);
     if (!pos) return;
+
+    // Second finger down: abandon whatever one-finger gesture was in progress
+    // (it was the start of this pinch) and start pinching. A single touch is
+    // only REMEMBERED here — it goes on to draw/drag like a mouse press.
+    if (e.pointerType === "touch") {
+      pinch.current.set(e.pointerId, { px: pos.px, py: pos.py });
+      if (pinch.current.size === 2) {
+        // Revert the stray one-finger drag, and keep ITS pre-drag snapshot as
+        // the pinch's undo point (`data` here may be the dragged state).
+        const before = dragSnapshot.current ?? data;
+        if (dragSnapshot.current) setData(dragSnapshot.current);
+        drag.current = null;
+        dragSnapshot.current = before;
+        dragMoved.current = false;
+        pinchLast.current = pinchMetrics();
+        cancelConstruction();
+        return;
+      }
+    }
+
+    // Middle-button drag pans in ANY tool — the mouse convention, so a drawing
+    // tool doesn't have to be put down to move the view.
+    if (e.button === 1) {
+      e.preventDefault();
+      startPan(e, pos);
+      return;
+    }
 
     if (tool === "select") {
       // Grab the rotation handle first (it floats above the selected shape).
@@ -280,7 +399,7 @@ export function GraphEditor({
         };
         dragSnapshot.current = data;
         dragMoved.current = false;
-        svgRef.current?.setPointerCapture(e.pointerId);
+        capture(svgRef.current, e.pointerId);
         return;
       }
       const hit = hitTest(scene, pos.px, pos.py);
@@ -291,11 +410,14 @@ export function GraphEditor({
           drag.current = { mode: "point", id: hit.id }; // only free points are draggable
           dragSnapshot.current = data;
           dragMoved.current = false;
-          svgRef.current?.setPointerCapture(e.pointerId);
+          capture(svgRef.current, e.pointerId);
         }
-      } else {
-        setSelected(hit ?? null);
+        return;
       }
+      if (hit) { setSelected(hit); return; }
+      // Empty canvas: drag it to move the window. A press that never moves is
+      // still just a click, and still deselects (see onPointerUp).
+      startPan(e, pos);
       return;
     }
 
@@ -305,11 +427,17 @@ export function GraphEditor({
       drag.current = { mode: "rect", start: [snap ? snap.x : pos.mx, snap ? snap.y : pos.my] };
       dragMoved.current = false;
       setCursor({ ...pos, snap });
-      svgRef.current?.setPointerCapture(e.pointerId);
+      capture(svgRef.current, e.pointerId);
       return;
     }
 
-    const snap = findSnap(geo, pos.mx, pos.my, tolMath, { midpoints: tool !== "function" });
+    // The Function tool is driven from the panel, not the canvas: an equation
+    // has no vertices to click. Falling through to place() would drop a stray
+    // labelled point AND — because a 0-vertex tool "finishes" on its first
+    // click — revert to Select, taking the equation panel away with it.
+    if (tool === "function") return;
+
+    const snap = findSnap(geo, pos.mx, pos.my, tolMath);
     place(pos.mx, pos.my, snap);
   }
 
@@ -318,6 +446,31 @@ export function GraphEditor({
     if (!pos) return;
     const dr = drag.current;
 
+    // Pinch (two fingers) outranks everything else on the canvas.
+    if (pinch.current.has(e.pointerId)) {
+      pinch.current.set(e.pointerId, { px: pos.px, py: pos.py });
+      const now = pinchMetrics();
+      const was = pinchLast.current;
+      if (now && was && now.dist > 0 && was.dist > 0) {
+        dragMoved.current = true;
+        // Fingers apart → dist grows → span shrinks → zoom in. Panning comes
+        // free: zooming about the CURRENT midpoint carries the view with it.
+        setData((d) => {
+          const view = zoomView(d.view, was.dist / now.dist, now.mx, now.my);
+          return view === d.view ? d : { ...d, view };
+        });
+        pinchLast.current = now;
+      }
+      return;
+    }
+
+    if (dr?.mode === "pan") {
+      // Keep the grabbed math point under the pointer: shift the view by how
+      // far it has slid away from the grab.
+      dragMoved.current = true;
+      setData((d) => ({ ...d, view: panView(d.view, dr.grab[0] - pos.mx, dr.grab[1] - pos.my) }));
+      return;
+    }
     if (dr?.mode === "point") {
       const snap = findSnap(geo, pos.mx, pos.my, tolMath, { midpoints: false, exclude: new Set([dr.id]) });
       const x = snap ? snap.x : pos.mx;
@@ -342,11 +495,25 @@ export function GraphEditor({
       return;
     }
 
-    const snap = tool === "select" ? null : findSnap(geo, pos.mx, pos.my, tolMath, { midpoints: tool !== "function" });
+    const snap = tool === "select" || tool === "function" ? null : findSnap(geo, pos.mx, pos.my, tolMath);
     setCursor({ ...pos, snap });
   }
 
   function onPointerUp(e: React.PointerEvent<SVGSVGElement>) {
+    // A finger leaving ends the pinch (the other one does NOT become a pan —
+    // that would jerk the view as the remaining finger lifts). A lone touch was
+    // only being tracked in case a second finger arrived, so it falls through
+    // to the ordinary end-of-drag handling below.
+    const wasPinching = pinch.current.size === 2;
+    const wasTouch = pinch.current.delete(e.pointerId);
+    if (wasTouch && wasPinching) {
+      pinchLast.current = null;
+      if (dragMoved.current && dragSnapshot.current) pushHistory(dragSnapshot.current);
+      dragSnapshot.current = null;
+      dragMoved.current = false;
+      return;
+    }
+
     const dr = drag.current;
     if (!dr) return;
     try {
@@ -354,7 +521,12 @@ export function GraphEditor({
     } catch {
       /* noop */
     }
-    if (dr.mode === "point" || dr.mode === "rotate") {
+    if (dr.mode === "pan") {
+      // Moved → one undo step for the whole pan. Never moved → it was a click
+      // on empty canvas, which clears the selection.
+      if (dragMoved.current && dragSnapshot.current) pushHistory(dragSnapshot.current);
+      else setSelected(null);
+    } else if (dr.mode === "point" || dr.mode === "rotate") {
       // Record the PRE-drag snapshot for undo (drag mutated state directly).
       if (dragMoved.current && dragSnapshot.current) pushHistory(dragSnapshot.current);
     } else if (dr.mode === "rect") {
@@ -416,6 +588,60 @@ export function GraphEditor({
     });
   }
 
+  /** Add the line `lineExpr` describes, anchored by two points inside the view. */
+  function addLineFromEquation() {
+    const k = parseLineEquation(lineExpr);
+    if (!k) return;
+    const [p, q] = lineAnchors(geo.view, k);
+    // Anonymous anchors: an equation names a line, not the two points that
+    // happen to hold it — labelled dots here would read as part of the answer.
+    const first = anonPoint(data, p[0], p[1]);
+    const second = anonPoint({ ...data, points: first.points }, q[0], q[1]);
+    const id = newGraphId();
+    apply({
+      ...data,
+      points: second.points,
+      shapes: [...data.shapes, { id, kind: "line", a: first.id, b: second.id, color: drawColor }],
+    });
+    setSelected({ kind: "shape", id });
+  }
+
+  /**
+   * Re-place a line from a retyped equation. Returns false (rejecting the edit)
+   * when the text isn't a line.
+   *
+   * Its own anchors move when they belong to it alone; when they are shared —
+   * a vertex of another shape, or the parent of a midpoint — the line gets
+   * fresh anchors instead, so retyping an equation never drags an unrelated
+   * shape across the canvas with it.
+   */
+  function applyLineEquation(shape: Extract<GShape, { kind: "line" }>, src: string): boolean {
+    const k = parseLineEquation(src);
+    if (!k) return false;
+    const [p, q] = lineAnchors(geo.view, k);
+    const ids = new Set([shape.a, shape.b]);
+    const shared =
+      data.shapes.some((s) => s.id !== shape.id && shapeUsesAny(s, ids)) ||
+      data.points.some((pt) => (ids.has(pt.id) && pt.mid) || (pt.mid && (ids.has(pt.mid[0]) || ids.has(pt.mid[1]))));
+    if (shared) {
+      const first = anonPoint(data, p[0], p[1]);
+      const second = anonPoint({ ...data, points: first.points }, q[0], q[1]);
+      apply({
+        ...data,
+        points: second.points,
+        shapes: data.shapes.map((s) => (s.id === shape.id ? { ...s, a: first.id, b: second.id } : s)),
+      });
+    } else {
+      apply({
+        ...data,
+        points: data.points.map((pt) =>
+          pt.id === shape.a ? { ...pt, x: p[0], y: p[1] } : pt.id === shape.b ? { ...pt, x: q[0], y: q[1] } : pt,
+        ),
+      });
+    }
+    return true;
+  }
+
   function addFunction() {
     if (!isValidExpr(funcExpr, [data.coords === "polar" ? "theta" : "x", "x", "t", "theta"])) return;
     const lo = parseFloat(funcDomain[0]);
@@ -436,6 +662,76 @@ export function GraphEditor({
     return true;
   }
 
+  // ── moving the window (pan / zoom / frame size) ──────────────────────────────
+  /**
+   * Zoom about a math point, re-stepping the grid so it stays readable.
+   *
+   * Continuous gestures (wheel, pinch) call this many times a second, so they
+   * must not each be an undo step: `commitZoom` snapshots once at the start of a
+   * burst and then writes straight to the data, the same way a point drag
+   * records one snapshot at pointerdown.
+   */
+  const zoomLastAt = useRef(0);
+  function zoomAbout(k: number, ax: number, ay: number) {
+    const now = Date.now();
+    if (now - zoomLastAt.current > ZOOM_BURST_MS) pushHistory(data);
+    zoomLastAt.current = now;
+    setData((d) => {
+      const view = zoomView(d.view, k, ax, ay);
+      if (view === d.view) return d; // at the zoom stops
+      return { ...d, view, gridStep: niceStep(Math.min(view.xmax - view.xmin, view.ymax - view.ymin)) };
+    });
+  }
+  /** Zoom about the middle of the view — the +/− buttons and ⌘+ / ⌘−. */
+  const zoomCentre = (k: number) => {
+    const v = geo.view;
+    zoomAbout(k, (v.xmin + v.xmax) / 2, (v.ymin + v.ymax) / 2);
+  };
+  /** Back to the default window, keeping everything else. */
+  function resetView() {
+    apply({ ...data, view: { xmin: -5, xmax: 5, ymin: -5, ymax: 5 }, gridStep: 1 });
+  }
+  /** Resize the drawing frame (the canvas in px — also the TikZ aspect ratio). */
+  function setFrame(patch: { width?: number; height?: number }): boolean {
+    const width = Math.round(patch.width ?? data.width);
+    const height = Math.round(patch.height ?? data.height);
+    if (width < MIN_FRAME || height < MIN_FRAME || width > MAX_FRAME || height > MAX_FRAME) return false;
+    apply({ ...data, width, height });
+    return true;
+  }
+
+  /**
+   * The frame's corner grip — drag it to resize the canvas.
+   *
+   * Its own pointer handlers rather than the canvas drag machine: the grip sits
+   * outside the SVG (resizing it while measuring pointer positions against it
+   * would fight itself), and the gesture is one snapshot plus straight writes,
+   * like a pan.
+   */
+  const sizeGrab = useRef<{ x: number; y: number; w: number; h: number; id: number } | null>(null);
+  function onGripDown(e: React.PointerEvent<HTMLButtonElement>) {
+    if (e.button !== 0) return;
+    sizeGrab.current = { x: e.clientX, y: e.clientY, w: data.width, h: data.height, id: e.pointerId };
+    dragSnapshot.current = data;
+    dragMoved.current = false;
+    capture(e.currentTarget, e.pointerId);
+    e.preventDefault();
+  }
+  function onGripMove(e: React.PointerEvent<HTMLButtonElement>) {
+    const g = sizeGrab.current;
+    if (!g || g.id !== e.pointerId) return;
+    const clamp = (n: number) => Math.min(MAX_FRAME, Math.max(MIN_FRAME, Math.round(n)));
+    dragMoved.current = true;
+    setData((d) => ({ ...d, width: clamp(g.w + (e.clientX - g.x)), height: clamp(g.h + (e.clientY - g.y)) }));
+  }
+  function onGripUp(e: React.PointerEvent<HTMLButtonElement>) {
+    if (sizeGrab.current?.id !== e.pointerId) return;
+    sizeGrab.current = null;
+    if (dragMoved.current && dragSnapshot.current) pushHistory(dragSnapshot.current);
+    dragSnapshot.current = null;
+    dragMoved.current = false;
+  }
+
   function setCoords(c: CoordSystem) {
     apply({ ...data, coords: c });
   }
@@ -443,6 +739,12 @@ export function GraphEditor({
   // ── derived render bits ───────────────────────────────────────────────────────
   const selPoint = selected?.kind === "point" ? data.points.find((p) => p.id === selected.id) : null;
   const selShape = selected?.kind === "shape" ? data.shapes.find((s) => s.id === selected.id) : null;
+  /** A line's equation, derived from its two points (empty if unresolvable). */
+  const lineText = (s: Extract<GShape, { kind: "line" }>): string => {
+    const a = resolvePoint(geo, s.a);
+    const b = resolvePoint(geo, s.b);
+    return a && b ? lineEquationText(a, b) : "";
+  };
   // Rotation handle for the selected (rotatable) shape — a knob floating above it.
   const rotInfo = selShape && rotatable(selShape)
     ? (() => {
@@ -468,13 +770,28 @@ export function GraphEditor({
   const hint = HINTS[tool];
 
   return (
-    <div className="print-hide fixed inset-0 z-50 flex items-start justify-center bg-foreground/25 p-4" onClick={requestClose}>
+    <div
+      className="print-hide fixed inset-0 z-50 flex items-start justify-center bg-foreground/25 p-4"
+      // Dismiss only when the PRESS started on the scrim: a drag that begins on
+      // the panel (moving the window, dragging a point past the canvas edge) and
+      // releases out here dispatches its click on the scrim, and must not close
+      // the editor and lose the graph.
+      onPointerDown={(e) => { pressOnScrim.current = e.target === e.currentTarget; }}
+      onClick={(e) => {
+        const wasScrim = pressOnScrim.current;
+        pressOnScrim.current = false;
+        if (wasScrim && e.target === e.currentTarget) requestClose();
+      }}
+    >
       <div
+        ref={panel.ref}
+        style={panel.style}
         className="mt-6 flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* header */}
-        <div className="flex items-center justify-between border-b border-border-soft px-5 py-4">
+        {/* header — also the drag handle: the graph you are drawing is usually
+            about something further up the note, and this gets out of its way. */}
+        <div {...panel.handleProps} className={`flex items-center justify-between border-b border-border-soft px-5 py-4 ${DRAG_HANDLE}`}>
           <h2 className="text-base font-semibold">{initial ? "Edit graph" : "Insert a graph"}</h2>
           <div className="flex items-center gap-1">
             <button onClick={undo} title="Undo (⌘Z)" aria-label="Undo" className={HEAD_BTN} disabled={histLen === 0}>
@@ -513,6 +830,9 @@ export function GraphEditor({
           {/* canvas */}
           <div className="flex min-w-0 flex-1 flex-col">
             <div className="flex-1 overflow-auto bg-background/40 p-4">
+              {/* The wrapper is exactly the canvas: it carries the resize grip
+                  at the frame's corner, and stays centred like the svg did. */}
+              <div className="relative mx-auto" style={{ width: W, height: H }}>
               <svg
                 ref={svgRef}
                 width={W}
@@ -521,9 +841,10 @@ export function GraphEditor({
                 onPointerDown={onPointerDown}
                 onPointerMove={onPointerMove}
                 onPointerUp={onPointerUp}
+                onPointerCancel={onPointerUp}
                 onPointerLeave={() => setCursor(null)}
-                className="mx-auto block touch-none rounded-md border border-border bg-surface text-foreground"
-                style={{ cursor: tool === "select" ? "default" : "crosshair" }}
+                className="block touch-none rounded-md border border-border bg-surface text-foreground"
+                style={{ cursor: tool === "select" ? (drag.current?.mode === "pan" ? "grabbing" : "grab") : "crosshair" }}
               >
                 <SceneBase scene={scene} />
                 <g>
@@ -561,7 +882,30 @@ export function GraphEditor({
                   <circle cx={snapPx[0]} cy={snapPx[1]} r={6} fill="none" stroke="var(--accent)" strokeWidth={2} />
                 )}
               </svg>
-              <p className="mt-2 text-center text-xs text-muted">{hint}</p>
+                {/* Frame resize grip. In No-coordinate mode the canvas size is
+                    derived from the cell counts, so there is nothing to drag. */}
+                {data.coords !== "none" && (
+                  <button
+                    onPointerDown={onGripDown}
+                    onPointerMove={onGripMove}
+                    onPointerUp={onGripUp}
+                    onPointerCancel={onGripUp}
+                    title={`Drag to resize the frame (${W} × ${H})`}
+                    aria-label="Resize the graph frame"
+                    className="absolute -bottom-1 -right-1 grid h-5 w-5 cursor-nwse-resize touch-none place-items-center rounded-sm border border-border bg-surface text-muted shadow-sm hover:border-accent hover:text-accent"
+                  >
+                    <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden>
+                      <path d="M7 1 1 7M7 4 4 7" stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+              <p className="mt-3 text-center text-xs text-muted">{hint}</p>
+              {data.coords !== "none" && (
+                <p className="mt-1 text-center text-[11px] text-faint">
+                  Drag the empty canvas to move the graph · scroll or pinch to zoom · drag the corner to resize the frame
+                </p>
+              )}
             </div>
           </div>
 
@@ -597,6 +941,19 @@ export function GraphEditor({
                 </>
               ) : (
                 <>
+                  {/* The window: drag/scroll on the canvas does this by hand;
+                      these are for saying it exactly. */}
+                  <div className="mb-2 flex items-center gap-1">
+                    <button onClick={() => zoomCentre(1 / 1.4)} title="Zoom in" aria-label="Zoom in" className={ZOOM_BTN}>
+                      <Icon name="plus" size={14} />
+                    </button>
+                    <button onClick={() => zoomCentre(1.4)} title="Zoom out" aria-label="Zoom out" className={ZOOM_BTN}>
+                      <Icon name="minus" size={14} />
+                    </button>
+                    <button onClick={resetView} title="Back to the default window (−5…5)" className="ml-auto rounded-control border border-border px-2 py-1 text-xs text-muted hover:border-accent hover:text-foreground">
+                      Reset view
+                    </button>
+                  </div>
                   <div className="grid grid-cols-2 gap-1.5">
                     <NumField label="x min" value={data.view.xmin} onCommit={(v) => setView({ xmin: v })} />
                     <NumField label="x max" value={data.view.xmax} onCommit={(v) => setView({ xmax: v })} />
@@ -618,6 +975,38 @@ export function GraphEditor({
                 </>
               )}
             </section>
+
+            {/* frame size — how big the figure is, independent of what it shows */}
+            {data.coords !== "none" && (
+              <section>
+                <h3 className={SECTION}>Frame</h3>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <NumField label="width" value={data.width} onCommit={(v) => setFrame({ width: v })} />
+                  <NumField label="height" value={data.height} onCommit={(v) => setFrame({ height: v })} />
+                </div>
+                <p className="mt-1 text-[11px] leading-snug text-muted">
+                  The figure&rsquo;s size in the note (and its aspect ratio in the .tex). Drag the corner of the canvas for the same thing by hand.
+                </p>
+              </section>
+            )}
+
+            {/* line entry — the typed alternative to clicking two points */}
+            {tool === "line" && (
+              <section>
+                <h3 className={SECTION}>Line equation</h3>
+                <input
+                  value={lineExpr}
+                  onChange={(e) => setLineExpr(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") addLineFromEquation(); }}
+                  placeholder="y = 2x + 1"
+                  className={`w-full rounded-md border bg-background px-2 py-1 font-mono text-sm outline-none ${
+                    isValidLineEquation(lineExpr) ? "border-border focus:border-accent" : "border-danger"
+                  }`}
+                />
+                <button onClick={addLineFromEquation} className="mt-2 w-full rounded-md bg-accent px-2 py-1 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50" disabled={!isValidLineEquation(lineExpr)}>Add line</button>
+                <p className="mt-1 text-[11px] leading-snug text-muted">Also takes x = 3, 2x + 3y = 6, or a bare 2x + 1. The line stays draggable afterwards.</p>
+              </section>
+            )}
 
             {/* function entry */}
             {tool === "function" && (
@@ -673,6 +1062,14 @@ export function GraphEditor({
                 <h3 className={SECTION}>{selShape.kind}</h3>
                 {selShape.kind === "function" && (
                   <input value={selShape.expr} onChange={(e) => updateShape(selShape.id, { expr: e.target.value } as Partial<GShape>)} className="mb-2 w-full rounded-md border border-border bg-background px-2 py-1 font-mono text-sm outline-none focus:border-accent" />
+                )}
+                {selShape.kind === "line" && (
+                  <EquationField
+                    // Read back off the two points, so the equation shown is
+                    // always the line on screen — including after a drag.
+                    value={lineText(selShape)}
+                    onCommit={(src) => applyLineEquation(selShape, src)}
+                  />
                 )}
                 {selShape.kind === "ellipse" && (
                   <div className="mb-2 grid grid-cols-2 gap-1.5">
@@ -758,6 +1155,27 @@ function NumField({ label, value, onCommit }: { label: string; value: number; on
         className="w-full rounded-md border border-border bg-background px-1 py-0.5 text-center outline-none focus:border-accent"
       />
     </label>
+  );
+}
+
+/** A line's equation, committed on blur/Enter. `onCommit` returns false to
+ *  reject the text, which resets the field to the line's actual equation. */
+function EquationField({ value, onCommit }: { value: string; onCommit: (src: string) => boolean }) {
+  const [text, setText] = useState(value);
+  useEffect(() => setText(value), [value]);
+  return (
+    <input
+      value={text}
+      onChange={(e) => setText(e.target.value)}
+      // Untouched text commits nothing: clicking into the field and out again
+      // must not re-place the line's anchors (or spend an undo step doing it).
+      onBlur={() => { if (text !== value && !onCommit(text)) setText(value); }}
+      onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+      aria-label="Line equation"
+      className={`mb-2 w-full rounded-md border bg-background px-2 py-1 font-mono text-sm outline-none ${
+        isValidLineEquation(text) ? "border-border focus:border-accent" : "border-danger"
+      }`}
+    />
   );
 }
 

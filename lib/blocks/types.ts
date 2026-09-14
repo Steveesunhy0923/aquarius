@@ -16,6 +16,7 @@
 // Type-only import in the other direction (docstyle imports these types), so
 // the cycle exists for the checker but never at runtime.
 import { LATEX_STYLE } from "./docstyle";
+import type { SectionShortcut } from "./shortcuts";
 
 export type BlockId = string;
 
@@ -97,7 +98,7 @@ export interface BlockAttrs {
   // matrix
   rows?: number;
   cols?: number;
-  env?: "matrix" | "pmatrix" | "bmatrix" | "vmatrix" | "Vmatrix" | "cases";
+  env?: "matrix" | "pmatrix" | "bmatrix" | "Bmatrix" | "vmatrix" | "Vmatrix" | "cases";
   // group
   delimiters?: [open: string, close: string];
   // code — the runnable code block (lib/blocks/codeblock.ts). `lang` is one of
@@ -178,6 +179,9 @@ export interface DocumentStyle {
   fontFamily?: string; // a key into the editor's font map, default "Computer Modern"
   lineSpacing?: number; // line-height multiplier; default from the preset
   indent?: number; // first-line paragraph indent in em; default from the preset
+  /** Set when the writer picked `indent` in the inspector. Tells a chosen 17pt
+   *  apart from the one old notes stored as their default (docstyle → storedIndent). */
+  indentChosen?: boolean;
   pageLayout?: "vertical" | "horizontal"; // how the A4 pages are arranged
   // CSS `background` value for the page surface (color/gradient/pattern). Shows
   // on screen and in the printed PDF; used for poster-style designs.
@@ -216,6 +220,9 @@ export interface DocumentTree {
   style?: DocumentStyle;
   /** Present only on imported notes — see DocumentSource. */
   source?: DocumentSource;
+  /** The design's section jump-list, editable per note — see lib/blocks/shortcuts.ts.
+   *  Absent on notes that never had a design applied. */
+  shortcuts?: SectionShortcut[];
 }
 
 export type CanvasMode = "flow" | "spatial";

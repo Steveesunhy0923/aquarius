@@ -173,6 +173,81 @@ body {
   text-indent: var(--indent, 0);
 }
 
+/* ── Indentation: the Google Docs model (lib/blocks/indent.ts, lists.ts) ──
+   One step measures every indent: half an inch of the sheet, `--indent-step`
+   from pageContentStyle. A paragraph's indent moves the WHOLE paragraph (inline
+   margin-left), and a list level moves its item by the same step with the
+   marker hanging in the half step before the text. So a top-level bullet's text
+   and a once-indented paragraph share an edge, and a wrapped line comes back to
+   that edge rather than to the page margin. A tab typed mid-line stops on the
+   same grid. All of it is horizontal, so the paginator's heights are unmoved. */
+.aq-para,
+.aq-list {
+  tab-size: var(--indent-step, 3.27em);
+}
+.aq-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.aq-list > li {
+  position: relative;
+  margin-left: calc(var(--indent-step, 3.27em) * (var(--lvl, 0) + 1));
+}
+/* In the read view the marker is an inline box pulled into the hanging half
+   step, so it shares the first line's baseline even when that line holds a
+   tall formula. */
+.aq-list-marker {
+  display: inline-block;
+  width: calc(var(--indent-step, 3.27em) * 0.5);
+  margin-left: calc(var(--indent-step, 3.27em) * -0.5);
+  text-indent: 0;
+  text-align: left;
+  white-space: nowrap;
+  user-select: none;
+}
+/* The editor's item is a block textarea, which an inline marker would sit
+   above; there the marker is taken out of flow onto the first line instead. */
+.aq-list-editor .aq-list-marker {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+}
+
+/* A formula inside a line of text (components/RichLine): a tiny box with no
+   border and no background, like the equation input. It shows rendered maths
+   while the caret is in the words and the MathLive field once the caret goes
+   in; nothing marks where it starts or ends. */
+.aq-inline-math {
+  display: inline-block;
+  vertical-align: baseline;
+  text-indent: 0;
+  white-space: normal;
+  cursor: text;
+}
+.aq-inline-math math-field {
+  display: inline-block;
+  width: auto !important;
+  min-width: 0.8em;
+  font-size: 1em;
+  text-align: left;
+}
+
+/* A display equation is edited where it is drawn: centred. The field shrinks to
+   its formula and sits in the middle of the line, as the rendered KaTeX does,
+   instead of spanning the line with the formula pinned to its left end. */
+.aq-display-edit {
+  text-align: center;
+}
+.aq-display-edit math-field,
+.aq-display-edit .me-field {
+  display: inline-block;
+  min-width: 3em;
+  max-width: 100%;
+  text-align: left;
+}
+
 /* ── LaTeX page typography (.aq-tex) ──────────────────────────────────────
    On the content box of a page whose style preset is "latex"
    (lib/blocks/docstyle.ts → presetClass). The values a user can change — font,
@@ -209,8 +284,26 @@ body {
   padding-top: 1.5em; /* \section: 3.5ex before, 2.3ex after */
   padding-bottom: 1em;
 }
+/* A heading that lands at the TOP of a page drops its \section skip — LaTeX
+   does not open a page with white space.
+
+   Done with a negative margin rather than `padding-top: 0`, because the
+   paginator measures blocks with offsetHeight, which counts padding and ignores
+   margins. Trimming the padding made the SAME heading measure ~1.4em shorter as
+   soon as pagination moved it to the top of a page — so it fitted at the bottom
+   of the previous page again, was moved back, grew, and moved forward: measure
+   and paginate chasing each other until React gave up with "Maximum update
+   depth exceeded". As a margin the trim is invisible to the measurement, so the
+   height is the same wherever the block sits and the layout settles in one pass.
+
+   The box therefore starts inside the page's top margin (its padding still
+   there, just pulled up); the text lands in exactly the same place as before,
+   and the blocks carry no background, so nothing shows for it. */
 .aq-tex [data-btype="heading"]:first-child {
-  padding-top: 0;
+  margin-top: -1.4em;
+}
+.aq-tex [data-btype="heading"]:first-child:has([data-level="1"]) {
+  margin-top: -1.5em;
 }
 /* Heading sizes as LaTeX states them — relative to the body, not absolute:
    \section \Large, \subsection \large, \subsubsection and \paragraph
@@ -368,6 +461,11 @@ html.aq-math-keyboard math-field::part(virtual-keyboard-toggle) { display: inlin
 }
 .me-slot, .me-cell { display: inline-flex; align-items: baseline; }
 .me-id { font-style: italic; padding: 0 0.02em; }
+/* Words inside a formula (`\text{…}`): upright, spaces kept. */
+.me-text { font-style: normal; white-space: pre; }
+/* Words mode: the caret takes the text colour, so it is plain which of the two
+   the next key will type. */
+.me-textmode .me-caret { background: var(--foreground); }
 .me-op { padding: 0 0.18em; }
 .me-glyph { display: inline-flex; }
 
@@ -421,7 +519,13 @@ html.aq-math-keyboard math-field::part(virtual-keyboard-toggle) { display: inlin
 .me-group { display: inline-flex; align-items: center; }
 .me-delim { font-size: 1.1em; padding: 0 0.06em; }
 .me-matrix { display: inline-flex; align-items: center; }
+/* A grid's fences are KaTeX-drawn (see Delim in lib/matheditor/render.tsx), so
+   they arrive already sized — this only spaces them off the cells. */
+.me-mdelim { display: inline-flex; align-items: center; padding: 0 0.08em; }
 .me-grid { display: inline-grid; gap: 0.1em 0.6em; align-items: center; justify-items: center; }
+/* `cases`: value & condition, both reading from the left, with the condition
+   set well clear of the value — TeX's own cases spacing. */
+.me-grid-cases { justify-items: start; column-gap: 1.2em; }
 .me-mcell { display: inline-flex; }
 .me-field { position: relative; }
 .me-hidden-input {

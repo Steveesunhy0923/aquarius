@@ -67,9 +67,8 @@ export function InsertMenu({ onPick, proseActive, keepFocus }: {
   onPick: (action: InsertAction) => void;
   /** True while a paragraph is open for editing — link inserts need a caret. */
   proseActive: boolean;
-  /** Mousedown handler that preserves the editor's focus (sticky semantics), so
-   *  opening the menu mid-paragraph doesn't discard the selection the link
-   *  actions splice over. */
+  /** Mousedown handler that holds the caret where it is, so opening the menu
+   *  mid-paragraph doesn't discard the selection the link actions splice over. */
   keepFocus: (e: MouseEvent) => void;
 }) {
   return (

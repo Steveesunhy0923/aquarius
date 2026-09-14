@@ -155,7 +155,7 @@ export function CommandPalette({
       if (caps.editBlocks) {
         const modules = searchModules(query).slice(0, query ? 8 : 4);
         for (const m of modules) {
-          out.push({ key: `mod:${m.id}`, section: "Insert", icon: m.icon, label: m.name, sub: m.description, run: () => { handle.insertModule(m); onClose(); } });
+          out.push({ key: `mod:${m.id}`, section: "Insert", icon: m.icon, label: m.name, run: () => { handle.insertModule(m); onClose(); } });
         }
         const presets = builtinPresets().filter((p) => !query || p.name.toLowerCase().includes(query)).slice(0, query ? 4 : 3);
         for (const p of presets) {

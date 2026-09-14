@@ -41,7 +41,6 @@ export function FormatPopover({
   onLink,
   onNoteLink,
   keepFocus,
-  markSticky,
 }: {
   /** The element the popover floats above — the whole edit box, resolved on
    *  each measure because the block being edited changes between renders. */
@@ -56,7 +55,6 @@ export function FormatPopover({
   onLink: () => void;
   onNoteLink: () => void;
   keepFocus: (e: MouseEvent) => void;
-  markSticky: () => void;
 }) {
   const popRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
@@ -115,7 +113,6 @@ export function FormatPopover({
         onApply={onHlApply}
         onColor={onHlColor}
         keepFocus={keepFocus}
-        onColorMouseDown={markSticky}
       />
       <span className="mx-1 h-5 w-px bg-border" />
       <button onMouseDown={keepFocus} onClick={onLink} title="Insert link" aria-label="Insert link" className={btn}><Icon name="link" size={15} /></button>

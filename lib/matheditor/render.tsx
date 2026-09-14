@@ -25,6 +25,50 @@ const BIGOP_GLYPH: Record<string, string> = {
   sum: "\\sum", prod: "\\prod", coprod: "\\coprod", bigcup: "\\bigcup", bigcap: "\\bigcap", lim: "\\lim",
 };
 
+/**
+ * What each grid environment is fenced with — the thing that tells a reader at a
+ * glance WHICH structure they are looking at. Drawing every one of them with the
+ * `(` `)` of a pmatrix (as this renderer used to) turned a `cases` — a system of
+ * equations, whose whole notation is the big left brace — into what looked like
+ * a two-column matrix.
+ *
+ * `matrix` is undelimited by definition, and `cases` is braced on the LEFT only.
+ */
+const MATRIX_DELIMS: Record<string, [open: string, close: string]> = {
+  matrix: ["", ""],
+  pmatrix: ["(", ")"],
+  bmatrix: ["[", "]"],
+  Bmatrix: ["\\{", "\\}"],
+  vmatrix: ["|", "|"],
+  Vmatrix: ["\\|", "\\|"],
+  cases: ["\\{", ""],
+};
+
+/**
+ * A delimiter drawn at the height of an `rows`-row grid.
+ *
+ * A plain `(` character does not stretch, so a two-row system came out fenced
+ * by two ordinary parentheses floating beside it. TeX builds tall delimiters
+ * from purpose-made glyph pieces, and KaTeX carries them: `\left…\right.` sized
+ * against an invisible rule gives the real, properly-proportioned brace at any
+ * height — no CSS scaling, which thins the strokes as it stretches.
+ *
+ * The rule is raised by half its height so the delimiter is centred on the
+ * baseline, matching the grid it stands next to.
+ */
+function Delim({ ch, side, rows }: { ch: string; side: "left" | "right"; rows: number }) {
+  if (!ch) return null;
+  // The grid's height, in em: a row of single-line cells measures ~1.05em, plus
+  // the 0.1em row gap between them (measured, and stable because every cell is
+  // one line). KaTeX adds TeX's own clearance around the rule, which is what
+  // makes the brace sit a little proud of the content, as it should. A cell
+  // holding something tall (a fraction) is the one case this under-estimates.
+  const h = Math.max(1, rows) * 1.05 + Math.max(0, rows - 1) * 0.1;
+  const rule = `\\rule[-${(h / 2).toFixed(2)}em]{0pt}{${h.toFixed(2)}em}`;
+  const latex = side === "left" ? `\\left${ch}${rule}\\right.` : `\\left.${rule}\\right${ch}`;
+  return <Katex latex={latex} className="me-mdelim" />;
+}
+
 function Caret() {
   return <span className="me-caret" aria-hidden />;
 }
@@ -75,6 +119,8 @@ export function renderBlock(block: Block, cursor: Cursor): ReactNode {
     case "operator":
       return <span className="me-op">{block.value}</span>;
     case "identifier":
+      // Words typed inside the formula (`\text{…}`) stand upright, spaces kept.
+      if (block.attrs?.text) return <span className="me-text">{block.value === " " ? "\u00A0" : block.value}</span>;
       return <span className="me-id">{block.value}</span>;
     case "symbol":
       return <SymbolAtom value={block.value ?? ""} />;
@@ -152,17 +198,23 @@ export function renderBlock(block: Block, cursor: Cursor): ReactNode {
     case "matrix": {
       const rows = Number(block.attrs?.rows ?? 0);
       const cols = Number(block.attrs?.cols ?? 0);
+      const env = String(block.attrs?.env ?? "pmatrix");
+      const [open, close] = MATRIX_DELIMS[env] ?? MATRIX_DELIMS.pmatrix;
+      // `cases` is a piecewise definition, not a matrix: one brace on the left,
+      // and cells that read left-aligned (a value, then the condition it holds
+      // under) rather than centred like matrix entries.
+      const cases = env === "cases";
       return (
         <span className="me-matrix">
-          <span className="me-delim">(</span>
-          <span className="me-grid" style={{ gridTemplateColumns: `repeat(${Math.max(1, cols)}, auto)` }}>
+          <Delim ch={open} side="left" rows={rows} />
+          <span className={`me-grid${cases ? " me-grid-cases" : ""}`} style={{ gridTemplateColumns: `repeat(${Math.max(1, cols)}, auto)` }}>
             {Array.from({ length: rows }, (_, r) =>
               Array.from({ length: cols }, (_, c) => (
                 <span className="me-mcell" key={`r${r}c${c}`}>{renderRow(block, `r${r}c${c}`, cursor)}</span>
               )),
             )}
           </span>
-          <span className="me-delim">)</span>
+          <Delim ch={close} side="right" rows={rows} />
         </span>
       );
     }

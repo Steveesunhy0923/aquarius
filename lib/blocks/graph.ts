@@ -289,6 +289,64 @@ export function makeProj(view: GraphView, W: number, H: number): Proj {
   };
 }
 
+// ─── Moving the window: pan, zoom, and a readable grid ───────────────────────
+//
+// The VIEW is what the canvas looks at; the frame (width/height) is how big the
+// canvas is. Panning and zooming only ever move the view — the model's points
+// keep their coordinates, so nothing in the figure changes when the user shoves
+// the paper around under it.
+
+/** How far the view may be zoomed, as the span of its shorter axis. Beyond
+ *  these, floating-point ticks and grid lines stop meaning anything. */
+const MIN_SPAN = 1e-3;
+const MAX_SPAN = 1e6;
+
+/** Slide the view by a distance in MATH units. */
+export function panView(view: GraphView, dx: number, dy: number): GraphView {
+  return { xmin: view.xmin + dx, xmax: view.xmax + dx, ymin: view.ymin + dy, ymax: view.ymax + dy };
+}
+
+/**
+ * Scale the view about a fixed math point — the cursor for a wheel zoom, the
+ * midpoint of two fingers for a pinch, the centre for the +/− buttons. `k` is
+ * the factor applied to the SPAN: k < 1 zooms in, k > 1 zooms out.
+ *
+ * The anchor keeps the point under the pointer under the pointer, which is what
+ * makes wheel-zoom feel like moving a magnifier rather than jumping.
+ */
+export function zoomView(view: GraphView, k: number, ax: number, ay: number): GraphView {
+  const spanX = (view.xmax - view.xmin) * k;
+  const spanY = (view.ymax - view.ymin) * k;
+  const shorter = Math.min(spanX, spanY);
+  const longer = Math.max(spanX, spanY);
+  if (!(shorter > 0) || shorter < MIN_SPAN || longer > MAX_SPAN) return view; // at the stops
+  return {
+    xmin: ax - (ax - view.xmin) * k,
+    xmax: ax + (view.xmax - ax) * k,
+    ymin: ay - (ay - view.ymin) * k,
+    ymax: ay + (view.ymax - ay) * k,
+  };
+}
+
+/**
+ * A "nice" grid step for a span: 1, 2 or 5 times a power of ten, aimed at
+ * roughly ten divisions across.
+ *
+ * Zooming without this leaves the step the user last saw: zoom out and the grid
+ * silts up into a solid block (capped at MAX_GRID, so it stops being a grid at
+ * all), zoom in and there isn't a line on screen. Graphing calculators re-step
+ * as you zoom, and so does this — but only from the zoom gesture, never from a
+ * step the user typed.
+ */
+export function niceStep(span: number): number {
+  if (!(span > 0)) return 1;
+  const raw = span / 10;
+  const mag = 10 ** Math.floor(Math.log10(raw));
+  const norm = raw / mag; // 1 … 10
+  const step = norm >= 5 ? 5 : norm >= 2 ? 2 : 1;
+  return step * mag;
+}
+
 // ─── Point resolution ────────────────────────────────────────────────────────
 
 /** Resolve a point id to math coords, following derived midpoints (cycle-safe). */

@@ -27,6 +27,10 @@ export interface AppSettings {
   /** Starting size of the handwriting sheet. The size control inside the sheet
    *  writes through to this, so the choice sticks to the next note. */
   inkCanvasSize: InkCanvasSize;
+  /** Show fold arrows on section headings (and the outline's hide-section
+   *  button). Default off: a document shows every section, and folding is a
+   *  choice made here, not a control sitting beside every heading. */
+  sectionFolding: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -35,9 +39,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
   mathKeyboard: false,
   mathEditorBeta: false,
   inkCanvasSize: "compact",
+  sectionFolding: false,
 };
 
 export const SETTINGS_KEY = "aquarius.settings.v1";
+/** Fired on `window` after `setSettings`, so open views can re-read (see
+ *  useAppSettings). Other tabs hear about it through the `storage` event. */
+export const SETTINGS_EVENT = "aquarius:settings";
 
 export function getSettings(): AppSettings {
   if (typeof window === "undefined") return DEFAULT_SETTINGS;
@@ -57,6 +65,7 @@ export function setSettings(patch: Partial<AppSettings>): AppSettings {
     window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
     if (patch.theme !== undefined) applyTheme(next.theme);
     if (patch.mathKeyboard !== undefined) applyMathKeyboard(next.mathKeyboard);
+    window.dispatchEvent(new CustomEvent(SETTINGS_EVENT));
   }
   return next;
 }

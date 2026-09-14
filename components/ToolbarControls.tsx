@@ -41,14 +41,13 @@ export const HEAD_BTN_HOVER = "text-muted hover:bg-foreground/[0.06] hover:text-
 export const HEAD_BTN = `${HEAD_BTN_BASE} ${HEAD_BTN_HOVER}`;
 
 // ─── Highlight button (marker icon + color dropdown) ─────────────────────────
-export function HighlightButton({ color, open, onToggle, onApply, onColor, keepFocus, onColorMouseDown }: {
+export function HighlightButton({ color, open, onToggle, onApply, onColor, keepFocus }: {
   color: string;
   open: boolean;
   onToggle: () => void;
   onApply: () => void;
   onColor: (c: string) => void;
   keepFocus: (e: MouseEvent) => void;
-  onColorMouseDown: () => void;
 }) {
   return (
     <span className="relative inline-flex">
@@ -67,8 +66,9 @@ export function HighlightButton({ color, open, onToggle, onApply, onColor, keepF
             </div>
             <label className="mt-2 flex items-center gap-2 text-xs text-muted">
               Custom
-              {/* sticky-only (no preventDefault) so the native color picker still opens while editing */}
-              <input type="color" value={color} onMouseDown={onColorMouseDown} onChange={(e) => onColor(e.target.value)} className="h-6 w-8 cursor-pointer rounded border border-border bg-transparent p-0.5" />
+              {/* No preventDefault: the native colour picker needs the press. Taking
+                  focus is harmless — leaving a block is explicit, never a blur. */}
+              <input type="color" value={color} onChange={(e) => onColor(e.target.value)} className="h-6 w-8 cursor-pointer rounded border border-border bg-transparent p-0.5" />
             </label>
           </div>
         </>

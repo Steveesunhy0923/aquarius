@@ -4,15 +4,16 @@
  * the same in all three.
  *
  * The default is the LaTeX look: `article` at 11pt in Computer Modern, on
- * LaTeX's own baseline, with justified, first-line-indented paragraphs and no
- * vertical gap between them. Every number below is taken from `size11.clo` and
- * the export preamble (lib/export/pdf.ts) rather than eyeballed, which is what
- * makes the on-screen page and the typeset PDF agree.
+ * LaTeX's own baseline. Every number below is taken from `size11.clo` and the
+ * export preamble (lib/export/pdf.ts) rather than eyeballed, which is what
+ * makes the on-screen page and the typeset PDF agree — with ONE deliberate
+ * departure, the paragraph shape: see LATEX_STYLE.indent.
  *
  * Notes created before 0.8.1 have no `style.preset` and keep the looser,
  * web-ish look they were written in — see PLAIN below.
  */
 
+import { INDENT_STEP_PX } from "./indent";
 import type { DocPreset, DocumentStyle } from "./types";
 
 export const A4_W = 794; // A4 width  in px @ 96dpi (210mm)
@@ -43,7 +44,17 @@ export const TEX = {
   marginMm: 22,
 } as const;
 
-/** The default document style: what LaTeX would give you. */
+/** LaTeX's own `\parindent` in em. Still offered in the inspector (INDENTS),
+ *  but no longer the default — see LATEX_STYLE.indent. */
+export const TEX_INDENT = round(TEX.parindentPt / TEX.normalPt, 4); // 1.5525em
+
+/** The default document style: what LaTeX would give you, except that nothing
+ *  indents itself. A first line the writer did not ask for is text they have to
+ *  notice and undo; indentation here is something you TYPE (Tab in a
+ *  paragraph), never something the document does on their behalf. Paragraphs
+ *  are then separated by a skip instead — the `parskip` treatment, which is the
+ *  standard pairing for zero indent and the only thing that keeps justified
+ *  paragraphs from running into one wall of text. */
 export const LATEX_STYLE: Required<
   Pick<DocumentStyle, "preset" | "fontFamily" | "fontSize" | "lineSpacing" | "indent">
 > = {
@@ -51,7 +62,7 @@ export const LATEX_STYLE: Required<
   fontFamily: "Computer Modern",
   fontSize: round(ptToPx(TEX.normalPt), 2), // 14.6px
   lineSpacing: round(TEX.baselinePt / TEX.normalPt, 4), // 1.242
-  indent: round(TEX.parindentPt / TEX.normalPt, 4), // 1.5525em
+  indent: 0,
 };
 
 /** The pre-0.8.1 look, kept so existing notes are not restyled under the user. */
@@ -63,9 +74,12 @@ const PLAIN = {
 
 /** Rules that follow from the preset rather than from a user-set field. */
 const PRESET_RULES: Record<DocPreset, { align: "left" | "justify"; paraSkip: number; marginRatio: number }> = {
-  // Paragraphs abut; the first-line indent is what separates them. The margin
-  // is expressed as a fraction of the page WIDTH so page zoom scales it.
-  latex: { align: "justify", paraSkip: 0, marginRatio: (TEX.marginMm * PX_PER_MM) / A4_W },
+  // A paragraph skip is what separates paragraphs, since nothing indents (see
+  // LATEX_STYLE.indent). 9px at the 14.6px body is half a baseline — what
+  // `\usepackage{parskip}` gives you — and pdf.ts re-derives \parskip from it,
+  // so the page and the typeset PDF still agree. The margin is a fraction of
+  // the page WIDTH so page zoom scales it.
+  latex: { align: "justify", paraSkip: 9, marginRatio: (TEX.marginMm * PX_PER_MM) / A4_W },
   plain: { align: "left", paraSkip: 4, marginRatio: 0.09 },
 };
 
@@ -105,7 +119,7 @@ export function fontSizeOptions(current: number): FontSizeOption[] {
     : [...FONT_SIZES, { px: current, label: ptLabel(current) }].sort((a, b) => a.px - b.px);
 }
 export const LINE_SPACINGS = [1, 1.15, LATEX_STYLE.lineSpacing, 1.5, 2];
-export const INDENTS = [0, 1, LATEX_STYLE.indent, 2];
+export const INDENTS = [0, 1, TEX_INDENT, 2];
 
 export function fontFamilyOf(key: string | undefined): string {
   return FONTS[key ?? LATEX_STYLE.fontFamily] ?? FONTS[LATEX_STYLE.fontFamily];
@@ -143,12 +157,28 @@ export function resolveStyle(style: DocumentStyle | undefined): ResolvedStyle {
     fontFamily: fontFamilyOf(fontKey),
     fontSize: style?.fontSize ?? base.fontSize,
     lineSpacing: style?.lineSpacing ?? base.lineSpacing,
-    indent: style?.indent ?? base.indent,
+    indent: storedIndent(style, base.indent),
     paraSkip: rules.paraSkip,
     align: rules.align,
     marginRatio: rules.marginRatio,
     pageLayout: style?.pageLayout ?? "vertical",
   };
+}
+
+/**
+ * The first-line indent a note asked for.
+ *
+ * Notes created before the LaTeX preset stopped indenting (2026-09-09) stored
+ * its 17pt `\parindent` in their style the moment they were made, so the value
+ * alone cannot say whether anyone chose it. The inspector marks a real choice
+ * with `indentChosen`; without that mark the old default reads as the new one,
+ * the Google Docs rule that a paragraph indents only when you indent it.
+ */
+function storedIndent(style: DocumentStyle | undefined, fallback: number): number {
+  const v = style?.indent;
+  if (v == null) return fallback;
+  if (!style?.indentChosen && Math.abs(v - TEX_INDENT) < 1e-6) return fallback;
+  return v;
 }
 
 /**
@@ -189,6 +219,9 @@ export function pageContentStyle(r: ResolvedStyle, pageW: number): Record<string
     textAlign: r.align,
     "--indent": `${r.indent}em`,
     "--para-skip": `${r.paraSkip}px`,
+    // Half an inch of THIS sheet: paragraph indents and list levels are
+    // measured in it (lib/blocks/indent.ts), so they scale with the page zoom.
+    "--indent-step": `${round((INDENT_STEP_PX * pageW) / A4_W, 2)}px`,
   };
 }
 

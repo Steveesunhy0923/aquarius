@@ -7,6 +7,9 @@
  * templates store a tree and are id-refreshed on use (see `freshTree`); they
  * live in localStorage (browser-only) — small, structural starting points, not
  * the user's content.
+ *
+ * Built-ins are skeletons: headings and empty structure, no sample prose (see
+ * the note in `lib/templates/modules.ts`).
  */
 
 import {
@@ -69,12 +72,12 @@ const posters: BuiltInTemplate[] = [
         [
           centerHeading(1, "RESEARCH TITLE"),
           centerHeading(3, "{{Authors}} · {{Affiliation}}"),
-          banner("**Abstract** — the question, what you did, and the headline finding, in three sentences.", "#1d4ed8"),
+          banner("", "#1d4ed8"),
           centerHeading(2, "Methods"),
-          bullets(["How the data was collected", "How it was analysed", "What was controlled for"]),
+          bullets([""]),
           centerHeading(2, "Results"),
-          eq("\\hat{y} = \\beta_0 + \\beta_1 x"),
-          banner("**Takeaway** — the one sentence a passer-by should leave with.", "#0f766e"),
+          eq(""),
+          banner("", "#0f766e"),
         ],
         { background: "linear-gradient(160deg, #0b1e3a, #14344f, #1f4d5f)", foreground: "#f8fafc" },
       ),
@@ -88,11 +91,11 @@ const posters: BuiltInTemplate[] = [
       posterTree(
         [
           centerHeading(1, "STUDY SESSION"),
-          centerHeading(2, "{{Course}} — final review"),
+          centerHeading(2, "{{Course}}"),
           banner("🗓  {{Day}} · {{Time}}        📍  {{Place}}", "#047857"),
           centerHeading(3, "What we'll cover"),
-          bullets(["Topic one", "Topic two", "Past-paper questions"]),
-          banner("Bring your notes, a pen, and the questions you got stuck on. Everyone welcome.", "#065f46"),
+          bullets([""]),
+          banner("", "#065f46"),
         ],
         { background: "linear-gradient(135deg, #d4fc79, #96e6a1)" },
       ),
@@ -107,10 +110,10 @@ const posters: BuiltInTemplate[] = [
         [
           centerHeading(2, "THEOREM"),
           centerHeading(1, "{{Name of the result}}"),
-          eq("a^2 + b^2 = c^2"),
-          banner("**In words** — what the statement is actually saying, with no symbols.", "#6d28d9"),
+          eq(""),
+          banner("", "#6d28d9"),
           centerHeading(3, "Why it's true"),
-          bullets(["The key idea of the proof", "The hypothesis that does the work", "A case where it fails without it"]),
+          bullets([""]),
         ],
         { background: "linear-gradient(135deg, #fbc2eb, #a6c1ee)" },
       ),

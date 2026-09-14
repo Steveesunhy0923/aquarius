@@ -23,7 +23,9 @@ import { formatToLatex } from "./format";
 import { graphModel, graphToTikz } from "./graph";
 import { headingToLatex } from "./headings";
 import { imageAlign, imageItems } from "./images";
-import { listItems, listMarker, listOrdered } from "./lists";
+import { listItems, listMarker, listOrdered, itemSource, listRows, markerAtLevel } from "./lists";
+import { INDENT_STEP_PT, paraIndent } from "./indent";
+import { inlineMathSpans } from "./source";
 import { hasPlacement, linewidthLen, placedRowToLatex } from "./placement";
 import { tableAlign, tableItems, tableRowToLatex } from "./tables";
 
@@ -50,10 +52,23 @@ function slotEmpty(b: Block, name: string): boolean {
   return list.every((child) => renderMath(child).trim().length === 0);
 }
 
-/** Serialize an ordered list of math child blocks into a single math fragment. */
+/**
+ * Serialize an ordered list of math child blocks into a single math fragment.
+ * A run of word characters (identifiers marked `text`, typed in the structural
+ * editor's words mode) becomes one `\text{…}`, spaces and all.
+ */
 function renderRow(children: Block[]): string {
   let out = "";
-  for (const child of children) out += renderMath(child);
+  let words = "";
+  for (const child of children) {
+    if (child?.type === "identifier" && child.attrs?.text) {
+      words += child.value ?? "";
+      continue;
+    }
+    if (words) { out += `\\text{${escapeKatexText(words)}}`; words = ""; }
+    out += renderMath(child);
+  }
+  if (words) out += `\\text{${escapeKatexText(words)}}`;
   return out;
 }
 
@@ -148,21 +163,44 @@ function serializeText(b: Block): string {
       }
     }
   } else {
-    body = formatToLatex(b.value ?? "");
+    // No runs (a legacy or imported block): split the source the same way, so
+    // `$x$` in a paragraph means maths whichever shape the block is in.
+    body = sourceToLatex(b.value ?? "");
   }
 
   // A colored "callout" paragraph exports as an offset quote.
   // (Colored tcolorbox/mdframed export is a planned refinement.)
   const callout = attrs(b).calloutColor;
-  if (typeof callout === "string" && callout) {
-    return `\\begin{quote}\n${body}\n\\end{quote}`;
-  }
-  return body;
+  const out = typeof callout === "string" && callout ? `\\begin{quote}\n${body}\n\\end{quote}` : body;
+  // An indented paragraph moves as a whole (lib/blocks/indent.ts): \leftskip
+  // shifts every line, and the \par inside the group ends the paragraph while
+  // the setting is still in force.
+  const indent = paraIndent(b);
+  return indent > 0 ? `{\\leftskip=${indent * INDENT_STEP_PT}pt\\relax\n${out}\\par}` : out;
 }
 
 /** heading → \section / \subsection / \subsubsection (starred if unnumbered). */
 function serializeHeading(b: Block): string {
   return headingToLatex(b);
+}
+
+/**
+ * Prose SOURCE → LaTeX, with inline `$…$` / `\(…\)` spans emitted as maths.
+ *
+ * A paragraph reaches the serializer pre-split into `attrs.runs`; a list item is
+ * stored as one plain string, so the split happens here instead. Without it the
+ * escaper treated a bullet's formula as prose and shipped `\$E = mc\textasciicircum{}2\$`
+ * — the dollars and the caret escaped into literal text.
+ */
+function sourceToLatex(src: string): string {
+  let out = "";
+  let last = 0;
+  for (const span of inlineMathSpans(src)) {
+    if (span.start > last) out += formatToLatex(src.slice(last, span.start));
+    out += `\\(${span.latex}\\)`;
+    last = span.end;
+  }
+  return out + formatToLatex(src.slice(last));
 }
 
 /** LaTeX `\item` label per marker style (non-default ones need `enumitem`). */
@@ -175,19 +213,36 @@ const LIST_LABEL: Record<string, string> = {
   "lower-roman": "\\roman*.",
 };
 
-/** list → enumerate / itemize. */
+/**
+ * list → enumerate / itemize, nested as the items are (`attrs.levels`).
+ *
+ * The top level's default marker needs no package. Any other marker, and every
+ * nested level (whose Docs-style cycle • ◦ ▪ / 1. a. i. is not LaTeX's own),
+ * sets its label through `enumitem`, which the export preamble loads.
+ */
 function serializeList(b: Block): string {
   const ordered = listOrdered(b);
   const env = ordered ? "enumerate" : "itemize";
-  const marker = listMarker(b);
-  const items = listItems(b).filter((it) => it.trim());
-  const lines = items.map((it) => `  \\item ${formatToLatex(it)}`);
-  // Default markers need no package; others set a label via `enumitem`.
-  const opt =
-    marker === (ordered ? "decimal" : "disc")
-      ? ""
-      : `[label=${LIST_LABEL[marker]}]`; // requires \usepackage{enumitem}
-  return `\\begin{${env}}${opt}\n${lines.join("\n")}\n\\end{${env}}`;
+  const open = (level: number): string => {
+    const marker = markerAtLevel(b, level);
+    const plain = level === 0 && marker === (ordered ? "decimal" : "disc");
+    return `\\begin{${env}}${plain ? "" : `[label=${LIST_LABEL[marker]}]`}`;
+  };
+  const pad = (n: number): string => "  ".repeat(n);
+  const lines: string[] = [];
+  let depth = 0;
+  let hasItem = false; // an \item open at `depth` for a nested list to hang off
+  for (const row of listRows(b, true)) {
+    // Blank items are skipped, which can strand a child without its parent:
+    // never open more than one level at a time, nor before the first \item.
+    const level = Math.min(row.level, hasItem ? depth + 1 : depth);
+    while (depth < level) { depth++; lines.push(pad(depth) + open(depth)); }
+    while (depth > level) { lines.push(`${pad(depth)}\\end{${env}}`); depth--; }
+    lines.push(`${pad(depth + 1)}\\item ${sourceToLatex(itemSource(row.text))}`);
+    hasItem = true;
+  }
+  while (depth > 0) { lines.push(`${pad(depth)}\\end{${env}}`); depth--; }
+  return `${open(0)}\n${lines.join("\n")}\n\\end{${env}}`;
 }
 
 function serializeFraction(b: Block): string {
@@ -290,6 +345,7 @@ function serializeNumber(b: Block): string {
   return b.value ?? "";
 }
 function serializeIdentifier(b: Block): string {
+  if (b.attrs?.text) return `\\text{${escapeKatexText(b.value ?? "")}}`;
   return b.value ?? "";
 }
 
@@ -603,8 +659,11 @@ function usesMhchem(block: Block): boolean {
     case "table":
     case "graph":
     case "heading":
-    case "list":
       return false;
+    case "list":
+      // Item text is escaped prose, but a formula in an item (`$\ce{…}$`, which
+      // the chemistry insert puts there) compiles as real maths.
+      return listItems(block).some((it) => inlineMathSpans(itemSource(it)).some((sp) => MHCHEM_RE.test(sp.latex)));
     case "text": {
       const runs = block.attrs?.runs as InlineRun[] | undefined;
       return Boolean(runs?.some((r) => r.kind === "math" && MHCHEM_RE.test(renderMath(r.block))));

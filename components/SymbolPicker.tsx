@@ -4,8 +4,9 @@ import { Icon } from "@/components/Icon";
 import { Katex } from "@/components/Katex";
 import { previewLatex } from "@/lib/blocks/source";
 import { CLOSE_BTN, EYEBROW } from "@/components/ui/primitives";
+import { DRAG_HANDLE, useDragPanel } from "@/components/ui/useDragPanel";
 import { SYMBOLS, type SymbolEntry } from "@/lib/symbols";
-import { useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 
 /** mhchem entries (\ce / \pu) are literal — never run them through previewLatex,
  *  whose empty-brace / leading-sup rewrites would corrupt chemistry. */
@@ -19,7 +20,7 @@ const isMhchem = (latex: string) => /^\\(?:ce|pu)\{/.test(latex.trim());
  *
  * - `closeOnPick` (default true): close after a pick. Set false for a "browse &
  *   insert several" flow.
- * - `keepFocus`: mousedown handler that preserves the editor's focus so picks
+ * - `keepFocus`: mousedown handler that holds the caret in place so picks
  *   can be inserted inline while a paragraph is being edited.
  * - `autoFocusSearch` (default true): focus the search box on open. Pass false
  *   while editing so opening the modal doesn't steal focus from the textarea.
@@ -32,7 +33,6 @@ export function SymbolPicker({
   searchPlaceholder = "Search… (e.g. alpha, leq, arrow, integral)",
   closeOnPick = true,
   keepFocus,
-  onNavMouseDown,
   autoFocusSearch = true,
 }: {
   onPick: (latex: string) => void;
@@ -44,11 +44,12 @@ export function SymbolPicker({
   searchPlaceholder?: string;
   closeOnPick?: boolean;
   keepFocus?: (e: ReactMouseEvent) => void;
-  onNavMouseDown?: () => void;
   autoFocusSearch?: boolean;
 }) {
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("All");
+  const drag = useDragPanel();
+  const pressOnScrim = useRef(false);
 
   useEffect(() => {
     // Capture phase + stopImmediatePropagation so Escape dismisses only this
@@ -99,13 +100,24 @@ export function SymbolPicker({
   return (
     <div
       className="print-hide fixed inset-0 z-50 flex items-start justify-center bg-foreground/25 p-6"
-      onClick={onClose}
+      // Only a press that STARTED on the scrim dismisses — dragging the panel by
+      // its header and releasing out here must not close the browser.
+      onPointerDown={(e) => { pressOnScrim.current = e.target === e.currentTarget; }}
+      onClick={(e) => {
+        const wasScrim = pressOnScrim.current;
+        pressOnScrim.current = false;
+        if (wasScrim && e.target === e.currentTarget) onClose();
+      }}
     >
       <div
+        ref={drag.ref}
+        style={drag.style}
         className="mt-12 flex max-h-[78vh] w-full max-w-2xl flex-col rounded-modal border border-border bg-surface shadow-modal"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center gap-3 border-b border-border-soft px-5 py-4">
+        {/* The header drags the panel: the formula being inserted into is
+            usually right underneath it. The search box is excluded (NO_DRAG). */}
+        <div {...drag.handleProps} className={`flex items-center gap-3 border-b border-border-soft px-5 py-4 ${DRAG_HANDLE}`}>
           <h2 className="shrink-0 text-base font-semibold">{title}</h2>
           <div className="relative min-w-0 flex-1">
             <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted">
@@ -115,7 +127,6 @@ export function SymbolPicker({
               autoFocus={autoFocusSearch}
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              onMouseDown={onNavMouseDown}
               placeholder={searchPlaceholder}
               className="w-full rounded-control border border-border bg-background py-2 pl-9 pr-8 text-sm outline-none focus:border-accent"
             />

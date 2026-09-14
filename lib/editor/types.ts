@@ -36,6 +36,16 @@ export interface DocHandle {
   saveSectionAsModule: (headingId: string) => void;
   /** Insert a module (or preset stack) as a section at the cursor — ⌘K palette. */
   insertModule: (module: Module) => void;
+  // ── The design's section shortcuts (lib/blocks/shortcuts.ts), driven by the
+  // sidebar's jump list. They live on the note's tree, so every edit here is an
+  // edit to the document.
+  /** Scroll to a shortcut's section — adding the section first if it's absent. */
+  jumpToShortcut: (shortcutId: string) => void;
+  addShortcut: (label: string) => void;
+  removeShortcut: (shortcutId: string) => void;
+  renameShortcut: (shortcutId: string, label: string) => void;
+  /** Drop `from` before `to` (or at the end when `to` is null). */
+  moveShortcut: (fromId: string, toId: string | null) => void;
   /** Run a named editor action — ⌘K palette. */
   runCommand: (cmd: EditorCommand) => void;
   /** False while the pane is read-only (viewer/commenter) — mutating commands are hidden. */

@@ -10,8 +10,10 @@ describe("fullLatexDocument", () => {
     const tex = doc(LATEX_STYLE);
     expect(tex).toContain("\\documentclass[11pt]{article}");
     expect(tex).toContain("margin=22mm");
-    expect(tex).toContain("\\setlength{\\parskip}{0pt}");
-    expect(tex).toMatch(/\\setlength\{\\parindent\}\{1[67](\.\d+)?pt\}/); // article's 17pt
+    // The PDF gets the same paragraph shape as the screen: no first-line
+    // indent, a real \parskip between paragraphs (lib/blocks/docstyle.ts).
+    expect(tex).toContain("\\setlength{\\parindent}{0pt}");
+    expect(tex).toMatch(/\\setlength\{\\parskip\}\{[1-9]/);
     expect(tex).not.toContain("\\linespread"); // 1.242 IS LaTeX's own leading
     expect(tex).not.toContain("\\raggedright");
   });

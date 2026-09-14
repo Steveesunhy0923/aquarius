@@ -16,13 +16,18 @@ export interface OutlineItem {
 
 export const isHeadingCollapsed = (b: Block): boolean => !!b.attrs?.collapsed;
 
-/** The flat outline (one entry per heading), in document order. */
+/**
+ * The flat outline (one entry per NAMED heading), in document order.
+ *
+ * A heading with no text yet is left out rather than listed under a stand-in
+ * name: a section joins the outline when it is called something, which is also
+ * what keeps a just-created heading from announcing itself before it is typed.
+ */
 export function computeOutline(blocks: Block[]): OutlineItem[] {
   const out: OutlineItem[] = [];
   for (const b of blocks) {
-    if (b.type === "heading") {
-      out.push({ id: b.id, text: b.value?.trim() || "Untitled heading", level: headingLevel(b), collapsed: isHeadingCollapsed(b) });
-    }
+    const text = b.type === "heading" ? (b.value ?? "").trim() : "";
+    if (text) out.push({ id: b.id, text, level: headingLevel(b), collapsed: isHeadingCollapsed(b) });
   }
   return out;
 }

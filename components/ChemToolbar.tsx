@@ -41,15 +41,13 @@ function readLS(key: string, fallback: string[]): string[] {
 /** Chemistry strip — the parallel of SymbolToolbar: fixed reaction inserts plus
  *  eight editable, localStorage-backed species slots and the "browse all" entry
  *  point. Swaps in for the math strip via the toolbar's Σ/⚗ switch. */
-export function ChemToolbar({ onInsert, onNewEquation, onBrowse, keepFocus, markSticky, leading, trailing }: {
+export function ChemToolbar({ onInsert, onNewEquation, onBrowse, keepFocus, leading, trailing }: {
   onInsert: (latex: string) => void;
   /** Insert a blank chemical-equation block and start editing it. */
   onNewEquation: () => void;
   onBrowse: () => void;
-  /** Mousedown handler that preserves the editor's focus (sticky semantics). */
+  /** Mousedown handler that holds the caret where it is, so a pick lands there. */
   keepFocus: (e: MouseEvent) => void;
-  /** Arm the one-shot sticky flag while a block is being edited. */
-  markSticky: () => void;
   /** Rendered first in the strip (the math ⇄ chemistry mode switch). */
   leading?: ReactNode;
   /** Rendered last in the strip (the pin that keeps it open outside a formula). */
@@ -94,7 +92,7 @@ export function ChemToolbar({ onInsert, onNewEquation, onBrowse, keepFocus, mark
         <span className="mx-2 h-7 w-px bg-border" />
         {/* Species — eight editable slots; "Edit" lets the user change any of them */}
         {species.map((latex, i) => (
-          <button key={i} onMouseDown={(e) => { if (!editSlots) keepFocus(e); else markSticky(); }} onClick={() => (editSlots ? setSlotPicker(i) : onInsert(latex))} title={editSlots ? "Click to change this species" : `Insert ${latex}`} aria-label={editSlots ? `Change species ${i + 1}` : `Insert ${latex}`} className={`${ICON_BTN} ${editSlots ? "border border-dashed border-accent/60" : ""}`}>
+          <button key={i} onMouseDown={keepFocus} onClick={() => (editSlots ? setSlotPicker(i) : onInsert(latex))} title={editSlots ? "Click to change this species" : `Insert ${latex}`} aria-label={editSlots ? `Change species ${i + 1}` : `Insert ${latex}`} className={`${ICON_BTN} ${editSlots ? "border border-dashed border-accent/60" : ""}`}>
             <Katex latex={latex} />
           </button>
         ))}

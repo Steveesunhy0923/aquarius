@@ -3,7 +3,9 @@
  *
  * The block tree is the source of truth, but the *interim* editor lets you edit
  * a block's content as text:
- *   - a paragraph is edited as prose with inline math written `\(  \)`
+ *   - a paragraph is edited as prose with inline maths written `$…$` (and the
+ *     older `\(…\)`, still read); a paragraph that is nothing but `$$…$$` is
+ *     an equation, and becomes a display formula block
  *   - a formula is edited as its raw LaTeX
  * and both render live via KaTeX. The full structural (argument-slot) editor is
  * the planned next step; until then this keeps every block fully editable.
@@ -20,6 +22,7 @@
 
 import { blockToKatex } from "@/lib/blocks";
 import { ceInner, tagChem } from "@/lib/blocks/chem";
+import { previewEnvCells } from "@/lib/blocks/mathenv";
 import type { Block, InlineRun } from "@/lib/blocks/types";
 
 const uid = (): string => crypto.randomUUID();
@@ -52,41 +55,117 @@ export function hasContent(block: Block): boolean {
   return blockToKatex(block).trim().length > 0;
 }
 
-/** Inline-math delimiter in the editable paragraph source: `\(  \)`. */
-const INLINE_MATH = /\\\(([\s\S]*?)\\\)/g;
+/**
+ * Inline maths in the editable paragraph source is written `$…$` — what people
+ * type, and what every maths-aware editor they have used accepts. `\(…\)` is
+ * still READ, because notes written before this (and handwriting recognitions,
+ * which emit it) are full of it.
+ *
+ * A `$` is only a delimiter when it reads like one, so prose about money keeps
+ * working: "it costs $5, not $10" has whitespace before its closing `$` and is
+ * left alone, and `\$` is always a literal dollar. `$$` is never an inline
+ * delimiter — that is a display equation, which is a block of its own
+ * (`displayMathSource`).
+ */
+
+/** Where a `$…$` span that opened at `from` closes, or -1. */
+function closingDollar(src: string, from: number): number {
+  if (from >= src.length || /\s/.test(src[from])) return -1; // "$ x$" is not maths
+  for (let i = from; i < src.length; i++) {
+    const c = src[i];
+    if (c === "\n") return -1; // a span never crosses a line
+    if (c === "\\") { i++; continue; } // \$ and friends are literals
+    if (c !== "$") continue;
+    if (src[i + 1] === "$") return -1; // ran into a display delimiter
+    if (i === from) return -1; // "$$" — empty
+    if (/\s/.test(src[i - 1])) return -1; // "$5, not $10" — money, not maths
+    return i;
+  }
+  return -1;
+}
+
+/**
+ * Locate every inline-math span in the source, in order — `$…$` and the legacy
+ * `\(…\)`. The i-th span corresponds 1:1 to the i-th math run from
+ * `runsFromSource` (this is what that function walks), so a caret or a chip can
+ * be mapped back to its source range.
+ */
+export function inlineMathSpans(src: string): { start: number; end: number; latex: string }[] {
+  const spans: { start: number; end: number; latex: string }[] = [];
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i];
+    if (c === "\\") {
+      if (src[i + 1] === "(") {
+        const end = src.indexOf("\\)", i + 2);
+        if (end < 0) break;
+        spans.push({ start: i, end: end + 2, latex: src.slice(i + 2, end) });
+        i = end + 2;
+        continue;
+      }
+      i += 2; // an escape — `\$` is a dollar sign, not a delimiter
+      continue;
+    }
+    if (c === "$") {
+      if (src[i + 1] === "$") { i += 2; continue; } // display maths, handled elsewhere
+      const end = closingDollar(src, i + 1);
+      if (end > 0) {
+        spans.push({ start: i, end: end + 1, latex: src.slice(i + 1, end) });
+        i = end + 1;
+        continue;
+      }
+    }
+    i++;
+  }
+  return spans;
+}
+
+/**
+ * The inline-math span the caret is strictly INSIDE (between its delimiters),
+ * with its index, or null. A caret on the outer edge of either delimiter is
+ * outside: that is where arrowing past a formula, or closing its box, leaves it.
+ */
+export function inlineSpanAt(src: string, caret: number): { index: number; start: number; end: number; latex: string } | null {
+  const spans = inlineMathSpans(src);
+  for (let i = 0; i < spans.length; i++) {
+    const s = spans[i];
+    if (caret > s.start && caret < s.end) return { index: i, ...s };
+  }
+  return null;
+}
+
+/** An inline formula as paragraph source: `$latex$`, or nothing when empty.
+ *  Trimmed, because "$ x$" and "$x $" do not read as maths (closingDollar). */
+export function inlineSource(latex: string): string {
+  const t = latex.trim();
+  return t ? `$${t}$` : "";
+}
+
+/**
+ * The LaTeX of a source that is ENTIRELY one `$$…$$` display equation, else
+ * null. Typing `$$E = mc^2$$` in a paragraph and leaving it turns the paragraph
+ * into an equation block — the same promotion `blocksFromSource` does for a
+ * pasted or hand-written line that is nothing but maths.
+ */
+export function displayMathSource(src: string): string | null {
+  const t = src.trim();
+  if (!t.startsWith("$$") || !t.endsWith("$$") || t.length < 5) return null;
+  const inner = t.slice(2, -2);
+  return inner.includes("$$") || !inner.trim() ? null : inner.trim();
+}
 
 /** Split editable paragraph source into text / inline-math runs. */
 export function runsFromSource(src: string): InlineRun[] {
   const runs: InlineRun[] = [];
   let last = 0;
-  let m: RegExpExecArray | null;
-  INLINE_MATH.lastIndex = 0;
-  while ((m = INLINE_MATH.exec(src))) {
-    if (m.index > last) {
-      runs.push({ kind: "text", text: src.slice(last, m.index) });
-    }
-    runs.push({ kind: "math", block: rawMath(m[1]) });
-    last = m.index + m[0].length;
+  for (const span of inlineMathSpans(src)) {
+    if (span.start > last) runs.push({ kind: "text", text: src.slice(last, span.start) });
+    runs.push({ kind: "math", block: rawMath(span.latex) });
+    last = span.end;
   }
   if (last < src.length) runs.push({ kind: "text", text: src.slice(last) });
   if (runs.length === 0) runs.push({ kind: "text", text: "" });
   return runs;
-}
-
-/**
- * Locate every inline-math `\(…\)` span in the source, in order. The i-th span
- * corresponds 1:1 to the i-th math run from `runsFromSource` (same regex), so the
- * structural inline-math editor can map a clicked formula chip back to its
- * source span. Returns the char range and the inner LaTeX of each.
- */
-export function inlineMathSpans(src: string): { start: number; end: number; latex: string }[] {
-  const spans: { start: number; end: number; latex: string }[] = [];
-  const re = /\\\(([\s\S]*?)\\\)/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(src))) {
-    spans.push({ start: m.index, end: m.index + m[0].length, latex: m[1] });
-  }
-  return spans;
 }
 
 /**
@@ -99,14 +178,14 @@ export function replaceInlineMathSpan(src: string, index: number, latex: string)
   const spans = inlineMathSpans(src);
   const s = spans[index];
   if (!s) return src;
-  const replacement = latex.trim() ? `\\(${latex}\\)` : "";
+  const replacement = latex.trim() ? `$${latex}$` : "";
   return src.slice(0, s.start) + replacement + src.slice(s.end);
 }
 
 /** Inverse of runsFromSource: render runs back to editable source text. */
 export function runsToSource(runs: InlineRun[]): string {
   return runs
-    .map((r) => (r.kind === "text" ? r.text : `\\(${blockToKatex(r.block)}\\)`))
+    .map((r) => (r.kind === "text" ? r.text : `$${blockToKatex(r.block)}$`))
     .join("");
 }
 
@@ -166,9 +245,18 @@ export function blocksFromSource(src: string): Block[] {
     .map((c) => c.trim())
     .filter(Boolean);
   return chunks.map((chunk) => {
+    const display = displayMathSource(chunk);
+    if (display != null) {
+      const block = displayFromSource(display);
+      return ceInner(display) != null ? tagChem(block) : block;
+    }
     const runs = runsFromSource(chunk);
     const only = runs.length === 1 ? runs[0] : undefined;
-    if (!only || only.kind !== "math") return paragraphFromSource(chunk);
+    // A chunk that is nothing but maths becomes a DISPLAY formula — but only
+    // for `\(…\)`, which is what a handwriting recognition or a LaTeX paste
+    // emits for a line that stood on its own. `$…$` is the inline delimiter the
+    // user typed on purpose; promoting that would contradict `$$…$$`.
+    if (!only || only.kind !== "math" || !chunk.trim().startsWith("\\(")) return paragraphFromSource(chunk);
     // Re-serialize rather than re-slicing the source: `rawMath` stores the
     // inner LaTeX verbatim, so this is the exact text between the delimiters.
     const latex = blockToKatex(only.block);
@@ -182,12 +270,17 @@ export function blocksFromSource(src: string): Block[] {
  * arguments with sample letters (a, b, c…) instead of placeholder boxes, and
  * giving a leading `^`/`_` a base — so `\frac{}{}` previews as `\frac{a}{b}`,
  * `^{}` as `a^{b}`, `\sum_{}^{}` as `\sum_{a}^{b}`, etc.
+ *
+ * An environment that draws delimiters previews as JUST those delimiters, sized
+ * like every other icon in the picker — `[ ]` says "matrix" more plainly than a
+ * worked 2×2 does, and at a fraction of the height (see `previewEnvCells`).
  */
 export function previewLatex(latex: string): string {
   const letters = ["a", "b", "c", "d", "e"];
   let i = 0;
   const next = () => letters[i++] ?? "x";
-  let s = latex.replace(/\[\]/g, "[n]"); // optional arg, e.g. nth-root index
+  let s = previewEnvCells(latex, next);
+  s = s.replace(/\[\]/g, "[n]"); // optional arg, e.g. nth-root index
   const base = /^[\^_]/.test(s) ? next() : ""; // base for a leading sup/sub
   s = s.replace(/\{\}/g, () => `{${next()}}`); // fill empty groups
   return base + s;

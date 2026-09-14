@@ -120,6 +120,38 @@ presets + custom templates + modules into one underlying thing.
    `lib/templates/templates.test.ts`. Verified in a real browser: all 18 cards render, Resume
    and Weekly Planner apply with their field prompts, no console errors.
 
+8. ✅ **Section shortcuts — the design's jump list** *(unreleased)* — applying a design now
+   stamps its sections onto the note (`DocumentTree.shortcuts`, model in
+   `lib/blocks/shortcuts.ts`), and the sidebar shows them above the outline. The outline can
+   only list what has been WRITTEN; the shortcut list is what the design says should be there,
+   so on a half-finished Notes page "Worked Example" is one click away before it exists —
+   following a shortcut whose section is missing ADDS it (from the catalog module of that
+   name, else a heading + body) and scrolls there. Every part is editable per note: add (+),
+   rename, remove, drag to reorder. Resolution prefers the heading a shortcut was stamped
+   from and falls back to a case-insensitive NAME match, so it survives a section being
+   deleted and rewritten, or the design being applied again with fresh ids. 15 unit tests
+   (`lib/blocks/shortcuts.test.ts`); verified in a browser end to end (apply → jump → add a
+   custom shortcut → follow it to insert the section → rename → remove → drag-reorder →
+   survives reload).
+
+9. ✅ **Skeletons, not sample prose** *(unreleased)* — every built-in module, preset and poster
+   was stripped of its filler. A module is now its section and nothing else: the heading, a
+   table's header row, a `{{field}}` line, an empty list item, an empty formula slot, an empty
+   callout box — never a sentence describing what to write there ("Two or three sentences
+   capturing the main ideas", "Concept 1 — definition"), which the writer had to select and
+   delete before their own words could go in. The writing surface lost its captions to match:
+   a new line, a new heading and a blank note are blank, the way they are in a word processor —
+   no `Write… $x^2$ for a formula…` placeholder, no "Empty paragraph — click to edit", no
+   "Empty note" box, no `Heading` placeholder, and an unnamed heading no longer reads
+   "Untitled heading" or appears in the outline until it is called something. The menus lost
+   theirs too: the `/` menu, the Designs cards and the Modules tab list modules by name, icon
+   and category alone. Blocks that are empty stay REACHABLE — a blank line, a blank callout and
+   an all-blank list each keep a line's height (`BlockView`), and an empty formula shows a bare
+   dashed slot — so a skeleton can still be clicked into everywhere.
+   Insertion follows the same rule: `addBlock` treats an empty paragraph the cursor is in as
+   the insertion point and REPLACES it, instead of pushing the new block below and stranding a
+   blank line above it.
+
 ## Todo next
 
 - **Per-subject default stack** — each Subject defines a skeleton so new notes in *Physics*

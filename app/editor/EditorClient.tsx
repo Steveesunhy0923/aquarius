@@ -8,6 +8,8 @@ import { ChemToolbar } from "@/components/ChemToolbar";
 import { activeChemField } from "@/components/ChemField";
 import { EditBox, type EditBoxHandle } from "@/components/EditBox";
 import { EditorSidebar } from "@/components/EditorSidebar";
+import { ListEditor } from "@/components/ListEditor";
+import { lineHandleOf, type LineHandle } from "@/components/RichLine";
 import { uiPrompt } from "@/components/ui/dialogs";
 import { ExportMenu } from "@/components/ExportMenu";
 import { FigureBox } from "@/components/FigureBox";
@@ -25,8 +27,6 @@ import {
   GROUP,
   GROUP_BTN,
   HEAD_BTN,
-  HEAD_BTN_BASE,
-  HEAD_BTN_HOVER,
   TEXT_BTN,
 } from "@/components/ToolbarControls";
 import { CodeBlockView } from "@/components/CodeBlockView";
@@ -34,7 +34,7 @@ import { makeCodeBlock } from "@/lib/blocks/codeblock";
 import { releaseNoteKernels, retainNoteKernels } from "@/lib/run/manager";
 import { DesignPicker } from "@/components/DesignPicker";
 import { ShareDialog } from "@/components/ShareDialog";
-import { activeMathField, activeTextInserter } from "@/components/MathField";
+import { activeFormulaOpener, activeMathField, activeTextInserter } from "@/components/MathField";
 import { activeMathEdit } from "@/components/MathEdit";
 import { isStructural, structuralEquation } from "@/lib/matheditor";
 import { PresenceAvatars } from "@/components/PresenceAvatars";
@@ -47,8 +47,9 @@ import { capabilitiesFor, lockReason, type NoteKind } from "@/lib/editor/capabil
 import { PdfDocumentView } from "@/components/pdf/PdfDocumentView";
 import type { Stroke as InkStroke } from "@/components/ink/strokes";
 import { getSettings, setSettings } from "@/lib/settings/settings";
+import { useAppSettings } from "@/lib/settings/useAppSettings";
 import { freshTree, saveTemplate, type BuiltInBackground, type SavedTemplate } from "@/lib/templates/templates";
-import { fillFields, freshBlocks, listSavedModules, moduleFields, recordModuleUse, saveModule, updateModule, type Module } from "@/lib/templates/modules";
+import { builtinModules, fillFields, freshBlocks, listSavedModules, moduleFields, recordModuleUse, saveModule, updateModule, type Module } from "@/lib/templates/modules";
 import { ModuleEditorDialog } from "@/components/ModuleEditorDialog";
 import { ModuleFieldsDialog } from "@/components/ModuleFieldsDialog";
 import { NoteLinkPicker, type NoteLinkPick } from "@/components/NoteLinkPicker";
@@ -70,6 +71,18 @@ import {
   sectionRange,
   type OutlineItem,
 } from "@/lib/blocks/outline";
+import {
+  addShortcut,
+  documentShortcuts,
+  mergeShortcuts,
+  moveShortcut,
+  removeShortcut,
+  renameShortcut,
+  resolveShortcut,
+  shortcutsFromBlocks,
+  type SectionShortcut,
+} from "@/lib/blocks/shortcuts";
+import { renderedOffsetAt, sourceOffsetFor, formulaPointAt, type FormulaPoint } from "@/lib/editor/caret";
 import { paginate } from "@/lib/editor/pagination";
 import { moveRowItemAcross, reorderRowItem, type RowItems } from "@/lib/editor/rowItems";
 import type { DocHandle, EditorCommand } from "@/lib/editor/types";
@@ -95,15 +108,18 @@ import {
   blockEditSource,
   blocksFromSource,
   displayFromSource,
+  displayMathSource,
   hasContent,
   isParagraph,
   paragraphFromSource,
   runsFromSource,
 } from "@/lib/blocks/source";
+import { fillEnvCells } from "@/lib/blocks/mathenv";
 import { defaultGraph, fitViewToExpr, graphModel, makeGraphBlock, newGraphId, SHAPE_PALETTE, withGraph, type GraphData } from "@/lib/blocks/graph";
 import { DEFAULT_HIGHLIGHT } from "@/lib/blocks/format";
 import { A4_W, A4_H, pageContentStyle, presetClass, resolveStyle, unindentedParagraphs } from "@/lib/blocks/docstyle";
-import { listItems, listOrdered, makeList, withList, type ListMarker } from "@/lib/blocks/lists";
+import { listItems, listLevels, listMarker, listOrdered, makeList, withList, type ListMarker } from "@/lib/blocks/lists";
+import { paraIndent, withParaIndent } from "@/lib/blocks/indent";
 import {
   demoRows,
   makeTableBlock,
@@ -130,6 +146,7 @@ import {
   useState,
   type CSSProperties,
   type ChangeEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent,
   type MutableRefObject,
   type ReactNode,
@@ -143,6 +160,8 @@ interface DocProps {
   onActivate: () => void;
   onClose?: () => void;
   onHeadings: (items: OutlineItem[]) => void;
+  /** The note's design shortcuts, for the sidebar's jump list. */
+  onShortcuts: (items: SectionShortcut[]) => void;
   /** Fired after a successful save so the page can refresh the recent-files list. */
   onSaved?: () => void;
   handleRef: MutableRefObject<DocHandle | null>;
@@ -162,16 +181,19 @@ const SYMBOL_PIN_KEY = "aquarius.symbolpin";
 /** Min gap between throttled auto version-history snapshots (4 min). */
 const AUTO_VERSION_INTERVAL_MS = 4 * 60 * 1000;
 /**
- * Click-to-edit hit target around a rendered block. The padding gives the hover
- * highlight some air; the matching negative margins keep it OUT of the layout,
- * so the block occupies exactly the space its text does — otherwise every
- * paragraph would be 8px taller and 16px narrower than the document says, and
- * neither the LaTeX preset's abutting paragraphs nor the line breaks would
- * match the typeset PDF.
+ * How many times in a row the block-height measurement may re-run because of its
+ * own previous result before it stops (see the measuring layout effect). A
+ * settling layout takes one or two passes — images and webfonts can add a
+ * couple; a measure/paginate feedback loop never stops on its own.
  */
-const EDIT_HIT = "-mx-2 -my-1 w-full rounded-md px-2 py-1 text-left";
+const MAX_REMEASURES = 8;
+/** Press target for anything you type into (paragraph, heading, list, formula):
+ *  the words themselves, with no rectangle behind them. A document does not
+ *  highlight a line because the pointer crossed it — the affordance is the text
+ *  cursor. Object blocks (image, table, graph, code) keep their own chrome. */
+const TEXT_HIT = "w-full cursor-text text-left";
 
-function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, onSaved, handleRef }: DocProps) {
+function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, onShortcuts, onSaved, handleRef }: DocProps) {
   const { loading: authLoading, user } = useAuth();
   const [pkg, setPkg] = useState<NotePackage | null>(null);
   const [title, setTitle] = useState("");
@@ -281,6 +303,9 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   const [graphEdit, setGraphEdit] = useState<{ id: string | null } | null>(null);
   const [hlMenu, setHlMenu] = useState(false);
   const [zoom, setZoom] = useState(1); // page size ratio
+  // Section folding is opt-in (Settings → Fold sections). Off, no heading gets a
+  // fold arrow and a section folded earlier shows in full.
+  const { sectionFolding } = useAppSettings();
   // Document settings panel (typeface, leading, indent, zoom, page flow). Open
   // by default on a full-width pane; a split pane is too narrow to give 240px
   // away before the user has asked for it.
@@ -366,10 +391,8 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   const lastSnapAt = useRef(0);
   const lastSnapCoalesced = useRef(false);
   const lastAutoVersionAt = useRef(0); // throttle auto version-history snapshots
-  const taRef = useRef<HTMLTextAreaElement>(null);
+  const taRef = useRef<LineHandle>(null);
   const caretRef = useRef(0);
-  const sticky = useRef(false);
-  const dragFrom = useRef<number | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const addTarget = useRef<string | null>(null);
   // Mirrors of state read by the debounced autosave (avoid stale closures).
@@ -426,7 +449,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     if (at == null) return;
     remoteCaretRef.current = null;
     const ta = taRef.current;
-    if (!ta || document.activeElement !== ta) return;
+    if (!ta || document.activeElement !== ta.el) return;
     const pos = Math.min(at, ta.value.length);
     ta.setSelectionRange(pos, pos);
     caretRef.current = pos;
@@ -444,10 +467,12 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   useEffect(() => {
     if (!collab.active) return;
     const onSel = () => {
-      const ae = document.activeElement as HTMLTextAreaElement | null;
-      if (!editingId || !ae || ae.tagName !== "TEXTAREA" || !rootRef.current?.contains(ae)) return;
-      const start = ae.selectionStart ?? 0;
-      const end = ae.selectionEnd ?? start;
+      // Every text line in this pane is a RichLine (paragraphs, list items).
+      const ae = document.activeElement as HTMLElement | null;
+      const line = lineHandleOf(ae);
+      if (!editingId || !ae || !line || !rootRef.current?.contains(ae)) return;
+      const start = line.selectionStart;
+      const end = line.selectionEnd;
       collab.setCursor({ blockId: editingId, start: Math.min(start, end), end: Math.max(start, end) });
     };
     document.addEventListener("selectionchange", onSel);
@@ -463,7 +488,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
       const ta = taRef.current;
       // Only OUR textarea counts: a selection in the title field or a table cell
       // must not raise a popover that would splice into the paragraph instead.
-      if (!ta || document.activeElement !== ta) { setHasSelection(false); return; }
+      if (!ta || document.activeElement !== ta.el) { setHasSelection(false); return; }
       setHasSelection((ta.selectionEnd ?? 0) > (ta.selectionStart ?? 0));
     };
     read();
@@ -648,25 +673,51 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   useEffect(() => {
     if (!editingId) return;
     lastEditedId.current = editingId; // remember for the topbar style dropdown
-    const t = taRef.current;
+    const t: { focus(): void; value: string; setSelectionRange(start: number, end: number): void } | null = taRef.current ?? headingRef.current;
     if (t) {
       t.focus();
-      const n = t.value.length;
+      const n = Math.min(pendingCaret.current ?? t.value.length, t.value.length);
+      pendingCaret.current = null;
       try { t.setSelectionRange(n, n); } catch { /* noop */ }
       caretRef.current = n;
     }
   }, [editingId]);
-  // Measure each block's height after every render (drives pagination).
+  /**
+   * Measure each block's height after every render (drives pagination).
+   *
+   * This is a feedback loop by nature: the heights decide the page breaks, and a
+   * page break can change a height (a block at the top of a page is styled
+   * differently from one mid-page). The styles are written so it converges —
+   * anything position-dependent trims with MARGINS, which offsetHeight ignores
+   * (see the `:first-child` heading rule in app/globals.css) — but a rule that
+   * forgets that would spin here forever, which is what "Maximum update depth
+   * exceeded" was: a heading crossing a page boundary measured shorter at the
+   * top of the new page, fitted on the old one again, and bounced.
+   *
+   * So this counts CONSECUTIVE re-measures that were themselves caused by the
+   * last measurement, and stops after a few. Any other reason to re-render (a
+   * keystroke, a zoom change, a font finishing loading) resets the count, so
+   * normal editing is never throttled. Stalling leaves the page break one line
+   * off; looping freezes the editor.
+   */
+  const remeasures = useRef(0);
+  const selfInduced = useRef(false);
+  const heightsRef = useRef<Record<string, number>>({});
   useLayoutEffect(() => {
-    setHeights((prev) => {
-      const next: Record<string, number> = {};
-      let changed = Object.keys(prev).length !== blockEls.current.size;
-      for (const [id, el] of blockEls.current) {
-        next[id] = el.offsetHeight;
-        if (prev[id] !== next[id]) changed = true;
-      }
-      return changed ? next : prev;
-    });
+    remeasures.current = selfInduced.current ? remeasures.current + 1 : 0;
+    selfInduced.current = false;
+    if (remeasures.current >= MAX_REMEASURES) return; // let the current breaks stand
+    const prev = heightsRef.current;
+    const next: Record<string, number> = {};
+    let changed = Object.keys(prev).length !== blockEls.current.size;
+    for (const [id, el] of blockEls.current) {
+      next[id] = el.offsetHeight;
+      if (prev[id] !== next[id]) changed = true;
+    }
+    if (!changed) return;
+    heightsRef.current = next;
+    selfInduced.current = true;
+    setHeights(next);
   });
 
   // ── undo / redo (whole-document snapshots) ─────────────────────────────────
@@ -735,9 +786,17 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
       fresh.blocks = fillFields(fresh.blocks, values);
       setPkg((prev) => {
         if (!prev) return prev;
+        // The design's sections become the note's shortcut list (lib/blocks/
+        // shortcuts.ts). "Replace" adopts the design's list wholesale; "add"
+        // merges its sections into whatever the note already had.
+        const stamped = shortcutsFromBlocks(fresh.blocks);
         const tree = action === "add"
-          ? { ...prev.tree, blocks: [...prev.tree.blocks, ...fresh.blocks] }
-          : fresh;
+          ? {
+              ...prev.tree,
+              blocks: [...prev.tree.blocks, ...fresh.blocks],
+              shortcuts: mergeShortcuts(documentShortcuts(prev.tree), stamped),
+            }
+          : { ...fresh, shortcuts: stamped };
         return { ...prev, tree };
       });
       setSaved(false);
@@ -782,7 +841,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
       const ae = document.activeElement as HTMLElement | null;
       // Leave native undo to other text fields (note title, captions, …).
       const isOtherField =
-        !!ae && ae !== taRef.current &&
+        !!ae && ae !== taRef.current?.el && !ae.closest("[data-richline]") &&
         (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable);
       if (isOtherField) return;
       const root = rootRef.current;
@@ -943,7 +1002,60 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   function reorderSections(fromId: string, toId: string | null) {
     setBlocks((bs) => reorderSectionBlocks(bs, fromId, toId));
   }
-  useImperativeHandle(handleRef, () => ({ scrollToBlock, scrollToTop, toggleSection, reorderSections, saveSectionAsModule: (hid: string) => void saveSectionAsModule(hid), insertModule: paletteInsertModule, runCommand, capabilities: () => capsRef.current }), [handleRef]);
+
+  // ── section shortcuts (the design's jump list — lib/blocks/shortcuts.ts) ────
+  /** Edit the note's shortcut list. Tree-level like the document style, so it
+   *  goes through setPkg rather than setBlocks. */
+  function editShortcuts(fn: (list: SectionShortcut[]) => SectionShortcut[]) {
+    if (!capsRef.current.editBlocks) return;
+    setPkg((prev) => {
+      if (!prev) return prev;
+      const next = fn(documentShortcuts(prev.tree));
+      if (next === prev.tree.shortcuts) return prev;
+      return { ...prev, tree: { ...prev.tree, shortcuts: next } };
+    });
+    setSaved(false);
+  }
+
+  /**
+   * Follow a shortcut: scroll to its section, or — when the note doesn't have
+   * that section (not written yet, or deleted) — add it and scroll there.
+   *
+   * The section comes from the module catalog when a module goes by that name,
+   * so "Worked example" arrives with its worked-example body rather than as a
+   * bare heading; otherwise it is a heading plus somewhere to write.
+   */
+  function jumpToShortcut(shortcutId: string) {
+    const tree = pkgRef.current?.tree;
+    if (!tree) return;
+    const sc = documentShortcuts(tree).find((s) => s.id === shortcutId);
+    if (!sc) return;
+    const target = resolveShortcut(tree.blocks, sc);
+    if (target) { scrollToBlock(target.id); return; }
+    if (!capsRef.current.editBlocks) return; // a viewer can't add the section
+    const named = [...listSavedModules(), ...builtinModules()].find(
+      (m) => m.name.trim().toLowerCase() === sc.label.trim().toLowerCase(),
+    );
+    if (named) { paletteInsertModule(named); return; }
+    const head = makeHeading(2, sc.label);
+    setBlocks((bs) => [...bs, head, paragraphFromSource("")]);
+    setTimeout(() => scrollToBlock(head.id), 60);
+  }
+  useImperativeHandle(handleRef, () => ({
+    scrollToBlock,
+    scrollToTop,
+    toggleSection,
+    reorderSections,
+    saveSectionAsModule: (hid: string) => void saveSectionAsModule(hid),
+    insertModule: paletteInsertModule,
+    jumpToShortcut,
+    addShortcut: (label: string) => editShortcuts((l) => addShortcut(l, label)),
+    removeShortcut: (sid: string) => editShortcuts((l) => removeShortcut(l, sid)),
+    renameShortcut: (sid: string, label: string) => editShortcuts((l) => renameShortcut(l, sid, label)),
+    moveShortcut: (from: string, to: string | null) => editShortcuts((l) => moveShortcut(l, from, to)),
+    runCommand,
+    capabilities: () => capsRef.current,
+  }), [handleRef]);
   // Report the outline to the page whenever it actually changes (not every keystroke).
   const lastOutline = useRef("");
   useEffect(() => {
@@ -954,6 +1066,16 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
       onHeadings(items);
     }
   }, [pkg, onHeadings]);
+  // Same for the shortcut list (changes on apply-a-design and on edits to it).
+  const lastShortcuts = useRef("");
+  useEffect(() => {
+    const items = documentShortcuts(pkgRef.current?.tree);
+    const key = JSON.stringify(items);
+    if (key !== lastShortcuts.current) {
+      lastShortcuts.current = key;
+      onShortcuts(items);
+    }
+  }, [pkg, onShortcuts]);
 
   function commit(text: string, c: string | null) {
     if (!editingId) return;
@@ -962,11 +1084,64 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
       : editingChem
         ? tagChem(displayFromSource(wrapCe(text), editingId))
         : displayFromSource(text, editingId);
-    setBlocks((bs) => bs.map((b) => (b.id === editingId ? next : b)), true); // coalesce keystrokes
+    // Rebuilt from source every keystroke, so the paragraph's indent (which the
+    // source does not carry) is taken over from the block being replaced.
+    setBlocks((bs) => bs.map((b) => (b.id === editingId ? (editingPara ? withParaIndent(next, paraIndent(b)) : next) : b)), true); // coalesce keystrokes
   }
-  function startEdit(block: Block, forceChem = false) {
+  /** Where the caret should open, in SOURCE offsets — set from the press that
+   *  started the edit, consumed by the focus effect. */
+  const pendingCaret = useRef<number | null>(null);
+  /**
+   * Close whatever block is open before opening `next`.
+   *
+   * Leaving is part of ARRIVING, in the same handler and the same render — not
+   * a blur the browser may deliver late, early, or (for a MathLive field) never.
+   * That is what makes one press land the caret in the line under it every
+   * time, and it keeps `endEdit`'s tidying (drop an abandoned empty block,
+   * promote a typed `$$…$$`) on the path out.
+   */
+  function leaveOpenBlock(next: string | null) {
+    const open = editingIdRef.current;
+    if (open && open !== next) {
+      // A formula open in that line is written first, its last keystroke
+      // included, while the page's draft still belongs to that line.
+      editBoxRef.current?.commitInline();
+      endEdit(open);
+    }
+  }
+  // Deliberately NOT called from startEdit: splitParagraph, mergeBack/Forward,
+  // backOut and listToParagraph rewrite the block they are leaving in the same
+  // update, and running endEdit's tidy against a tree that has not caught up
+  // would judge the wrong text (an Enter at the start of a line would see an
+  // "empty" block and delete it). Those paths hand the block over themselves;
+  // the pointer and stepToBlock are the transitions that need this.
+  /**
+   * Enter a block from the pointer.
+   *
+   * On MOUSEDOWN, not click. A click only fires when mousedown and mouseup
+   * share a target, and swapping the previous block out of edit mode re-renders
+   * the line being pressed — so the click never arrived and the first press on
+   * a line did nothing. `preventDefault` keeps the browser from moving focus to
+   * the hit target as well, so the only thing that decides where the caret goes
+   * is the effect that follows `editingId`.
+   *
+   * The leave belongs HERE and not on a capture handler further up the row:
+   * React flushes a discrete event's updates as soon as the capture phase has
+   * run, so closing the previous block from up there re-rendered the line being
+   * pressed before this handler was ever dispatched — the same swallowed press,
+   * one phase earlier.
+   */
+  function pressToEdit(e: MouseEvent, blockId: string, run: () => void) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    leaveOpenBlock(blockId);
+    run();
+  }
+  /** Where a press opened the formula being edited, as fractions of its
+   *  rendered box — the formula editor puts its caret there (FormulaEditBox). */
+  const formulaPoint = useRef<FormulaPoint | null>(null);
+  function startEdit(block: Block, forceChem = false, at?: { el: HTMLElement; x: number; y: number }) {
     if (readOnlyRef.current) return;
-    sticky.current = false; // never let a leftover one-shot absorb this session's first blur
     setSelected(null);
     setEditingId(block.id);
     setEditingPara(isParagraph(block));
@@ -977,12 +1152,333 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     const legacyChem = !isParagraph(block) && block.type === "math" && block.attrs?.kind == null;
     const chem = forceChem || isChemBlock(block) || (legacyChem && ceInner(source) != null);
     setEditingChem(chem);
-    setDraft(chem ? (ceInner(source) ?? "") : source);
+    const text = chem ? (ceInner(source) ?? "") : source;
+    setDraft(text);
     setColor(calloutColorOf(block));
+    // A click INTO the text opens the caret there; anything else (the ⌘K
+    // palette, a jump from the outline) opens at the end.
+    const hit = at && isParagraph(block) ? renderedOffsetAt(at.el, at.x, at.y) : null;
+    formulaPoint.current = at && !isParagraph(block) ? formulaPointAt(at.el, at.x, at.y) : null;
+    pendingCaret.current = hit == null ? null : sourceOffsetFor(text, at!.el.textContent ?? "", hit);
   }
+  /**
+   * Enter inside a paragraph: keep `before` here, and carry `after` into a new
+   * paragraph below, with the caret at its start.
+   *
+   * One tree update, so it is ONE undo step — and the caret lands in the new
+   * block by way of `startEdit`, which is what makes Enter feel like the next
+   * line rather than an insert command.
+   */
+  function splitParagraph(blockId: string, before: string, after: string) {
+    if (!capsRef.current.editBlocks) return;
+    // Both halves keep the paragraph's indent, as Enter carries a paragraph's
+    // formatting onto the next line in Docs.
+    const indent = paraIndent(pkgRef.current?.tree.blocks.find((b) => b.id === blockId));
+    const head = promoteEquation(before, blockId) ?? withParaIndent(withCalloutColor(paragraphFromSource(before, blockId), color), indent);
+    const tail = withParaIndent(withCalloutColor(paragraphFromSource(after), color), indent);
+    setBlocks((bs) => {
+      const i = bs.findIndex((b) => b.id === blockId);
+      if (i < 0) return bs;
+      const next = [...bs];
+      next.splice(i, 1, head, tail);
+      return next;
+    });
+    startEdit(tail);
+    pendingCaret.current = 0;
+  }
+
+  /**
+   * `$$…$$` on its own is an EQUATION, so a paragraph holding nothing else
+   * becomes a display formula block when the edit ends — the counterpart of
+   * `$…$`, which stays inline in the prose. Returns null when the source is
+   * anything other than one whole display equation.
+   */
+  function promoteEquation(src: string, id: string): Block | null {
+    const latex = displayMathSource(src);
+    if (latex == null) return null;
+    const block = displayFromSource(latex, id);
+    return ceInner(latex) != null ? tagChem(block) : block;
+  }
+
+  /**
+   * Where the caret goes when a line is deleted: the END of the nearest
+   * non-empty line before it — a paragraph, a heading, a list (its last
+   * non-empty item) or an equation. Blank lines and objects (images, tables,
+   * graphs, code) are passed over. With no such line before it, the START of
+   * the nearest one after; failing that, the nearest blank line either side.
+   * Null when the note has no other line at all. Read while `blockId` is still
+   * in the tree, and only ever before deleting it.
+   */
+  function lineNear(blockId: string, beforeOnly = false): { block: Block; edge: "start" | "end" } | null {
+    const all = pkgRef.current?.tree.blocks ?? [];
+    const folded = sectionFolding ? hiddenBlockIds(all) : new Set<string>();
+    const bs = all.filter((b) => b.id === blockId || !folded.has(b.id));
+    const i = bs.findIndex((b) => b.id === blockId);
+    if (i < 0) return null;
+    const isLine = (b: Block) => isParagraph(b) || b.type === "heading" || b.type === "list" || b.type === "math";
+    const filled = (b: Block) => isLine(b) && !isEmptyBlock(b);
+    const before = (ok: (b: Block) => boolean) => bs.slice(0, i).reverse().find(ok);
+    const after = (ok: (b: Block) => boolean) => bs.slice(i + 1).find(ok);
+    const hit = before(filled);
+    if (hit) return { block: hit, edge: "end" };
+    if (beforeOnly) {
+      const blank = before(isLine);
+      return blank ? { block: blank, edge: "end" } : null;
+    }
+    const next = after(filled);
+    if (next) return { block: next, edge: "start" };
+    const blankBefore = before(isLine);
+    if (blankBefore) return { block: blankBefore, edge: "end" };
+    const blankAfter = after(isLine);
+    return blankAfter ? { block: blankAfter, edge: "start" } : null;
+  }
+
+  /** Open `block` for editing with the caret at its start or end. */
+  function moveCaretTo({ block, edge }: { block: Block; edge: "start" | "end" }) {
+    setSelected(null);
+    if (block.type === "list") {
+      const items = listItems(block);
+      const filledAt = items.map((t) => t.trim() !== "");
+      const item = edge === "end" ? filledAt.lastIndexOf(true) : filledAt.indexOf(true);
+      listCaret.current = item >= 0 ? item : edge === "end" ? items.length - 1 : 0;
+      listCaretOffset.current = edge === "end" ? null : 0;
+      setEditingPara(false);
+      setEditingId(block.id);
+      return;
+    }
+    if (block.type === "heading") {
+      startEditHeading(block);
+      pendingCaret.current = edge === "start" ? 0 : (block.value ?? "").length;
+      return;
+    }
+    startEdit(block);
+    // A formula takes its caret from its own field; only text lines use this.
+    if (isParagraph(block)) pendingCaret.current = edge === "start" ? 0 : blockEditSource(block).length;
+  }
+
+  /** Backspace in an empty paragraph: remove it and carry on at the end of the
+   *  nearest non-empty line before it (lineNear). The last line of a note stays,
+   *  so the caret always has somewhere to be. */
+  function backOut(blockId: string) {
+    if (!capsRef.current.editBlocks) return;
+    const near = lineNear(blockId);
+    if (!near) return;
+    setEditingId(null);
+    deleteBlock(blockId);
+    moveCaretTo(near);
+  }
+
+  /** The hover delete button. Deleting the line the caret is in moves the caret
+   *  to the nearest non-empty line before it, the same as Backspace. */
+  function removeBlock(blockId: string) {
+    const near = editingIdRef.current === blockId ? lineNear(blockId) : null;
+    deleteBlock(blockId);
+    if (near) moveCaretTo(near);
+  }
+
+  const headingRef = useRef<HTMLInputElement>(null);
+
+  /**
+   * Walk the caret out of this block and into the one `dir` away — the thing
+   * that makes a stack of blocks read as one document rather than a column of
+   * boxes. Returns false when there is nowhere to go (the arrow key then does
+   * its ordinary thing).
+   */
+  function stepToBlock(blockId: string, dir: -1 | 1, edge: "start" | "end"): boolean {
+    if (!capsRef.current.editBlocks) return false;
+    const all = pkgRef.current?.tree.blocks ?? [];
+    const collapsed = sectionFolding ? hiddenBlockIds(all) : new Set<string>();
+    const bs = all.filter((b) => !collapsed.has(b.id)); // a hidden section is not walked into
+    const i = bs.findIndex((b) => b.id === blockId);
+    const next = i < 0 ? null : bs[i + dir];
+    if (!next) return false;
+    leaveOpenBlock(next.id);
+    if (isParagraph(next)) {
+      startEdit(next);
+      pendingCaret.current = edge === "start" ? 0 : blockEditSource(next).length;
+      return true;
+    }
+    if (next.type === "heading") {
+      startEditHeading(next);
+      pendingCaret.current = edge === "start" ? 0 : (next.value ?? "").length;
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Move a whole paragraph one indent step in or out (lib/blocks/indent.ts):
+   * Tab at its start, Shift+Tab, ⌘] / ⌘[, and Backspace at its start. Returns
+   * false when it is already as far as it goes, so the key can do its ordinary
+   * thing instead.
+   */
+  function indentParagraph(blockId: string, delta: 1 | -1): boolean {
+    if (!capsRef.current.editBlocks) return false;
+    const cur = pkgRef.current?.tree.blocks.find((b) => b.id === blockId);
+    if (!cur || !isParagraph(cur) || withParaIndent(cur, paraIndent(cur) + delta) === cur) return false;
+    updateById(blockId, (b) => withParaIndent(b, paraIndent(b) + delta));
+    return true;
+  }
+
+  /**
+   * Enter in an equation: the formula is finished, so the caret moves to a new
+   * line under it, as Enter does at the end of any other line. An equation left
+   * empty becomes that line rather than staying behind as an empty slot.
+   */
+  function lineAfterFormula(blockId: string) {
+    if (!capsRef.current.editBlocks) return;
+    const para = paragraphFromSource("");
+    setBlocks((bs) => {
+      const i = bs.findIndex((b) => b.id === blockId);
+      if (i < 0) return bs;
+      const next = [...bs];
+      if (isEmptyBlock(bs[i])) next.splice(i, 1, para);
+      else next.splice(i + 1, 0, para);
+      return next;
+    });
+    startEdit(para);
+    pendingCaret.current = 0;
+  }
+
+  /** The visible block directly before `blockId` (a folded section's body is
+   *  not a line you can join onto), or null at the top of the note. */
+  function blockBefore(blockId: string): Block | null {
+    const all = pkgRef.current?.tree.blocks ?? [];
+    const folded = sectionFolding ? hiddenBlockIds(all) : new Set<string>();
+    const bs = all.filter((b) => b.id === blockId || !folded.has(b.id));
+    const i = bs.findIndex((b) => b.id === blockId);
+    return i > 0 ? bs[i - 1] : null;
+  }
+
+  /**
+   * Bring a line's words up onto the end of the line before it, the caret at
+   * the seam: what deleting the line break in front of a line does in any
+   * document. `prev` may be a paragraph (a blank one included), a heading, or a
+   * list, whose last item takes the words. An equation or an object cannot hold
+   * words, so nothing moves in front of one and this returns false. `remove`
+   * takes the joined line out of the tree, in the same update.
+   */
+  function joinOnto(prev: Block, text: string, remove: (bs: Block[]) => Block[]): boolean {
+    if (!capsRef.current.editBlocks) return false;
+    if (isParagraph(prev)) {
+      const head = blockEditSource(prev);
+      const joined = withParaIndent(withCalloutColor(paragraphFromSource(head + text, prev.id), calloutColorOf(prev)), paraIndent(prev));
+      setBlocks((all) => remove(all).map((b) => (b.id === prev.id ? joined : b)));
+      startEdit(joined);
+      pendingCaret.current = head.length;
+      return true;
+    }
+    if (prev.type === "heading") {
+      const head = prev.value ?? "";
+      // A heading is one line: soft breaks in the joined words become spaces.
+      const joined: Block = { ...prev, value: head + text.replace(/\s*\n\s*/g, " ") };
+      setBlocks((all) => remove(all).map((b) => (b.id === prev.id ? joined : b)));
+      startEditHeading(joined);
+      pendingCaret.current = head.length;
+      return true;
+    }
+    if (prev.type === "list") {
+      const items = listItems(prev);
+      const last = items.length - 1;
+      const head = items[last] ?? "";
+      const joined = withList(prev, [...items.slice(0, last), head + text], undefined, listLevels(prev));
+      setBlocks((all) => remove(all).map((b) => (b.id === prev.id ? joined : b)));
+      listCaret.current = last;
+      listCaretOffset.current = head.length;
+      setSelected(null);
+      setEditingPara(false);
+      setEditingId(prev.id);
+      return true;
+    }
+    return false;
+  }
+
+  /** Backspace at the front of a paragraph that has words: join it onto the
+   *  line before it (joinOnto). */
+  function mergeBack(blockId: string, text: string) {
+    const prev = blockBefore(blockId);
+    if (prev) joinOnto(prev, text, (all) => all.filter((b) => b.id !== blockId));
+  }
+
+  /**
+   * Backspace at the front of a list's FIRST item (ListEditor). Its words come
+   * up onto the line before the list, and the item leaves the list (the list
+   * goes when it was the only one). An empty item is a blank line being
+   * deleted: the caret goes to the end of the nearest non-empty line before.
+   */
+  function listFrontBack(listId: string) {
+    if (!capsRef.current.editBlocks) return;
+    const list = pkgRef.current?.tree.blocks.find((b) => b.id === listId);
+    if (!list || list.type !== "list") return;
+    const items = listItems(list);
+    const levels = listLevels(list);
+    const rest = (all: Block[]) =>
+      items.length > 1
+        ? all.map((b) => (b.id === listId ? withList(b, items.slice(1), undefined, levels.slice(1)) : b))
+        : all.filter((b) => b.id !== listId);
+    if (!(items[0] ?? "").trim()) {
+      const near = lineNear(listId, true);
+      if (!near) return;
+      setBlocks((all) => rest(all));
+      moveCaretTo(near);
+      return;
+    }
+    const prev = blockBefore(listId);
+    if (prev) joinOnto(prev, items[0], rest);
+  }
+
+  /** Delete at the end of a paragraph: pull the next one up into it. */
+  function mergeForward(blockId: string, text: string) {
+    if (!capsRef.current.editBlocks) return;
+    const bs = pkgRef.current?.tree.blocks ?? [];
+    const i = bs.findIndex((b) => b.id === blockId);
+    const next = i >= 0 ? bs[i + 1] : null;
+    if (!next || !isParagraph(next)) return;
+    const joined = withParaIndent(withCalloutColor(paragraphFromSource(text + blockEditSource(next), blockId), color), paraIndent(bs[i]));
+    setBlocks((all) => all.filter((b) => b.id !== next.id).map((b) => (b.id === blockId ? joined : b)));
+    startEdit(joined);
+    pendingCaret.current = text.length;
+  }
+
+  /** The heading input's keyboard: the same document-wide caret rules as prose,
+   *  plus Enter, which starts the body text under the heading. */
+  function onHeadingKey(e: ReactKeyboardEvent<HTMLInputElement>, b: Block) {
+    const el = e.currentTarget;
+    const at = el.selectionStart ?? 0;
+    const to = el.selectionEnd ?? at;
+    const collapsed = at === to;
+    if (e.key === "Escape") { e.preventDefault(); endEdit(b.id); return; }
+    if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      addBlock(paragraphFromSource(""));
+      return;
+    }
+    if (e.nativeEvent.isComposing || !collapsed) return;
+    if (e.key === "ArrowUp" || (e.key === "ArrowLeft" && at === 0)) {
+      if (stepToBlock(b.id, -1, "end")) e.preventDefault();
+      return;
+    }
+    if (e.key === "ArrowDown" || (e.key === "ArrowRight" && at === el.value.length)) {
+      if (stepToBlock(b.id, 1, "start")) e.preventDefault();
+      return;
+    }
+    if (e.key === "Backspace" && at === 0 && el.value !== "") {
+      const prev = blockBefore(b.id);
+      if (prev && joinOnto(prev, el.value, (all) => all.filter((x) => x.id !== b.id))) e.preventDefault();
+      return;
+    }
+    if (e.key === "Backspace" && at === 0 && el.value === "") {
+      e.preventDefault();
+      const near = lineNear(b.id);
+      if (!near) return;
+      setEditingId(null);
+      deleteBlock(b.id);
+      moveCaretTo(near);
+    }
+  }
+
   function startEditHeading(block: Block) {
     if (readOnlyRef.current) return;
-    sticky.current = false;
     setSelected(null);
     setEditingId(block.id);
   }
@@ -991,17 +1487,25 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     // and makes table cells editable — so it is an edit entry point, not just
     // a selection, and needs the same gate as startEdit.
     if (!capsRef.current.editBlocks) return;
+    leaveOpenBlock(blockId); // a table cell ends a line the same way a line does
     setEditingId(null);
     setSelected({ id: blockId, index, kind });
   }
 
+  /**
+   * Insert a block relative to the cursor, the way a word processor does: an
+   * empty line the cursor is already sitting in IS the insertion point, so
+   * "Insert ▸ Table" from a blank paragraph replaces that paragraph rather than
+   * pushing a table below it and stranding the blank line above.
+   */
   function addBlock(block: Block, edit = true, chem = false) {
     const tagged = chem ? tagChem(block) : block; // store chem identity, don't sniff it later
     setBlocks((bs) => {
       const anchor = editingId ?? selected?.id ?? null;
-      const at = anchor ? bs.findIndex((b) => b.id === anchor) + 1 : bs.length;
+      const i = anchor ? bs.findIndex((b) => b.id === anchor) : -1;
       const next = [...bs];
-      next.splice(at <= 0 ? bs.length : at, 0, tagged);
+      if (i >= 0 && isParagraph(bs[i]) && isEmptyBlock(bs[i])) next.splice(i, 1, tagged);
+      else next.splice(i >= 0 ? i + 1 : bs.length, 0, tagged);
       return next;
     });
     if (edit) startEdit(tagged, chem);
@@ -1036,9 +1540,6 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     };
     const fields = moduleFields(m.blocks);
     if (fields.length === 0) { proceed({}); return; }
-    // The dialog steals focus from the edit box once — arm the one-shot sticky
-    // (same pattern as the note-link picker) so the edit session survives it.
-    sticky.current = true;
     setFieldsPrompt({ name: m.name, fields, proceed });
   }
 
@@ -1085,17 +1586,6 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     saveModule(name, section, new Date().toISOString());
   }
 
-  function moveBlock(from: number | null, to: number) {
-    if (from == null) return;
-    const len = pkgRef.current?.tree.blocks.length ?? 0;
-    if (to < 0 || to >= len || from === to) return;
-    setBlocks((bs) => {
-      const next = [...bs];
-      const [m] = next.splice(from, 1);
-      next.splice(to, 0, m);
-      return next;
-    });
-  }
   function deleteBlock(blockId: string) {
     setBlocks((bs) => bs.filter((b) => b.id !== blockId));
     if (editingId === blockId) setEditingId(null);
@@ -1107,6 +1597,9 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   };
   function setDocStyle(patch: Partial<DocumentStyle>) {
     if (!capsRef.current.editDocStyle) return;
+    // An indent set here is chosen, so it survives the legacy-default rule in
+    // docstyle → storedIndent.
+    if (patch.indent !== undefined) patch = { ...patch, indentChosen: true };
     snapshot(false);
     setPkg((prev) =>
       prev ? { ...prev, tree: { ...prev.tree, style: { ...prev.tree.style, ...patch } } } : prev,
@@ -1141,7 +1634,19 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   function endEdit(blockId: string) {
     setEditingId(null);
     const b = pkgRef.current?.tree.blocks.find((x) => x.id === blockId);
-    if (b && isEmptyBlock(b)) deleteBlock(blockId);
+    if (b && isEmptyBlock(b)) {
+      // Decided again against the LATEST blocks: this copy can trail a change
+      // reported on the way out (a formula's last keystroke arrives with the
+      // Escape), and deleting on it threw a just-typed equation away.
+      setBlocks((bs) => bs.filter((x) => x.id !== blockId || !isEmptyBlock(x)));
+      if (selected?.id === blockId) setSelected(null);
+      return;
+    }
+    // `$$…$$` typed into a paragraph is an equation: make it one on the way out.
+    if (b && isParagraph(b)) {
+      const eq = promoteEquation(blockEditSource(b), blockId);
+      if (eq) setBlocks((bs) => bs.map((x) => (x.id === blockId ? eq : x)));
+    }
   }
 
   // ── text/formula editing ──────────────────────────────────────────────────
@@ -1154,16 +1659,31 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     setColor(c);
     commit(draft, c);
   }
+  /** The strip's Text button: words inside the formula holding the caret, in
+   *  whichever editor that formula is open in. */
+  function toggleFormulaText() {
+    const me = activeMathEdit();
+    if (me) { me.toggleText(); return; }
+    activeMathField()?.toggleText();
+  }
   function onInsert(latex: string) {
+    // Environment skeletons (\begin{bmatrix}\end{bmatrix}) carry no cells, so
+    // every rewrite below gets a filled 2×2 grid to work with: `#?` boxes on the
+    // MathLive-backed surfaces, and empty cells wherever the LaTeX is stored or
+    // rendered by KaTeX (which is what MathField itself saves a matrix as).
+    const katexSafe = fillEnvCells(latex, () => "");
     // A focused structural editor (beta) wins — insert the real block structure.
+    // It maps environments to real matrix blocks itself, so it takes the
+    // skeleton unexpanded (see insertSnippet in lib/matheditor/ops.ts).
     const me = activeMathEdit();
     if (me) { me.insert(latex); return; }
     // A focused MathField (standalone equation OR an open inline-math popover)
-    // wins: insert the snippet structurally. Empty `{}` groups become `#?`
-    // placeholder boxes so e.g. \frac{}{} is tabbable — the Desmos feel.
+    // wins: insert the snippet structurally. Empty `{}` groups and environment
+    // cells become `#?` placeholder boxes so e.g. \frac{}{} and a matrix are
+    // tabbable — the Desmos feel.
     const field = activeMathField();
     if (field) {
-      const snippet = latex.replace(/\{\}/g, "{#?}");
+      const snippet = fillEnvCells(latex.replace(/\{\}/g, "{#?}"), () => "#?");
       field.insert(snippet);
       // ∫/∑/∏ etc.: MathLive selects the UPPER bound first. Nudge to the LOWER
       // bound so it's the first field you fill. (Tab/Shift+Tab switch bounds;
@@ -1174,19 +1694,27 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     // A focused chemistry field: embed the math via mhchem's $...$ escape — the
     // mirror of onInsertChem routing \ce into a focused MathField. Without this
     // a math-strip click would fall through and clobber the chem edit session.
+    // Plain <input>, so `#?` would splice in as literal text — empty cells here.
     const chem = activeChemField();
-    if (chem) { chem.insert(`$${latex}$`); return; }
-    // A focused plain textbox (e.g. a table cell) → splice the raw LaTeX there.
+    if (chem) { chem.insert(`$${katexSafe}$`); return; }
+    // A focused source textbox (a list item) → splice it as an inline formula.
+    // Wrapped in `$…$`, because the item is stored as SOURCE: bare `\alpha`
+    // there is the five characters, not the letter (see renderSource).
+    // A list item holding the caret opens its formula box with the structure,
+    // the same as a sentence does below.
+    const openFormula = activeFormulaOpener();
+    if (openFormula) { openFormula(fillEnvCells(latex.replace(/\{\}/g, "{\\placeholder{}}"), () => "\\placeholder{}")); return; }
     const textInsert = activeTextInserter();
-    if (textInsert) { textInsert(latex); return; }
+    if (textInsert) { textInsert(`$${katexSafe}$`); return; }
     // Editing prose: open the inline-math BOX editor seeded with the structure
     // (empty `{}` → visible \placeholder{} boxes) instead of splicing raw LaTeX.
     if (editingId && editingPara) {
-      editBoxRef.current?.openMath(latex.replace(/\{\}/g, "{\\placeholder{}}"));
+      const seeded = latex.replace(/\{\}/g, "{\\placeholder{}}");
+      editBoxRef.current?.openMath(fillEnvCells(seeded, () => "\\placeholder{}"));
       return;
     }
     // Not editing: open a new equation (structural when the beta is on).
-    addBlock(getSettings().mathEditorBeta ? structuralEquation(latex) : displayFromSource(latex));
+    addBlock(getSettings().mathEditorBeta ? structuralEquation(latex) : displayFromSource(katexSafe));
   }
   /** Chemistry-toolbar/palette insert — the parallel of onInsert. `latex` is the
    *  catalog's full form (\ce{...} for species/arrows, plain math for the
@@ -1204,6 +1732,9 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     if (me) { me.insert(latex); return; }
     const field = activeMathField();
     if (field) { field.insert(latex); return; }
+    // A list item holding the caret: the chemistry goes into the item as maths.
+    const textInsert = activeTextInserter();
+    if (textInsert) { textInsert(`$${latex}$`); return; }
     // Editing prose: open the inline-chemistry popover seeded with the source
     // (quantities open the regular inline-math box instead — they ARE math).
     if (editingId && editingPara) {
@@ -1244,6 +1775,15 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
       spliceIntoTextarea(t.selectionStart ?? caretRef.current, t.selectionEnd ?? caretRef.current, src);
       return;
     }
+    // A list item holding the caret: the reading lands beside its bullet, on
+    // the item's one line. Turning it into blocks under the list is what left a
+    // bullet empty with the handwritten sentence and its maths below it.
+    const textInsert = activeTextInserter();
+    if (textInsert) {
+      const line = src.replace(/\s*\n\s*/g, " ").trim();
+      if (line) textInsert(line);
+      return;
+    }
     const fresh = blocksFromSource(src);
     if (fresh.length === 0) return;
     const anchorId = editingId ?? selected?.id ?? null;
@@ -1260,13 +1800,14 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   }
 
   /** Replace [from, to) of the editing textarea with `insert`, commit, and
-   *  restore focus with the caret after the insertion. */
-  function spliceIntoTextarea(from: number, to: number, insert: string) {
+   *  restore focus with the caret after the insertion — or at `caretAt`, for an
+   *  insert the user is meant to type INTO (an empty `$…$` pair). */
+  function spliceIntoTextarea(from: number, to: number, insert: string, caretAt?: number) {
     const t = taRef.current;
     if (!t) return;
     const cur = t.value;
     const next = cur.slice(0, from) + insert + cur.slice(to);
-    const pos = from + insert.length;
+    const pos = caretAt ?? from + insert.length;
     setDraft(next);
     caretRef.current = pos;
     commit(next, color);
@@ -1291,8 +1832,6 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     const s = t.selectionStart ?? 0;
     const e = t.selectionEnd ?? s;
     const sel = t.value.slice(s, e) || "link";
-    // The dialog steals focus once; the toolbar mousedown already armed the
-    // one-shot `sticky` so the edit box stays open across it.
     const url = (await uiPrompt({ title: "Insert link", placeholder: "https://…", initial: "https://", confirmLabel: "Insert" }))?.trim();
     if (!url) return;
     spliceIntoTextarea(s, e, `[${sel}](${url})`);
@@ -1300,11 +1839,9 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
 
   // ── note links ([[ or the toolbar button → picker → [title](note://…)) ─────
   /** Open the picker to replace the `[[query` trigger range (the inline menu's
-   *  "browse" escape hatch, so the range may be longer than just "[["). Arms
-   *  the one-shot `sticky` so the picker's focus-steal doesn't exit the edit box. */
+   *  "browse" escape hatch, so the range may be longer than just "[["). */
   function openNoteLinkPicker(from: number, to: number) {
     if (readOnlyRef.current) return;
-    sticky.current = true;
     setLinkPicker({ from, to, expect: taRef.current?.value.slice(from, to) ?? "[[" });
   }
   function toolbarNoteLink() {
@@ -1314,7 +1851,6 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     const s = t.selectionStart ?? 0;
     const e = t.selectionEnd ?? s;
     const sel = t.value.slice(s, e);
-    sticky.current = true;
     // A selection becomes the link's label (mirrors Insert link's behavior).
     setLinkPicker({ from: s, to: e, expect: sel, label: sel.trim() || undefined });
   }
@@ -1381,18 +1917,124 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
 
   // ── lists / equation ──────────────────────────────────────────────────────
   function insertList(ordered: boolean, marker?: ListMarker) {
+    // Google Docs: a list button pressed in a line puts THAT line in the list,
+    // text and caret kept, rather than starting an empty list under it.
+    const open = editingId && editingPara ? pkgRef.current?.tree.blocks.find((b) => b.id === editingId) : null;
+    if (open && isParagraph(open)) {
+      const ta = taRef.current;
+      const text = ta?.value ?? draft;
+      paragraphToList(open.id, ordered, text, ta?.selectionStart ?? text.length, marker);
+      return;
+    }
+    listCaret.current = null; // a fresh list opens in its first (only) item
+    listCaretOffset.current = null;
     const l = makeList(ordered, marker);
     addBlock(l, false);
+    setEditingPara(false);
     setEditingId(l.id);
   }
-  function setListText(blockId: string, text: string) {
-    updateById(blockId, (b) => withList(b, text.split("\n")));
+  /**
+   * Turn a paragraph into a list item: the list buttons pressed in it, or a
+   * bullet ("- ", "1. ") typed at its start (EditBox → listTrigger). `text`
+   * is its live source, and the caret opens at `caret` in the item. A paragraph
+   * directly under a list of the same kind joins that list as its last item,
+   * as in Docs, so a list you stepped out of carries on.
+   */
+  function paragraphToList(blockId: string, ordered: boolean, text: string, caret: number, marker?: ListMarker) {
+    if (!capsRef.current.editBlocks) return;
+    const bs = pkgRef.current?.tree.blocks ?? [];
+    const i = bs.findIndex((b) => b.id === blockId);
+    if (i < 0) return;
+    const prev = i > 0 ? bs[i - 1] : null;
+    const joins = prev?.type === "list" && listOrdered(prev) === ordered && (!marker || listMarker(prev) === marker);
+    const target = joins && prev
+      ? withList(prev, [...listItems(prev), text], undefined, [...listLevels(prev), 0])
+      : withList(makeList(ordered, marker), [text]);
+    const item = joins && prev ? listItems(prev).length : 0;
+    setBlocks((all) =>
+      joins && prev
+        ? all.filter((b) => b.id !== blockId).map((b) => (b.id === prev.id ? target : b))
+        : all.map((b) => (b.id === blockId ? target : b)),
+    );
+    listCaret.current = item;
+    listCaretOffset.current = Math.max(0, Math.min(caret, text.length));
+    setSelected(null);
+    setEditingPara(false);
+    setEditingId(target.id);
+  }
+  /** Which item of a rendered list a click landed in (for the caret). */
+  const listCaret = useRef<number | null>(null);
+  /** Where in that item the caret opens (null: the end). */
+  const listCaretOffset = useRef<number | null>(null);
+  function listItemAt(target: HTMLElement): number | null {
+    // `data-item` is the index into attrs.items: the read view leaves blank
+    // items out, so a row's position among its siblings is not its index.
+    const n = Number(target.closest<HTMLElement>("li[data-item]")?.dataset.item);
+    return Number.isInteger(n) ? n : null;
+  }
+  function setListItems(blockId: string, items: string[], levels: number[]) {
+    updateById(blockId, (b) => withList(b, items, undefined, levels));
+  }
+  /**
+   * Enter on an empty list item: leave the list. What came before it stays a
+   * list, what came after becomes a second one, and a new paragraph goes
+   * between them — where the caret lands. A list with nothing left before the
+   * break is replaced by the paragraph outright, so "bullet, Enter, Enter"
+   * turns an accidental list back into prose.
+   */
+  function listToParagraph(blockId: string, before: string[], trailing: string[], beforeLevels?: number[], trailingLevels?: number[]) {
+    if (!capsRef.current.editBlocks) return;
+    const para = paragraphFromSource("");
+    setBlocks((bs) => {
+      const i = bs.findIndex((b) => b.id === blockId);
+      if (i < 0) return bs;
+      const ordered = listOrdered(bs[i]);
+      const keep = before.some((t) => t.trim());
+      const tail = trailing.some((t) => t.trim()) ? [withList(makeList(ordered), trailing, undefined, trailingLevels)] : [];
+      const next = [...bs];
+      next.splice(i, 1, ...(keep ? [withList(bs[i], before, undefined, beforeLevels), para, ...tail] : [para, ...tail]));
+      return next;
+    });
+    startEdit(para);
   }
   function setListOrdered(blockId: string, ordered: boolean) {
     updateById(blockId, (b) => withList(b, listItems(b), ordered));
   }
+  /**
+   * An equation is always a line of its own, centred: after the paragraph or
+   * list holding the caret, or in place of an empty line — never inside the
+   * words, even in a bullet. A formula IN the words is the formula button's job.
+   * A formula open in the current line is written first, last keystroke included.
+   */
   function insertEquation() {
+    editBoxRef.current?.commitInline();
     addBlock(getSettings().mathEditorBeta ? structuralEquation() : displayFromSource(""));
+  }
+  /** Insert ▸ Chemical equation: the chemistry twin of insertEquation. */
+  function insertChemEquation() {
+    editBoxRef.current?.commitInline();
+    addBlock(displayFromSource(""), true, true);
+  }
+  /**
+   * Inline formula: `$…$` at the caret — wrapped around the selection if there
+   * is one, otherwise an empty pair with the caret between the dollars, ready
+   * to type into.
+   */
+  function insertFormula() {
+    if (!capsRef.current.editBlocks) return;
+    // In a sentence, a formula is typed in a box at the caret
+    // (components/RichLine), starting from any selected text — never as
+    // `$…$` source for the writer to fill in.
+    if (editingId && editingPara && taRef.current) { editBoxRef.current?.openMath(""); return; }
+    // A list item holding the caret opens the same box in the item (ListEditor).
+    const openFormula = activeFormulaOpener();
+    if (openFormula) { openFormula(""); return; }
+    // Another textbox that holds maths as source (a table cell).
+    const textInsert = activeTextInserter();
+    if (textInsert) { textInsert("$$", 1); return; }
+    // No caret anywhere to hold an inline formula. A formula with no sentence
+    // around it is just an equation, so open one.
+    insertEquation();
   }
 
   // ── code blocks ───────────────────────────────────────────────────────────
@@ -1471,7 +2113,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
       case "equation": insertEquation(); break;
       // A chemical equation is a math block tagged `attrs.kind = "chem"`, which
       // is what opens it in the mhchem editor rather than the maths one.
-      case "chemistry": addBlock(displayFromSource(""), true, true); break;
+      case "chemistry": insertChemEquation(); break;
       case "graph": setGraphEdit({ id: null }); break;
       case "table": setTablePicker(true); break;
       case "code": insertCode(); break;
@@ -1728,43 +2370,44 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   const blocks = pkg.tree.blocks;
   // Collapsed sections hide their body blocks in the editor view (content stays
   // in the tree and still exports); the heading itself remains visible.
-  const hidden = hiddenBlockIds(blocks);
+  const hidden = sectionFolding ? hiddenBlockIds(blocks) : new Set<string>();
   const visibleBlocks = hidden.size ? blocks.filter((b) => !hidden.has(b.id)) : blocks;
   const headingNumbers = computeHeadingNumbers(blocks);
   const editingBlock = editingId ? blocks.find((b) => b.id === editingId) : null;
   const currentStyle: "text" | HeadingLevel =
     editingBlock && editingBlock.type === "heading" ? headingLevel(editingBlock) : "text";
   /**
-   * A click on empty document space ends the current edit.
+   * A press on empty document space ends the current edit.
    *
-   * Exiting used to depend entirely on the edit box losing focus, which fails
-   * three ways: the one-shot `sticky` flag (armed by EVERY toolbar click) eats
-   * the first blur; once focus has left the textarea without exiting, no later
-   * click produces another blur, so the box stays open indefinitely; and a
-   * MathLive field never blurs to the page at all. Making blank space an
-   * explicit exit removes the dependency on blur entirely.
+   * Every way OUT of a block is explicit: this, Escape, and pressing into
+   * another block. NOTHING exits on blur. An editor that closes when it loses
+   * focus is one that a dialog, a colour picker or a re-render can close behind
+   * the writer's back — and it made "click the next line" a coin flip, because
+   * the re-render triggered by the blur-exit replaced the node the press had
+   * landed on, so the browser never delivered the click that would have opened
+   * it (mousedown and mouseup must share a target for a click to fire).
    *
    * Layered, like Escape: an open inline formula popover is committed first
-   * (never discarded), and the block edit ends on the next click.
+   * (never discarded), and the block edit ends on the next press.
    */
   const exitOnBlankClick = (e: MouseEvent) => {
     if (!editingId && !selected) return;
     const t = e.target as HTMLElement | null;
     // Blank = inside the document surface, but not on a block and not on a
-    // control. Anything interactive handles its own click.
+    // control. Anything interactive handles its own press.
     if (!t || t.closest("[data-btype]")) return;
     if (t.closest("button, a, input, select, textarea, math-field, [contenteditable]")) return;
-    sticky.current = false; // an explicit exit must not be swallowed by a pending one-shot
     if (editBoxRef.current?.commitInline()) return;
     setSelected(null);
     if (editingId) endEdit(editingId);
   };
 
+  /** Toolbar and symbol presses hold the caret where it is, so what they insert
+   *  lands at the caret rather than at the end of the line. */
   const keepFocus = (e: MouseEvent) => {
-    if (editingId) { e.preventDefault(); sticky.current = true; return; }
-    // Also hold focus for a focused MathField or a table-cell textbox (which
-    // aren't tracked by `editingId`) so a toolbar/symbol click inserts into them.
-    if (activeMathField() || activeTextInserter()) e.preventDefault();
+    // A MathField or a table-cell textbox isn't tracked by `editingId`, but a
+    // caret in one is still a caret an insert should land at.
+    if (editingId || activeMathField() || activeTextInserter()) e.preventDefault();
   };
 
   // Print → "Save as PDF": show the WYSIWYG pages at 100% (so each A4 sheet maps
@@ -1891,6 +2534,14 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
           <button onMouseDown={keepFocus} onClick={() => insertList(true)} title="Numbered list" aria-label="Numbered list" className={GROUP_BTN}><Icon name="listnumber" size={16} /></button>
         </span>
 
+        {/* Maths, the same pair-of-buttons shape as the lists: one in the
+            sentence, one on its own line — which is exactly what `$…$` and
+            `$$…$$` mean when typed. */}
+        <span className={GROUP}>
+          <button onMouseDown={keepFocus} onClick={insertFormula} title="Formula in the text ($…$)" aria-label="Insert a formula in the text" className={GROUP_BTN}><Icon name="inlineformula" size={16} /></button>
+          <button onMouseDown={keepFocus} onClick={insertEquation} title="Equation on its own line ($$…$$)" aria-label="Insert an equation" className={GROUP_BTN}><Icon name="displayeq" size={16} /></button>
+        </span>
+
         <span className="mx-0.5 h-6 w-px bg-border" />
 
         <button onClick={() => setShowSource((s) => !s)} title={showSource ? "Back to the visual editor" : "Show the LaTeX source"} aria-label={showSource ? "Show visual editor" : "Show LaTeX source"} aria-pressed={showSource} className={`${TEXT_BTN} ${showSource ? "bg-accent-soft text-accent" : ""}`}><Icon name="tex" size={20} /></button>
@@ -1934,19 +2585,18 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
         return barMode === "chem" ? (
           <ChemToolbar
             onInsert={onInsertChem}
-            onNewEquation={() => addBlock(displayFromSource(""), true, true)}
+            onNewEquation={insertChemEquation}
             onBrowse={() => setChemOpen(true)}
             keepFocus={keepFocus}
-            markSticky={() => { if (editingId) sticky.current = true; }}
             leading={barSwitch}
             trailing={trailing}
           />
         ) : (
           <SymbolToolbar
             onInsert={onInsert}
+            onText={toggleFormulaText}
             onBrowse={() => setSymbolsOpen(true)}
             keepFocus={keepFocus}
-            markSticky={() => { if (editingId) sticky.current = true; }}
             leading={barSwitch}
             trailing={trailing}
           />
@@ -1994,9 +2644,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
             {pages.map((ids, p) => (
               <div key={p} className={`print-page relative shrink-0 text-foreground shadow-xl ring-1 ring-border ${docStyle.background ? "" : "bg-surface"} ${ids.length === 0 ? "print-hide" : ""} ${p === lastContentPage ? "last-print-page" : ""}`} style={{ width: pageW, minHeight: pageH, background: docStyle.background || undefined, color: docStyle.foreground || undefined }}>
                 <div className={`${presetClass(style.preset)} flex flex-col`} style={{ ...contentStyle, minHeight: pageH }}>
-                  {blocks.length === 0 ? (
-                    caps.editBlocks ? <button onClick={() => addBlock(paragraphFromSource(""))} className="w-full rounded-lg border border-dashed border-border p-8 text-center text-muted hover:border-accent">Empty note — click to start a paragraph, or use the toolbar.</button> : null
-                  ) : (
+                  {blocks.length === 0 ? null : (
                     <div className="flex flex-col" style={{ gap: "var(--para-skip)" }}>
                       {ids.map((id) => {
                         const gi = indexById.get(id) ?? -1;
@@ -2025,7 +2673,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
                                 ))}
                               </span>
                             )}
-                            {renderBlock(b, gi)}
+                            {renderBlock(b)}
                           </div>
                         );
                       })}
@@ -2037,10 +2685,9 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
                       caret that fades in where the line would begin. It is a
                       <button>, so exitOnBlankClick leaves it alone and this
                       handler wins. */}
-                  {blocks.length > 0 && caps.editBlocks && p >= lastContentPage && (
+                  {caps.editBlocks && p >= lastContentPage && (
                     <button
                       onClick={appendParagraph}
-                      title="Write here"
                       aria-label="Add a paragraph at the end"
                       // items-start: a <button> centres its content, which would
                       // float the caret halfway down the sheet instead of where
@@ -2104,7 +2751,6 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
           onLink={() => void insertLink()}
           onNoteLink={toolbarNoteLink}
           keepFocus={keepFocus}
-          markSticky={() => { if (editingId) sticky.current = true; }}
         />
       )}
 
@@ -2115,7 +2761,6 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
           onClose={() => setSymbolsOpen(false)}
           closeOnPick={false}
           keepFocus={keepFocus}
-          onNavMouseDown={() => { if (editingId) sticky.current = true; }}
           autoFocusSearch={!editingId}
         />
       )}
@@ -2128,7 +2773,6 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
           onClose={() => setChemOpen(false)}
           closeOnPick={false}
           keepFocus={keepFocus}
-          onNavMouseDown={() => { if (editingId) sticky.current = true; }}
           autoFocusSearch={!editingId}
         />
       )}
@@ -2137,7 +2781,6 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
         <InkInsertPanel
           onInsert={insertRecognized}
           onClose={() => setInkOpen(false)}
-          markSticky={() => { if (editingId) sticky.current = true; }}
           suspendEscape={symbolsOpen || chemOpen || tablePicker || templatesOpen || !!confirmTemplate || !!moduleEdit || shareOpen || !!graphEdit}
         />
       )}
@@ -2204,84 +2847,88 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   );
 
   // ── one block row (chrome + content) ──────────────────────────────────────
-  function renderBlock(b: Block, i: number): ReactNode {
+  function renderBlock(b: Block): ReactNode {
     const isHeading = b.type === "heading";
     const isList = b.type === "list";
+    // Text reads as text: the hover tint is for the object blocks (image,
+    // table, graph, code), where "this is one thing you can move" is useful.
+    // A formula counts as text here: it is a line you type into, so it gets the
+    // text cursor and no hover rectangle. The tint is for the OBJECT blocks
+    // (image, table, graph, code), where "this is one thing you can move" helps.
+    const isTextBlock = isHeading || isList || isParagraph(b) || b.type === "math";
     const isImage = b.type === "image";
     const isTable = b.type === "table";
     const isGraph = b.type === "graph";
     const isCode = b.type === "code";
-    // Move targets are computed in VISIBLE-list space (then mapped back to the
-    // full-array index) so arrows never swap a block with a hidden, collapsed-
-    // section body block. Collapsed headings can't be nudged inline (use the
-    // outline drag, which moves the whole section).
-    const vIdx = hidden.has(b.id) ? -1 : visibleBlocks.findIndex((x) => x.id === b.id);
-    const collapsedHeading = b.type === "heading" && isHeadingCollapsed(b);
-    const canUp = vIdx > 0 && !collapsedHeading;
-    const canDown = vIdx >= 0 && vIdx < visibleBlocks.length - 1 && !collapsedHeading;
-    const moveVisible = (dir: -1 | 1) => {
-      const target = visibleBlocks[vIdx + dir];
-      if (target) moveBlock(i, indexById.get(target.id) ?? i);
-    };
     // A display formula that parses to y = f(x) gets a hover "Plot" action.
     const plotExpr = b.id === editingId ? null : plottableExpr(b);
     // The hover row carries NO vertical padding: it would sit between every
     // pair of paragraphs, which under the LaTeX preset are meant to abut.
     return (
-      <div className="group relative flex items-start gap-1 rounded-lg px-1 hover:bg-foreground/[0.03]" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); moveBlock(dragFrom.current, i); dragFrom.current = null; }}>
-        {/* Reorder controls live in the page margin, positioned OUT of flow: in
-            flow they are ~50px of invisible column that sets a floor under every
-            block's height and insets the text, so a two-line paragraph could not
-            abut the next one and the on-screen measure did not match the PDF's. */}
-        <div className="print-hide absolute right-full top-0 mr-1 flex flex-col items-center gap-0.5 pt-1 text-faint opacity-0 transition group-hover:opacity-100">
-          <button onClick={() => moveVisible(-1)} disabled={!canUp} title="Move up" aria-label="Move block up" className="grid place-items-center rounded hover:text-accent disabled:opacity-30"><Icon name="moveup" size={14} /></button>
-          <span draggable onDragStart={() => (dragFrom.current = i)} title="Drag to reorder block" aria-label="Drag to reorder block" className="grid cursor-grab place-items-center select-none hover:text-accent active:cursor-grabbing"><Icon name="drag" size={14} /></span>
-          <button onClick={() => moveVisible(1)} disabled={!canDown} title="Move down" aria-label="Move block down" className="grid place-items-center rounded hover:text-accent disabled:opacity-30"><Icon name="movedown" size={14} /></button>
-        </div>
-
+      // No reorder column in the margin (removed 2026-09-13): a block moves by
+      // cut and paste like a line of any document, and whole sections still
+      // drag in the outline.
+      <div className={`group relative flex items-start gap-1 rounded-lg px-1 ${isTextBlock ? "" : "hover:bg-foreground/[0.03]"}`}>
         <div className="min-w-0 flex-1">
           {isHeading ? (
             b.id === editingId ? (
-              <div className="rounded-md border border-accent/40 bg-surface p-2">
-                <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
-                  <span className="font-medium">{HEADING_NAMES[headingLevel(b)]}</span>
-                  {headingLevel(b) === 1 ? (
-                    <span className="text-muted">centered</span>
-                  ) : (
-                    <>
-                      <span className="text-muted">Align</span>
-                      {(["left", "center", "right"] as ImageAlign[]).map((a) => (
-                        <button key={a} onMouseDown={(e) => e.preventDefault()} onClick={() => setHeadingAlign(b.id, a)} className={`rounded border px-1.5 py-0.5 capitalize ${headingAlign(b) === a ? "border-accent text-accent" : "border-border text-muted"}`}>{a}</button>
-                      ))}
-                    </>
-                  )}
-                  <label className="ml-2 flex items-center gap-1"><input type="checkbox" checked={headingNumbered(b)} onChange={(e) => setHeadingNumbered(b.id, e.target.checked)} /> numbered</label>
-                  <button onClick={() => endEdit(b.id)} className="ml-auto rounded border border-border px-2 py-0.5">Done</button>
-                </div>
-                <input value={b.value ?? ""} autoFocus onChange={(e) => setHeadingText(b.id, e.target.value)} placeholder="Heading text…" style={{ textAlign: headingAlign(b) }} className="w-full bg-transparent text-xl font-semibold outline-none" />
+              // Edited where it sits, in its own type — the settings that used
+              // to sit in a bar above it are a hover strip now (HeadingBar).
+              <div className="group/edit relative flex items-baseline gap-1">
+                {headingNumbers.get(b.id) && (
+                  <span className={`${headingClass(b)} aq-heading shrink-0 text-muted`} data-level={headingLevel(b)}>{headingNumbers.get(b.id)}</span>
+                )}
+                <input
+                  ref={headingRef}
+                  value={b.value ?? ""}
+                  autoFocus
+                  onChange={(e) => setHeadingText(b.id, e.target.value)}
+                  onKeyDown={(e) => onHeadingKey(e, b)}
+                  style={{ textAlign: headingAlign(b) }}
+                  data-level={headingLevel(b)}
+                  className={`aq-heading w-full bg-transparent p-0 caret-accent outline-none ${headingClass(b)}`}
+                />
+                <HeadingBar block={b} onAlign={(a) => setHeadingAlign(b.id, a)} onNumbered={(v) => setHeadingNumbered(b.id, v)} />
               </div>
             ) : (
               <div className="flex items-center gap-1">
-                <button onMouseDown={(e) => e.preventDefault()} onClick={() => toggleSection(b.id)} title={isHeadingCollapsed(b) ? "Expand section" : "Collapse section"} aria-label={isHeadingCollapsed(b) ? "Expand section" : "Collapse section"} aria-expanded={!isHeadingCollapsed(b)} className="print-hide grid shrink-0 place-items-center text-muted hover:text-accent"><Icon name="chevron" size={16} style={{ transform: isHeadingCollapsed(b) ? "rotate(-90deg)" : "none", transition: "transform .12s" }} /></button>
-                <button onClick={() => startEditHeading(b)} className="block flex-1 text-left">
+                {sectionFolding && (
+                  <button onMouseDown={(e) => e.preventDefault()} onClick={() => toggleSection(b.id)} title={isHeadingCollapsed(b) ? "Expand section" : "Collapse section"} aria-label={isHeadingCollapsed(b) ? "Expand section" : "Collapse section"} aria-expanded={!isHeadingCollapsed(b)} className="print-hide grid shrink-0 place-items-center text-muted hover:text-accent"><Icon name="chevron" size={16} style={{ transform: isHeadingCollapsed(b) ? "rotate(-90deg)" : "none", transition: "transform .12s" }} /></button>
+                )}
+                <button onMouseDown={(e) => pressToEdit(e, b.id, () => startEditHeading(b))} className="block flex-1 cursor-text text-left">
                   <HeadingDisplay block={b} number={headingNumbers.get(b.id)} />
                 </button>
-                {isHeadingCollapsed(b) && <span className="print-hide whitespace-nowrap text-xs italic text-muted">section hidden</span>}
+                {sectionFolding && isHeadingCollapsed(b) && <span className="print-hide whitespace-nowrap text-xs italic text-muted">section hidden</span>}
               </div>
             )
           ) : isList ? (
             b.id === editingId ? (
-              <div className="rounded-md border border-accent/40 bg-surface p-2">
-                <div className="mb-2 flex items-center gap-2 text-xs">
-                  <button onMouseDown={(e) => e.preventDefault()} onClick={() => setListOrdered(b.id, true)} className={`flex items-center gap-1 rounded border px-2 py-0.5 ${listOrdered(b) ? "border-accent text-accent" : "border-border text-muted"}`}><Icon name="listnumber" size={14} />Numbered</button>
-                  <button onMouseDown={(e) => e.preventDefault()} onClick={() => setListOrdered(b.id, false)} className={`flex items-center gap-1 rounded border px-2 py-0.5 ${!listOrdered(b) ? "border-accent text-accent" : "border-border text-muted"}`}><Icon name="list" size={14} />Bulleted</button>
-                  <button onClick={() => endEdit(b.id)} className="ml-auto rounded border border-border px-2 py-0.5">Done</button>
-                </div>
-                <textarea value={listItems(b).join("\n")} autoFocus onChange={(e) => setListText(b.id, e.target.value)} placeholder="One item per line…" rows={Math.max(2, listItems(b).length)} className="w-full resize-none bg-transparent text-sm outline-none" />
-                <div className="pointer-events-none mt-2 border-t border-border pt-2"><BlockView block={b} /></div>
-              </div>
+              <ListEditor
+                block={b}
+                focusItem={listCaret.current}
+                focusOffset={listCaretOffset.current}
+                onItems={(items, caret, levels) => { listCaret.current = caret; setListItems(b.id, items, levels); }}
+                onOrdered={(o) => setListOrdered(b.id, o)}
+                onExit={() => endEdit(b.id)}
+                onLeave={(dir) => stepToBlock(b.id, dir, dir === -1 ? "end" : "start")}
+                onSplitOut={(before, beforeLevels, trailing, trailingLevels) => listToParagraph(b.id, before, trailing, beforeLevels, trailingLevels)}
+                onInlineEditor={onInlineEditor}
+                onFrontBack={() => listFrontBack(b.id)}
+              />
             ) : (
-              <button onClick={() => { if (!capsRef.current.editBlocks) return; setSelected(null); setEditingId(b.id); }} className={EDIT_HIT}><BlockView block={b} /></button>
+              <button
+                onMouseDown={(e) => pressToEdit(e, b.id, () => {
+                  if (!capsRef.current.editBlocks) return;
+                  setSelected(null);
+                  listCaret.current = listItemAt(e.target as HTMLElement);
+                  listCaretOffset.current = null;
+                  setEditingPara(false);
+                  setEditingId(b.id);
+                })}
+                className={TEXT_HIT}
+              >
+                <BlockView block={b} />
+              </button>
             )
           ) : isImage ? (
             <>
@@ -2319,7 +2966,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
               blockId={b.id}
               group="graph"
               align="center"
-              onSelect={() => { if (!capsRef.current.editBlocks) return; setSelected(null); setEditingId(null); setGraphEdit({ id: b.id }); }}
+              onSelect={() => { if (!capsRef.current.editBlocks) return; leaveOpenBlock(b.id); setSelected(null); setEditingId(null); setGraphEdit({ id: b.id }); }}
               onCommit={(positions) => placeGraph(b.id, positions[0])}
               items={[{
                 key: b.id,
@@ -2332,6 +2979,9 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
               }]}
             />
           ) : isCode ? (
+            // No preventDefault: CodeMirror needs the press to place its own
+            // caret. This only closes the line that was open.
+            <div onMouseDown={() => leaveOpenBlock(b.id)}>
             <CodeBlockView
               block={b}
               noteId={id}
@@ -2342,20 +2992,34 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
                 if (!pkgRef.current?.tree.blocks.some((x) => x.id === b.id)) return;
                 setBlocks((bs) => bs.map((x) => (x.id === b.id ? fn(x) : x)), coalesce);
               }}
-            />
+              />
+            </div>
           ) : b.id === editingId ? (
             editingPara ? (
-              <EditBox ref={editBoxRef} taRef={taRef} para={editingPara} draft={draft} color={color} previewBlock={withCalloutColor(paragraphFromSource(draft, b.id), color)} onChange={onDraftChange} onColor={pickColor} onExit={() => endEdit(b.id)} onInsertModule={insertModule} onEditModule={editModule} onNoteLink={openNoteLinkPicker} onInlineEditor={onInlineEditor} sticky={sticky} />
+              <EditBox ref={editBoxRef} taRef={taRef} para={editingPara} draft={draft} color={color} onChange={onDraftChange} onColor={pickColor} onExit={() => endEdit(b.id)} onInsertModule={insertModule} onEditModule={editModule} onNoteLink={openNoteLinkPicker} onInlineEditor={onInlineEditor} onSplit={(before, after) => splitParagraph(b.id, before, after)} onBackOut={() => backOut(b.id)} onStep={(dir, edge) => stepToBlock(b.id, dir, edge)} onMerge={(dir, text) => (dir === -1 ? mergeBack(b.id, text) : mergeForward(b.id, text))} indent={paraIndent(b)} onIndent={(d) => indentParagraph(b.id, d)} onAutoList={(ordered, rest) => paragraphToList(b.id, ordered, rest, 0)} />
             ) : editingChem ? (
-              <ChemFormulaBox draft={draft} onChange={onDraftChange} onExit={() => endEdit(b.id)} sticky={sticky} />
+              <ChemFormulaBox draft={draft} onChange={onDraftChange} onExit={() => endEdit(b.id)} onEnter={() => lineAfterFormula(b.id)} />
             ) : getSettings().mathEditorBeta && isStructural(b) ? (
-              <StructuralFormulaBox block={b} onChange={(next) => setBlocks((bs) => bs.map((x) => (x.id === b.id ? next : x)), true)} onExit={() => endEdit(b.id)} sticky={sticky} />
+              <StructuralFormulaBox block={b} onChange={(next) => setBlocks((bs) => bs.map((x) => (x.id === b.id ? next : x)), true)} onExit={() => endEdit(b.id)} onEnter={() => lineAfterFormula(b.id)} initialPoint={formulaPoint.current} />
             ) : (
-              <FormulaEditBox draft={draft} onChange={onDraftChange} onExit={() => endEdit(b.id)} sticky={sticky} />
+              <FormulaEditBox draft={draft} onChange={onDraftChange} onExit={() => endEdit(b.id)} onEnter={() => lineAfterFormula(b.id)} initialPoint={formulaPoint.current} />
             )
           ) : (
-            <button onClick={() => startEdit(b)} className={EDIT_HIT}>
-              {hasContent(b) ? <BlockView block={b} /> : <span className="text-muted">{isParagraph(b) ? "Empty paragraph" : "Empty formula"} — click to edit</span>}
+            <button
+              onMouseDown={(e) => { const el = e.currentTarget, x = e.clientX, y = e.clientY; pressToEdit(e, b.id, () => startEdit(b, false, { el, x, y })); }}
+              className={TEXT_HIT}
+            >
+              {hasContent(b) || (isParagraph(b) && calloutColorOf(b)) ? (
+                <BlockView block={b} />
+              ) : isParagraph(b) ? (
+                // A blank line keeps its height so it stays clickable, and says
+                // nothing — a document does not caption its own empty lines.
+                <span>&nbsp;</span>
+              ) : (
+                // An empty formula has no glyphs to click, so it shows the slot
+                // itself: a bare box, no words.
+                <span className="mx-auto my-1 block h-7 w-24 rounded border border-dashed border-border" />
+              )}
             </button>
           )}
         </div>
@@ -2364,7 +3028,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
           {plotExpr && (
             <button onClick={() => plotEquation(b, plotExpr)} title="Plot this equation" aria-label="Plot this equation" className="mt-1 grid place-items-center px-1 text-faint opacity-0 transition hover:text-accent group-hover:opacity-100"><Icon name="plotaxes" size={16} /></button>
           )}
-          <button onClick={() => deleteBlock(b.id)} title="Delete block" aria-label="Delete block" className="mt-1 grid place-items-center px-1 text-faint opacity-0 transition hover:text-danger group-hover:opacity-100"><Icon name="trash" size={16} /></button>
+          <button onClick={() => removeBlock(b.id)} title="Delete block" aria-label="Delete block" className="mt-1 grid place-items-center px-1 text-faint opacity-0 transition hover:text-danger group-hover:opacity-100"><Icon name="trash" size={16} /></button>
         </div>
       </div>
     );
@@ -2407,6 +3071,8 @@ export default function EditorClient() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [outlineA, setOutlineA] = useState<OutlineItem[]>([]);
   const [outlineB, setOutlineB] = useState<OutlineItem[]>([]);
+  const [shortcutsA, setShortcutsA] = useState<SectionShortcut[]>([]);
+  const [shortcutsB, setShortcutsB] = useState<SectionShortcut[]>([]);
   const [notesRev, setNotesRev] = useState(0); // bumped on save → refresh recent files
   const handleA = useRef<DocHandle | null>(null);
   const handleB = useRef<DocHandle | null>(null);
@@ -2425,6 +3091,8 @@ export default function EditorClient() {
 
   const onHeadingsA = useCallback((o: OutlineItem[]) => setOutlineA(o), []);
   const onHeadingsB = useCallback((o: OutlineItem[]) => setOutlineB(o), []);
+  const onShortcutsA = useCallback((s: SectionShortcut[]) => setShortcutsA(s), []);
+  const onShortcutsB = useCallback((s: SectionShortcut[]) => setShortcutsB(s), []);
 
   // ⌘K / Ctrl-K toggles the command palette from anywhere in the editor.
   useEffect(() => {
@@ -2482,6 +3150,7 @@ export default function EditorClient() {
   const active: "a" | "b" = split ? activeSlot : "a";
   const activeHandle = active === "a" ? handleA : handleB;
   const activeOutline = active === "a" ? outlineA : outlineB;
+  const activeShortcuts = active === "a" ? shortcutsA : shortcutsB;
 
   if (!id) return null;
 
@@ -2500,15 +3169,15 @@ export default function EditorClient() {
       </div>
 
       <div className="print-flow flex min-h-0 flex-1">
-        <EditorSidebar currentId={id} secondId={secondId} activeId={active === "b" && secondId ? secondId : id} onOpen={openSecond} outline={activeOutline} handle={activeHandle} notesRev={notesRev} />
+        <EditorSidebar currentId={id} secondId={secondId} activeId={active === "b" && secondId ? secondId : id} onOpen={openSecond} outline={activeOutline} shortcuts={activeShortcuts} handle={activeHandle} notesRev={notesRev} />
         <div className="print-flow flex min-w-0 flex-1">
           {/* Exactly one of print-flow / print-hide per wrapper, so only the active pane prints. */}
           <div className={`min-w-0 flex-1 overflow-hidden ${!split || active === "a" ? "print-flow" : "print-hide"} ${split ? "border-r border-border" : ""} ${split && active === "a" ? "ring-1 ring-inset ring-accent/50" : ""}`}>
-            <DocumentEditor key={id} id={id} primary split={split} onActivate={() => setActiveSlot("a")} onHeadings={onHeadingsA} onSaved={bumpNotes} handleRef={handleA} />
+            <DocumentEditor key={id} id={id} primary split={split} onActivate={() => setActiveSlot("a")} onHeadings={onHeadingsA} onShortcuts={onShortcutsA} onSaved={bumpNotes} handleRef={handleA} />
           </div>
           {split && secondId && (
             <div ref={paneBRef} className={`min-w-0 flex-1 overflow-hidden ${active === "b" ? "print-flow" : "print-hide"} ${active === "b" ? "ring-1 ring-inset ring-accent/50" : ""}`}>
-              <DocumentEditor key={secondId} id={secondId} primary={false} split onActivate={() => setActiveSlot("b")} onClose={closeSecond} onHeadings={onHeadingsB} onSaved={bumpNotes} handleRef={handleB} />
+              <DocumentEditor key={secondId} id={secondId} primary={false} split onActivate={() => setActiveSlot("b")} onClose={closeSecond} onHeadings={onHeadingsB} onShortcuts={onShortcutsB} onSaved={bumpNotes} handleRef={handleB} />
             </div>
           )}
         </div>
@@ -2535,10 +3204,38 @@ function plottableExpr(b: Block): string | null {
   }
 }
 
+/** A heading's type, shared by the rendered heading and the input that edits it
+ *  — the point of editing in place is that they are the same size and weight. */
+function headingClass(block: Block): string {
+  const lvl = headingLevel(block);
+  return lvl === 1 ? "text-2xl font-bold" : lvl === 2 ? "text-xl font-semibold" : lvl === 3 ? "text-lg font-semibold" : "text-base font-semibold";
+}
+
+/** Alignment and numbering for the heading being edited: a strip that appears
+ *  on hover, floating clear of the text instead of pushing it down. */
+function HeadingBar({ block, onAlign, onNumbered }: {
+  block: Block;
+  onAlign: (a: ImageAlign) => void;
+  onNumbered: (v: boolean) => void;
+}) {
+  const keep = (e: { preventDefault: () => void }) => e.preventDefault();
+  return (
+    <div className="print-hide absolute -top-7 right-0 z-20 hidden items-center gap-1 rounded-md border border-border bg-surface px-1.5 py-0.5 text-[11px] text-muted shadow-sm group-hover/edit:flex">
+      <span className="mr-0.5">{HEADING_NAMES[headingLevel(block)]}</span>
+      {headingLevel(block) !== 1 && (["left", "center", "right"] as ImageAlign[]).map((a) => (
+        <button key={a} onMouseDown={keep} onClick={() => onAlign(a)} title={`Align ${a}`} className={`rounded px-1 capitalize ${headingAlign(block) === a ? "text-accent" : "hover:text-foreground"}`}>{a}</button>
+      ))}
+      <label className="ml-1 flex items-center gap-1" onMouseDown={keep}>
+        <input type="checkbox" checked={headingNumbered(block)} onChange={(e) => onNumbered(e.target.checked)} /> numbered
+      </label>
+    </div>
+  );
+}
+
 function HeadingDisplay({ block, number }: { block: Block; number?: string }) {
   const lvl = headingLevel(block);
-  const cls = lvl === 1 ? "text-2xl font-bold" : lvl === 2 ? "text-xl font-semibold" : lvl === 3 ? "text-lg font-semibold" : "text-base font-semibold";
-  const text = block.value || "Untitled heading";
+  const cls = headingClass(block);
+  const text = block.value || "\u00A0"; // a blank heading is a blank line, not a label
   // `aq-heading` + the level: under the LaTeX preset these absolute sizes are
   // restated as \Large / \large / \normalsize of the body (app/globals.css).
   return <div className={`aq-heading ${cls}`} data-level={lvl} style={{ textAlign: headingAlign(block) }}>{number ? `${number} ` : ""}{text}</div>;

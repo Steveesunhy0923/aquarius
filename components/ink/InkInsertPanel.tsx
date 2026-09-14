@@ -68,14 +68,12 @@ const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
 export function InkInsertPanel({
   onInsert,
   onClose,
-  markSticky,
   suspendEscape = false,
 }: {
   onInsert: (latex: string) => void;
   onClose: () => void;
   /** Arms the editor's one-shot blur absorber so focusing the panel's LaTeX
    *  input doesn't close the block editor (same contract as SymbolToolbar). */
-  markSticky?: () => void;
   /** True while another overlay (symbol browser, table picker, …) is above the
    *  sheet — its Escape must not also close this. */
   suspendEscape?: boolean;
@@ -163,7 +161,6 @@ export function InkInsertPanel({
   const holdFocus = (e: ReactMouseEvent<HTMLElement>) => {
     const t = e.target as HTMLElement | null;
     if (t?.closest("input, textarea, [contenteditable], math-field")) {
-      markSticky?.();
       return;
     }
     e.preventDefault();

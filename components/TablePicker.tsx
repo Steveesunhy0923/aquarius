@@ -3,8 +3,9 @@
 import { Icon } from "@/components/Icon";
 import { TableView } from "@/components/TableView";
 import { CLOSE_BTN } from "@/components/ui/primitives";
+import { DRAG_HANDLE, useDragPanel } from "@/components/ui/useDragPanel";
 import { TABLE_STYLES, demoRows, type TableStyle } from "@/lib/blocks/tables";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 /**
  * Modal gallery of common LaTeX table styles, each shown as a small live demo.
@@ -17,6 +18,8 @@ export function TablePicker({
   onPick: (style: TableStyle) => void;
   onClose: () => void;
 }) {
+  const drag = useDragPanel();
+  const pressOnScrim = useRef(false);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -30,13 +33,20 @@ export function TablePicker({
   return (
     <div
       className="print-hide fixed inset-0 z-50 flex items-start justify-center bg-foreground/25 p-6"
-      onClick={onClose}
+      onPointerDown={(e) => { pressOnScrim.current = e.target === e.currentTarget; }}
+      onClick={(e) => {
+        const wasScrim = pressOnScrim.current;
+        pressOnScrim.current = false;
+        if (wasScrim && e.target === e.currentTarget) onClose();
+      }}
     >
       <div
+        ref={drag.ref}
+        style={drag.style}
         className="mt-10 flex max-h-[80vh] w-full max-w-3xl flex-col overflow-hidden rounded-modal border border-border bg-surface shadow-modal"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-border-soft px-5 py-4">
+        <div {...drag.handleProps} className={`flex items-center justify-between border-b border-border-soft px-5 py-4 ${DRAG_HANDLE}`}>
           <h2 className="text-base font-semibold">Insert a table — pick a style</h2>
           <button onClick={onClose} className={CLOSE_BTN} title="Close (Esc)" aria-label="Close">
             <Icon name="close" size={16} />

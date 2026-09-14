@@ -14,25 +14,37 @@ import {
   pxToPt,
   resolveStyle,
   unindentedParagraphs,
+  INDENTS,
+  TEX_INDENT,
 } from "./docstyle";
 import { emptyDocument } from "./types";
 
 describe("the LaTeX default style", () => {
   it("carries article's 11pt metrics", () => {
-    // \normalsize 10.95pt on a 13.6pt baseline, \parindent 17pt (size11.clo).
+    // \normalsize 10.95pt on a 13.6pt baseline (size11.clo).
     expect(pxToPt(LATEX_STYLE.fontSize)).toBeCloseTo(TEX.normalPt, 2);
     expect(LATEX_STYLE.lineSpacing).toBeCloseTo(13.6 / 10.95, 3);
-    expect(LATEX_STYLE.indent * pxToPt(LATEX_STYLE.fontSize)).toBeCloseTo(17, 1);
+  });
+
+  it("indents nothing by itself — indentation is something you type", () => {
+    // The one deliberate departure from article: \parindent 17pt would put a
+    // first line the writer never asked for into every paragraph. Tab does it.
+    expect(LATEX_STYLE.indent).toBe(0);
+    // …and the TeX value is still on offer for anyone who wants it back.
+    expect(INDENTS).toContain(TEX_INDENT);
+    expect(TEX_INDENT * pxToPt(LATEX_STYLE.fontSize)).toBeCloseTo(17, 1);
   });
 
   it("is stamped on every new document, not left to a fallback", () => {
     expect(emptyDocument().style).toEqual(LATEX_STYLE);
   });
 
-  it("justifies, drops the paragraph gap, and uses the export's 2.2cm margin", () => {
+  it("justifies, separates paragraphs by a skip, and uses the export's 2.2cm margin", () => {
     const r = resolveStyle(LATEX_STYLE);
     expect(r.align).toBe("justify");
-    expect(r.paraSkip).toBe(0);
+    // With no first-line indent, the skip is the ONLY thing separating one
+    // justified paragraph from the next — it must never go back to 0.
+    expect(r.paraSkip).toBeGreaterThan(0);
     expect(pxToMm(A4_W * r.marginRatio)).toBeCloseTo(TEX.marginMm, 2);
     expect(presetClass(r.preset)).toBe("aq-tex");
   });
@@ -79,8 +91,8 @@ describe("pageContentStyle", () => {
     const half = pageContentStyle(r, A4_W / 2);
     expect(Number(half.padding)).toBe(Math.round(Number(full.padding) / 2));
     expect(full.textAlign).toBe("justify");
-    expect(full["--indent"]).toBe(`${LATEX_STYLE.indent}em`);
-    expect(full["--para-skip"]).toBe("0px");
+    expect(full["--indent"]).toBe("0em");
+    expect(full["--para-skip"]).toBe(`${resolveStyle(LATEX_STYLE).paraSkip}px`);
   });
 });
 

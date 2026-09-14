@@ -3,6 +3,7 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { Icon } from "@/components/Icon";
 import { CLOSE_BTN, EYEBROW as SECTION, SELECT } from "@/components/ui/primitives";
+import { DRAG_HANDLE, useDragPanel } from "@/components/ui/useDragPanel";
 
 // Escape closes the TOPMOST dialog only: mounted dialogs stack their tokens,
 // and the top one swallows the event (capture phase, like SymbolPicker) so it
@@ -11,8 +12,10 @@ const dialogStack: symbol[] = [];
 
 /**
  * Dialog — the Graphite modal shell: scrim (click-outside closes), rounded
- * panel, ruled header with title + close button, Escape closes. Callers own
- * the body markup (typically `<div className="px-5 py-4">…</div>`).
+ * panel, ruled header with title + close button, Escape closes, and a header
+ * that DRAGS the panel out of the way of whatever it is covering (double-click
+ * it to recentre). Callers own the body markup (typically
+ * `<div className="px-5 py-4">…</div>`).
  */
 export function Dialog({
   title,
@@ -29,6 +32,7 @@ export function Dialog({
 }) {
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
+  const drag = useDragPanel();
   // Scrim dismissal requires the PRESS to start on the scrim itself — a
   // text-selection drag that starts inside the panel and releases over the
   // scrim dispatches its click on the scrim (common-ancestor rule) and must
@@ -61,8 +65,8 @@ export function Dialog({
         if (wasScrim && e.target === e.currentTarget) onClose();
       }}
     >
-      <div className={`w-full ${maxWidth} overflow-hidden rounded-modal border border-border bg-surface shadow-modal`} onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between border-b border-border-soft px-5 py-4">
+      <div ref={drag.ref} style={drag.style} className={`w-full ${maxWidth} overflow-hidden rounded-modal border border-border bg-surface shadow-modal`} onClick={(e) => e.stopPropagation()}>
+        <div {...drag.handleProps} className={`flex items-center justify-between border-b border-border-soft px-5 py-4 ${DRAG_HANDLE}`}>
           <h2 className="text-base font-semibold">{title}</h2>
           <button onClick={onClose} aria-label="Close" className={CLOSE_BTN}>
             <Icon name="close" size={16} />

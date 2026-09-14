@@ -6,12 +6,15 @@
  */
 
 import type { IconName } from "@/components/Icon";
+import { compileExpr } from "@/lib/blocks/expr";
 import {
+  clipLineToView,
   newGraphId,
   parabolaPolyline,
   resolvePoint,
   type GPoint,
   type GraphData,
+  type GraphView,
   type GShape,
   type Proj,
   type Scene,
@@ -53,7 +56,7 @@ export const HINTS: Record<ToolId, string> = {
   select: "Click a point or shape to select. Drag a point to reshape; drag the round handle above a shape to rotate it. Vertices snap to the grid and other points.",
   point: "Click to drop a point. It snaps to the grid, existing points, and side midpoints.",
   segment: "Click two points. Endpoints snap to existing points and midpoints (draw medians exactly).",
-  line: "Click two points to define an infinite line (clipped to the view).",
+  line: "Click two points to define an infinite line (clipped to the view) — or type its equation in the panel.",
   triangle: "Click three vertices.",
   rectangle: "Drag from one corner to the opposite corner and release. Axis-aligned by default — rotate it later with the Select tool.",
   circle: "Click the center, then a point on the circle.",
@@ -158,6 +161,141 @@ export function buildShape(tool: ToolId, ids: string[], color: string): GShape |
     default:
       return null;
   }
+}
+
+// ─── Lines from an equation ──────────────────────────────────────────────────
+//
+// A line in the model is TWO POINTS, because that is what makes it draggable,
+// rotatable and snappable like every other shape. An equation is therefore not
+// a second kind of line but a second way to say where those two points go: it
+// is parsed to `a·x + b·y = c`, and two anchors are dropped on that line.
+//
+// Nothing is stored about the equation. It is recovered from the points
+// whenever it is needed (`lineEquationText`), so a line typed as `y = 2x + 1`
+// and a line drawn with two clicks are the same object afterwards — dragging
+// an anchor just moves the line, and the panel then shows the equation the
+// dragged line actually has.
+
+/** A line as `a·x + b·y = c`, with (a, b) ≠ (0, 0). */
+export interface LineCoef {
+  a: number;
+  b: number;
+  c: number;
+}
+
+/**
+ * Parse a linear equation into `a·x + b·y = c`.
+ *
+ * Accepts anything the expression evaluator understands on either side of the
+ * `=` — `y = 2x + 1`, `x = 3`, `2x + 3y = 6`, `y - 3 = 2(x - 1)` — plus a bare
+ * expression (`2x + 1`), read as `y = …` the way a graphing calculator does.
+ *
+ * Both sides are compiled once and then PROBED rather than inspected: the
+ * coefficients come from differences of `f(x,y) = lhs − rhs` at three points,
+ * and the result is verified against `f` at several more. That both keeps the
+ * parser (lib/blocks/expr.ts) as the single source of grammar truth and rejects
+ * a non-linear equation (`y = x^2`) instead of silently drawing the tangent-ish
+ * line its samples imply.
+ */
+export function parseLineEquation(src: string): LineCoef | null {
+  const parts = src.split("=");
+  if (parts.length > 2) return null;
+  const [lhsSrc, rhsSrc] = parts.length === 2 ? parts : ["y", parts[0]];
+  const lhs = compileExpr(lhsSrc, ["x", "y"]);
+  const rhs = compileExpr(rhsSrc, ["x", "y"]);
+  if (!lhs.fn || !rhs.fn) return null;
+  const f = (x: number, y: number): number => lhs.fn!({ x, y }) - rhs.fn!({ x, y });
+
+  let a: number;
+  let b: number;
+  let c: number;
+  try {
+    const f00 = f(0, 0);
+    a = f(1, 0) - f00;
+    b = f(0, 1) - f00;
+    c = -f00;
+  } catch {
+    return null;
+  }
+  if (![a, b, c].every(Number.isFinite)) return null;
+  if (Math.abs(a) < 1e-12 && Math.abs(b) < 1e-12) return null; // `1 = 1`, `y = y`
+
+  // Verify linearity away from the probe points. The tolerance scales with the
+  // magnitudes involved so large coefficients aren't rejected by rounding.
+  for (const [x, y] of [[2, 3], [-4, 1.5], [7.25, -6]] as Array<[number, number]>) {
+    let got: number;
+    try {
+      got = f(x, y);
+    } catch {
+      return null;
+    }
+    const want = a * x + b * y - c;
+    const scale = Math.max(1, Math.abs(want), Math.abs(a * x), Math.abs(b * y), Math.abs(c));
+    if (!Number.isFinite(got) || Math.abs(got - want) > 1e-9 * scale) return null;
+  }
+  return { a, b, c };
+}
+
+/** Convenience: does `src` describe a line? (drives the input's valid state) */
+export function isValidLineEquation(src: string): boolean {
+  return parseLineEquation(src) != null;
+}
+
+/**
+ * Two distinct points ON the line, to be its defining anchors.
+ *
+ * They are placed a quarter and three quarters along the line's crossing of the
+ * view, so both handles sit ON SCREEN and away from the edges. A line that
+ * misses the view entirely (it can still be dragged into it) falls back to two
+ * points spanning the view's width or height.
+ */
+export function lineAnchors(view: GraphView, k: LineCoef): [[number, number], [number, number]] {
+  const { a, b, c } = k;
+  const spanX = view.xmax - view.xmin;
+  const spanY = view.ymax - view.ymin;
+  // Two far-apart points on the line, chosen along whichever axis the line is
+  // not parallel to (|b| ≥ |a| ⇒ solve for y, else for x).
+  const far: [[number, number], [number, number]] =
+    Math.abs(b) >= Math.abs(a)
+      ? [
+          [view.xmin - spanX, (c - a * (view.xmin - spanX)) / b],
+          [view.xmax + spanX, (c - a * (view.xmax + spanX)) / b],
+        ]
+      : [
+          [(c - b * (view.ymin - spanY)) / a, view.ymin - spanY],
+          [(c - b * (view.ymax + spanY)) / a, view.ymax + spanY],
+        ];
+  const seg = clipLineToView(view, far[0], far[1]) ?? far;
+  const at = (t: number): [number, number] => [
+    seg[0][0] + (seg[1][0] - seg[0][0]) * t,
+    seg[0][1] + (seg[1][1] - seg[0][1]) * t,
+  ];
+  return [at(0.25), at(0.75)];
+}
+
+/** Round for display: enough precision to be faithful, no 0.30000000000000004. */
+function round(n: number): number {
+  return Math.abs(n) < 1e-12 ? 0 : Number(n.toFixed(6));
+}
+
+/**
+ * The equation of the line through A and B, as a user would write it —
+ * `y = 2x + 1`, `y = -x`, `y = 3`, or `x = 3` for a vertical line.
+ *
+ * This is what the panel shows for a selected line, including one built by
+ * clicking, so the equation field is never blank and always tells the truth
+ * about the line on screen.
+ */
+export function lineEquationText(a: [number, number], b: [number, number]): string {
+  const [x1, y1] = a;
+  const [x2, y2] = b;
+  if (Math.abs(x2 - x1) < 1e-12) return `x = ${round(x1)}`;
+  const m = round((y2 - y1) / (x2 - x1));
+  const k = round(y1 - m * x1);
+  const slope = m === 0 ? "" : m === 1 ? "x" : m === -1 ? "-x" : `${m}x`;
+  if (!slope) return `y = ${k}`;
+  if (k === 0) return `y = ${slope}`;
+  return `y = ${slope} ${k < 0 ? "-" : "+"} ${Math.abs(k)}`;
 }
 
 /** Remove a point and everything that depends on it (derived points + shapes). */

@@ -31,9 +31,6 @@ export function ModuleSlashMenu({ query, modules, active, onHover, onPick, onEdi
       onMouseDown={(e) => e.preventDefault()}
       className="print-hide absolute left-2 right-2 top-full z-30 mt-1 rounded-md border border-accent bg-surface shadow-lg"
     >
-      <div className="border-b border-border-soft px-3 py-1.5 text-xs text-muted">
-        Insert a module — ↑↓ choose · Enter insert · Esc dismiss
-      </div>
       <div className="max-h-64 overflow-y-auto p-1">
         {modules.length === 0 ? (
           <p className="px-2 py-2 text-xs text-muted">No modules match “{query}”.</p>
@@ -49,8 +46,7 @@ export function ModuleSlashMenu({ query, modules, active, onHover, onPick, onEdi
               className={`flex w-full cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-left text-sm ${i === active ? "bg-accent-soft text-accent" : "hover:bg-foreground/[0.06]"}`}
             >
               <Icon name={m.icon} size={16} className="shrink-0" />
-              <span className="shrink-0 font-medium">{m.name}</span>
-              <span className={`min-w-0 flex-1 truncate text-xs ${i === active ? "text-accent/80" : "text-muted"}`}>{m.description}</span>
+              <span className="min-w-0 flex-1 truncate font-medium">{m.name}</span>
               <span className="shrink-0 text-[10px] uppercase tracking-wide text-faint">{MODULE_CATEGORY_NAMES[m.category]}</span>
               {m.category === "custom" && onEdit && (
                 <button

@@ -38,6 +38,7 @@ export function fullLatexDocument(body: string, style?: DocumentStyle): string {
 \\usepackage{amsmath,amssymb}
 \\usepackage{graphicx}
 \\usepackage{enumitem}
+\\setlist{leftmargin=36pt}
 \\usepackage{subcaption}
 \\usepackage{tikz}
 \\usepackage[version=4]{mhchem}

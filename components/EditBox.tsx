@@ -1,20 +1,19 @@
 "use client";
 
-import { BlockView } from "@/components/BlockView";
 import { ChemField } from "@/components/ChemField";
 import { Icon } from "@/components/Icon";
-import { Katex } from "@/components/Katex";
-import { MathField } from "@/components/MathField";
+import { RichLine, type LineHandle } from "@/components/RichLine";
 import { ModuleSlashMenu } from "@/components/ModuleSlashMenu";
 import { NoteLinkMenu } from "@/components/NoteLinkMenu";
 import { CALLOUT_COLORS, isHexColor } from "@/lib/blocks/callouts";
-import { ceInner, wrapCe } from "@/lib/blocks/chem";
+import { indentCss } from "@/lib/blocks/indent";
+import { listTrigger } from "@/lib/blocks/lists";
+import { wrapCe } from "@/lib/blocks/chem";
 import { makeNoteHref } from "@/lib/blocks/notelink";
-import { inlineMathSpans, replaceInlineMathSpan } from "@/lib/blocks/source";
+import { replaceInlineMathSpan } from "@/lib/blocks/source";
 import { deleteSavedModule, searchModules, type Module } from "@/lib/templates/modules";
 import { getStore } from "@/lib/storage";
 import type { NoteMeta } from "@/lib/storage/types";
-import type { Block } from "@/lib/blocks/types";
 import {
   forwardRef,
   useCallback,
@@ -23,29 +22,39 @@ import {
   useMemo,
   useRef,
   useState,
-  type FocusEvent,
   type KeyboardEvent,
-  type MutableRefObject,
   type RefObject,
 } from "react";
 
-// ─── Edit box (paragraph/formula) ────────────────────────────────────────────
+// ─── In-place paragraph editor ───────────────────────────────────────────────
+//
+// A paragraph is edited WHERE IT SITS: the line (a RichLine) carries the document's own
+// type, indent and width, with no border, no preview pane and no button rows, so
+// clicking a sentence puts a caret in it instead of opening a box under it (the
+// caret lands on the clicked character — see lib/editor/caret.ts). Enter starts
+// the next paragraph, Shift+Enter keeps a line break inside this one, and
+// Backspace in an empty paragraph steps back into the one above.
+//
+// Maths is typed, not dialogued: `$x^2$` inline, `$$…$$` for an equation of its
+// own (lib/blocks/source.ts). The line is a RichLine: the words are words and
+// each formula is a tiny box in them — rendered maths, or the MathLive field
+// once the caret goes in — with no dollar signs on screen.
 export interface EditBoxHandle {
-  /** Open the inline-math box editor, optionally seeded with a structure. */
+  /** Open a formula box at the caret (over any selection, which seeds it when
+   *  `seed` is empty), optionally seeded with a structure. */
   openMath: (seed: string) => void;
   /** Open the inline-chemistry editor, optionally seeded with mhchem source. */
   openChem: (seed: string) => void;
-  /** Commit an open inline formula popover, as if Done were pressed. Returns
-   *  true if one was open. Lets a click on blank document space close the
+  /** Close an open inline formula (box or chemistry popover), keeping what was
+   *  typed into it. Returns true if one was open. Lets a click on blank document space close the
    *  formula layer WITHOUT discarding what was typed into it. */
   commitInline: () => boolean;
 }
 export const EditBox = forwardRef<EditBoxHandle, {
-  taRef: RefObject<HTMLTextAreaElement | null>;
+  taRef: RefObject<LineHandle | null>;
   para: boolean;
   draft: string;
   color: string | null;
-  previewBlock: Block;
   onChange: (text: string, caret: number) => void;
   onColor: (c: string | null) => void;
   onExit: () => void;
@@ -67,12 +76,39 @@ export const EditBox = forwardRef<EditBoxHandle, {
    *  still a text block. Without this signal the strip stays hidden and the
    *  popover's own promise ("the toolbar & Σ symbols insert here too") is a lie. */
   onInlineEditor?: (kind: "math" | "chem" | null) => void;
-  sticky: MutableRefObject<boolean>;
+  /** Enter: commit `before` into this block and start a new paragraph holding
+   *  `after`, with the caret at its start. */
+  onSplit?: (before: string, after: string) => void;
+  /** Backspace at the very start of an empty paragraph: drop it and put the
+   *  caret back at the end of the block above. */
+  onBackOut?: () => void;
+  /** An arrow key that ran off the top/bottom (or either end) of this block:
+   *  carry the caret into the neighbouring one. Returns true if it went. */
+  onStep?: (dir: -1 | 1, edge: "start" | "end") => boolean;
+  /** Backspace at the start of a paragraph that still has text: join it onto
+   *  the block above. Delete at the end: pull the next one up. */
+  onMerge?: (dir: -1 | 1, text: string) => void;
+  /** This paragraph's indent, in steps (lib/blocks/indent.ts). */
+  indent?: number;
+  /** Move the whole paragraph one indent step in (+1) or out (-1). False when
+   *  it is already as far as it goes. */
+  onIndent?: (delta: 1 | -1) => boolean;
+  /** "- " or "1. " typed at the start of the paragraph: make it a list item
+   *  holding `rest` (lib/blocks/lists → listTrigger). */
+  onAutoList?: (ordered: boolean, rest: string) => void;
 }>(function EditBox(
-  { taRef, para, draft, color, previewBlock, onChange, onColor, onExit, onInsertModule, onEditModule, onNoteLink, onInlineEditor, sticky },
+  { taRef, para, draft, color, onChange, onColor, onExit, onInsertModule, onEditModule, onNoteLink, onInlineEditor, onSplit, onBackOut, onStep, onMerge, indent = 0, onIndent, onAutoList },
   ref,
 ) {
-  const boxRef = useRef<HTMLDivElement>(null);
+  // The box-colour strip is opt-in chrome now: a paragraph is text until the
+  // user asks for it to be a coloured box, and an editor should not put a
+  // palette between them and their sentence.
+  const [showColors, setShowColors] = useState(false);
+  useEffect(() => { if (color) setShowColors(true); }, [color]);
+  // A formula open in the line (RichLine reports it): the symbol strip follows.
+  const [inlineMath, setInlineMath] = useState(false);
+  /** Buttons around the text must not steal the caret out of it. */
+  const keepCaret = (e: { preventDefault: () => void }) => e.preventDefault();
   const [hexDraft, setHexDraft] = useState(color ?? "");
   useEffect(() => setHexDraft(color ?? ""), [color]);
 
@@ -89,7 +125,6 @@ export const EditBox = forwardRef<EditBoxHandle, {
     | { mode: "edit"; index: number; initial: string; chem?: boolean }
     | null
   >(null);
-  const spans = para ? inlineMathSpans(draft) : [];
 
   // Slash-insert: typing "/" at a word start opens a fuzzy-filtered module menu
   // below the box; the query is the text between the "/" and the caret. The
@@ -134,7 +169,7 @@ export const EditBox = forwardRef<EditBoxHandle, {
 
   /** Caret-only moves (arrows, Home/End, clicks) don't fire onChange — re-derive
    *  the query from the new caret, or dismiss when the caret leaves the run. */
-  function trackSlashSelect(ta: HTMLTextAreaElement) {
+  function trackSlashSelect(ta: LineHandle) {
     if (!slash) return;
     const caret = ta.selectionStart ?? 0;
     if (ta.selectionEnd !== caret || caret <= slash.start || ta.value[slash.start] !== "/") { setSlash(null); return; }
@@ -197,7 +232,7 @@ export const EditBox = forwardRef<EditBoxHandle, {
   }, [draft, link]);
 
   /** Caret-only moves: re-derive the query or dismiss when leaving the run. */
-  function trackLinkSelect(ta: HTMLTextAreaElement) {
+  function trackLinkSelect(ta: LineHandle) {
     if (!link) return;
     const caret = ta.selectionStart ?? 0;
     if (ta.selectionEnd !== caret || caret < link.start + 2 || ta.value.slice(link.start, link.start + 2) !== "[[") { setLink(null); return; }
@@ -265,14 +300,13 @@ export const EditBox = forwardRef<EditBoxHandle, {
     onEditModule?.(m, clean ? cur.slice(0, slash.start) + cur.slice(end) : cur);
   }
 
-  // Open the box editor. `seed` (empty for a blank formula, or a structure like
-  // \frac{\placeholder{}}{\placeholder{}} from a toolbar button) pre-fills it.
+  // Open a formula box at the caret: blank (the formula button), a structure
+  // to fill (\frac{\placeholder{}}{\placeholder{}} from the strip), or a plain
+  // symbol, which is placed as a finished formula with the words carrying on.
   const openMath = useCallback((seed: string) => {
-    const ta = taRef.current;
-    const caret = ta?.selectionStart ?? ta?.value.length ?? 0;
-    setSlash(null); // the popover owns the keyboard now
+    setSlash(null); // a formula owns the keyboard now
     setLink(null);
-    setMathPopover({ mode: "insert", caret, initial: seed });
+    taRef.current?.openFormula(seed);
   }, [taRef]);
   const openChem = useCallback((seed: string) => {
     const ta = taRef.current;
@@ -285,16 +319,18 @@ export const EditBox = forwardRef<EditBoxHandle, {
   // click) can commit the same value Done would.
   const inlineValue = useRef("");
   const commitInline = useCallback(() => {
+    // A formula open in the line: keep what it holds, caret after it.
+    if (taRef.current?.leaveFormula()) return true;
     if (!mathPopover) return false;
     commitMath(mathPopover.chem ? wrapCe(inlineValue.current) : inlineValue.current);
     return true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mathPopover]);
+  }, [mathPopover, taRef]);
   useImperativeHandle(ref, () => ({ openMath, openChem, commitInline }), [openMath, openChem, commitInline]);
 
   // Mirror the popover's open state to the parent, and report "closed" on
   // unmount so ending the edit can never leave the strip stranded open.
-  const inlineKind = mathPopover ? (mathPopover.chem ? "chem" : "math") : null;
+  const inlineKind = inlineMath ? "math" : mathPopover ? (mathPopover.chem ? "chem" : "math") : null;
   useEffect(() => {
     onInlineEditor?.(inlineKind);
   }, [inlineKind, onInlineEditor]);
@@ -311,7 +347,7 @@ export const EditBox = forwardRef<EditBoxHandle, {
     if (pop.mode === "insert") {
       if (latex.trim()) {
         const c = Math.min(pop.caret, cur.length);
-        const ins = `\\(${latex}\\)`;
+        const ins = `$${latex}$`;
         onChange(cur.slice(0, c) + ins + cur.slice(c), c + ins.length);
       }
     } else {
@@ -319,18 +355,40 @@ export const EditBox = forwardRef<EditBoxHandle, {
     }
   }
 
-  function onFocusOut(e: FocusEvent<HTMLDivElement>) {
-    if (mathPopover) return; // editing an inline formula in the popover — never exit
-    if (boxRef.current && e.relatedTarget && boxRef.current.contains(e.relatedTarget as Node)) return;
-    if (sticky.current) { sticky.current = false; return; }
-    onExit();
+  /** Words typed in the line: list autoformat, the `/` and `[[` menus, then the
+   *  commit. (A formula's own edits skip all three.) */
+  function onTyped(text: string, caret: number) {
+    // Google Docs' list autoformat: a bullet ("- ", "* ") or "1. " typed at the
+    // start of the paragraph makes it a list item, its existing text and all.
+    // Only a single typed space completes it — never a paste or a deletion.
+    if (para && onAutoList && text.length === draft.length + 1 && text[caret - 1] === " ") {
+      const hit = listTrigger(text, caret);
+      if (hit) { onAutoList(hit.ordered, hit.rest); return; }
+    }
+    if (para && onInsertModule) trackSlash(text, caret);
+    if (para && onNoteLink) {
+      trackLink(text, caret);
+      // "[[" completed by a SINGLE typed "[" (never deletions/cuts/pastes that
+      // happen to end at "[[") → inline note menu.
+      if (
+        !link &&
+        text.length === draft.length + 1 &&
+        caret >= 2 && text[caret - 1] === "[" && text[caret - 2] === "[" &&
+        (caret < 3 || text[caret - 3] !== "[")
+      ) {
+        setSlash(null); // "[[" typed into a /query hands the keyboard over
+        setLink({ start: caret - 2, query: "" });
+        setLinkActive(0);
+      }
+    }
+    onChange(text, caret);
   }
 
   // Keep Tab inside the box (its default focus-move would blur → exit). Escape
   // commits/leaves. Tab/Shift+Tab indent/outdent prose; in formula mode it only
   // holds focus (a literal tab is meaningless whitespace in LaTeX). Reads the
   // live textarea value, mirroring spliceAtCaret.
-  function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+  function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
     // Note-link menu open: it owns the navigation keys the same way the slash
     // menu does below. `linkActive` includes the trailing "browse" row.
     if (link && !mathPopover && !e.nativeEvent.isComposing) {
@@ -361,13 +419,85 @@ export const EditBox = forwardRef<EditBoxHandle, {
       }
     }
     if (e.key === "Escape") { e.preventDefault(); onExit(); return; }
+    // ⌘] / ⌘[ (Ctrl on Windows): Docs' increase / decrease indent. They move
+    // the whole paragraph from wherever the caret is.
+    if (para && onIndent && (e.metaKey || e.ctrlKey) && !e.altKey && (e.key === "]" || e.key === "[")) {
+      e.preventDefault();
+      onIndent(e.key === "]" ? 1 : -1);
+      return;
+    }
+    // Enter starts the next paragraph, the way clicking the line below does —
+    // one block per paragraph is what the outline, pagination and section moves
+    // all work in. Shift+Enter keeps a soft line break inside this one.
+    if (e.key === "Enter" && para && onSplit && !e.shiftKey && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      const ta = taRef.current!;
+      const at = ta.selectionStart ?? ta.value.length;
+      const to = ta.selectionEnd ?? at;
+      onSplit(ta.value.slice(0, at), ta.value.slice(to));
+      return;
+    }
+    // The caret walks out of a block the way it walks along a line: Up/Down from
+    // the first/last line, Left/Right off either end. Without this, every block
+    // is a keyboard dead end and the document reads as a stack of boxes.
+    if (para && !e.nativeEvent.isComposing && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      const ta = taRef.current!;
+      const at = ta.selectionStart ?? 0;
+      const collapsed = at === (ta.selectionEnd ?? at);
+      const firstLine = ta.value.lastIndexOf("\n", at - 1) === -1;
+      const lastLine = ta.value.indexOf("\n", at) === -1;
+      // Backspace at the very start of an indented paragraph takes a step of
+      // indent off first, as in Docs — before it would join the paragraph
+      // above or remove an empty one.
+      if (collapsed && at === 0 && e.key === "Backspace" && indent > 0 && onIndent?.(-1)) {
+        e.preventDefault();
+        return;
+      }
+      if (collapsed && onStep) {
+        if ((e.key === "ArrowUp" && firstLine) || (e.key === "ArrowLeft" && at === 0)) {
+          if (onStep(-1, "end")) { e.preventDefault(); return; }
+        }
+        if ((e.key === "ArrowDown" && lastLine) || (e.key === "ArrowRight" && at === ta.value.length)) {
+          if (onStep(1, "start")) { e.preventDefault(); return; }
+        }
+      }
+      // Backspace/Delete at the seam join the two paragraphs, as in any
+      // document app — the block boundary is not a wall.
+      if (collapsed && onMerge && ta.value !== "") {
+        if (e.key === "Backspace" && at === 0) { e.preventDefault(); onMerge(-1, ta.value); return; }
+        if (e.key === "Delete" && at === ta.value.length) { e.preventDefault(); onMerge(1, ta.value); return; }
+      }
+    }
+    // Backspace with nothing left to delete: leave the empty paragraph behind
+    // and carry on editing the one above, rather than sitting in a dead block.
+    if (e.key === "Backspace" && para && onBackOut && !e.nativeEvent.isComposing) {
+      const ta = taRef.current!;
+      if (ta.value === "" || (ta.selectionStart === 0 && ta.selectionEnd === 0 && ta.value.trim() === "")) {
+        e.preventDefault();
+        onBackOut();
+        return;
+      }
+    }
     if (e.key !== "Tab") return;
     e.preventDefault();
     if (!para) return; // formula: keep focus, don't inject whitespace into LaTeX
-    const ta = e.currentTarget;
+    const ta = taRef.current!;
     const value = ta.value;
     const start = ta.selectionStart ?? 0;
     const end = ta.selectionEnd ?? start;
+    // Google Docs: Tab at the START of a paragraph, or over a selection that
+    // spans its lines, indents the whole paragraph a step, and Shift+Tab takes
+    // a step off from anywhere in it. Only a Tab in the middle of a line types
+    // a tab character, and that stops on the same half-inch grid. Shift+Tab in
+    // a paragraph with no indent left still strips a typed leading tab (below).
+    if (onIndent) {
+      if (e.shiftKey) {
+        if (onIndent(-1)) return;
+      } else if (start === 0 || value.slice(start, end).includes("\n")) {
+        onIndent(1);
+        return;
+      }
+    }
     const restore = (s: number, en: number) =>
       requestAnimationFrame(() => { try { ta.setSelectionRange(s, en); } catch { /* noop */ } });
     const outdent = (line: string): number =>
@@ -411,9 +541,10 @@ export const EditBox = forwardRef<EditBoxHandle, {
   }
 
   return (
-    <div ref={boxRef} onBlur={onFocusOut} className="relative rounded-md border border-accent/40 bg-surface p-2">
-      {para && (
-        <div className="mb-2 flex flex-wrap items-center gap-1.5">
+    // The indent moves the whole paragraph, the colour strip and popovers with it.
+    <div className="group/edit relative" style={para && indent > 0 ? { marginLeft: indentCss(indent) } : undefined}>
+      {para && showColors && (
+        <div className="absolute -top-9 right-0 z-20 flex flex-wrap items-center gap-1.5 rounded-md border border-border bg-surface px-2 py-1 shadow-md">
           <span className="mr-1 text-xs text-muted">Box:</span>
           <button onClick={() => onColor(null)} className={`rounded border px-2 py-0.5 text-xs ${color ? "border-border text-muted" : "border-accent text-accent"}`}>None</button>
           {CALLOUT_COLORS.map((c) => (
@@ -422,86 +553,46 @@ export const EditBox = forwardRef<EditBoxHandle, {
           <span className="mx-1 h-5 w-px bg-border" />
           <input type="color" value={color ?? "#fef3c7"} onChange={(e) => onColor(e.target.value)} title="Custom color (wheel)" className="h-7 w-8 cursor-pointer rounded border border-border bg-transparent p-0.5" />
           <input type="text" value={hexDraft} onChange={(e) => { const v = e.target.value; setHexDraft(v); if (isHexColor(v)) onColor(v); }} placeholder="#RRGGBB" spellCheck={false} className="w-24 rounded border border-border bg-background px-2 py-0.5 font-mono text-xs outline-none focus:border-accent" />
+          <button onMouseDown={keepCaret} onClick={() => setShowColors(false)} title="Close" aria-label="Close the box colours" className="ml-1 text-muted hover:text-foreground"><Icon name="close" size={12} /></button>
         </div>
       )}
-      {para && (
-        <div className="mb-2 flex flex-wrap items-center gap-1.5">
-          <button onClick={() => openMath("")} title="Insert an inline formula (fill in the boxes)" className="flex items-center gap-1 rounded border border-border px-2 py-0.5 text-xs hover:border-accent"><Icon name="inlineformula" size={14} /> Insert math</button>
-          <button onClick={() => openChem("")} title="Insert inline chemistry (type it naturally, e.g. 2H2 + O2 -> 2H2O)" className="flex items-center gap-1 rounded border border-border px-2 py-0.5 text-xs hover:border-accent"><Icon name="flask" size={14} /> Insert chemistry</button>
-          {spans.length > 0 && <span className="ml-1 text-xs text-muted">Formulas (click to edit):</span>}
-          {spans.map((s, i) => {
-            // A pure-\ce span reopens in the chemistry editor (as its source);
-            // anything else reopens in the MathLive box. Same stored form either way.
-            const chemSrc = ceInner(s.latex);
-            return (
-              <button key={i} onClick={() => { setSlash(null); setMathPopover(chemSrc != null ? { mode: "edit", index: i, initial: chemSrc, chem: true } : { mode: "edit", index: i, initial: s.latex }); }} title={chemSrc != null ? "Edit this chemistry formula" : "Edit this formula"} className="rounded border border-border px-1.5 py-0.5 hover:border-accent">
-                <Katex latex={s.latex.trim() || "\\square"} />
-              </button>
-            );
-          })}
-        </div>
+      {para && !showColors && (
+        <button
+          onMouseDown={keepCaret}
+          onClick={() => setShowColors(true)}
+          title="Turn this paragraph into a coloured box"
+          aria-label="Box colour"
+          className="absolute -top-7 right-0 z-20 hidden rounded border border-border bg-surface px-1.5 py-0.5 text-[11px] text-muted shadow-sm hover:text-foreground group-hover/edit:block"
+        >
+          Box…
+        </button>
       )}
-      <textarea
+      <RichLine
         ref={taRef}
         value={draft}
-        spellCheck={para}
+        spellCheck
         onKeyDown={onKeyDown}
-        onChange={(e) => {
-          const text = e.target.value;
-          const caret = e.target.selectionStart ?? 0;
-          if (para && onInsertModule) trackSlash(text, caret);
-          if (para && onNoteLink) {
-            trackLink(text, caret);
-            // "[[" completed by a SINGLE typed "[" (never deletions/cuts/pastes
-            // that happen to end at "[[", never mid-IME) → inline note menu.
-            if (
-              !link &&
-              text.length === draft.length + 1 &&
-              !(e.nativeEvent as InputEvent).isComposing &&
-              caret >= 2 && text[caret - 1] === "[" && text[caret - 2] === "[" &&
-              (caret < 3 || text[caret - 3] !== "[")
-            ) {
-              setSlash(null); // "[[" typed into a /query hands the keyboard over
-              setLink({ start: caret - 2, query: "" });
-              setLinkActive(0);
-            }
-          }
-          onChange(text, caret);
-        }}
-        onSelect={(e) => { trackSlashSelect(e.currentTarget); trackLinkSelect(e.currentTarget); }}
-        rows={para ? Math.max(2, draft.split("\n").length) : 2}
-        placeholder={para ? "Type text… **bold**, *italic*, ƒ for a formula, / for a module, [[ to link a note" : "LaTeX, e.g. \\frac{a}{b}"}
-        className="w-full resize-none bg-transparent font-mono text-sm outline-none"
+        onChange={(text, caret, typed) => (typed ? onTyped(text, caret) : onChange(text, caret))}
+        onSelectionChange={() => { const ta = taRef.current; if (ta) { trackSlashSelect(ta); trackLinkSelect(ta); } }}
+        onInlineEditor={(kind) => setInlineMath(kind === "math")}
+        onChemChip={(index, inner) => { setSlash(null); setLink(null); setMathPopover({ mode: "edit", index, initial: inner, chem: true }); }}
+        // Typed like the paragraph it replaces (aq-para carries the document
+        // preset's indent), no border, no surface: the point is that nothing
+        // moves or changes when you click into it.
+        className="aq-para block w-full whitespace-pre-wrap break-words bg-transparent p-0 text-foreground caret-accent outline-none"
+        style={{ minHeight: "1.2em" }}
       />
-      {/* pointer-events-none: like every other preview surface — a note link
-          here must not pop hover cards or navigate away mid-edit. */}
-      <div className="pointer-events-none mt-2 border-t border-border pt-2">
-        {draft.trim() ? <BlockView block={previewBlock} /> : <span className="text-xs text-muted">preview</span>}
-      </div>
-      {mathPopover && (() => {
-        // Key by target: retargeting the popover (clicking another chip while
-        // it is open) must REMOUNT it, or the editor's `latest` ref would keep
-        // the previous target's content and Done would write it into the newly
-        // selected span.
-        const key = `${mathPopover.chem ? "c" : "m"}:${mathPopover.mode === "edit" ? `e${mathPopover.index}` : `i${mathPopover.caret}`}`;
-        return mathPopover.chem ? (
-          <InlineChemPopover
-            key={key}
-            initial={mathPopover.initial}
-            onCommit={commitMath}
-            onCancel={() => setMathPopover(null)}
-            onValue={(v) => { inlineValue.current = v; }}
-          />
-        ) : (
-          <InlineMathPopover
-            key={key}
-            initial={mathPopover.initial}
-            onCommit={commitMath}
-            onCancel={() => setMathPopover(null)}
-            onValue={(v) => { inlineValue.current = v; }}
-          />
-        );
-      })()}
+      {mathPopover?.chem && (
+        // Key by target: retargeting the popover must REMOUNT it, or its
+        // `latest` ref would keep the previous target's content.
+        <InlineChemPopover
+          key={mathPopover.mode === "edit" ? `e${mathPopover.index}` : `i${mathPopover.caret}`}
+          initial={mathPopover.initial}
+          onCommit={commitMath}
+          onCancel={() => setMathPopover(null)}
+          onValue={(v) => { inlineValue.current = v; }}
+        />
+      )}
       {slash && !mathPopover && !link && (
         <ModuleSlashMenu
           query={slash.query}
@@ -527,7 +618,7 @@ export const EditBox = forwardRef<EditBoxHandle, {
   );
 });
 
-// ─── Inline-chemistry popover — the chemistry twin of InlineMathPopover. ──────
+// ─── Inline-chemistry popover — chemistry inside prose (maths uses RichLine). ────
 // `initial` is mhchem source; Done commits the \ce-wrapped LaTeX through the
 // same commitMath path, so the span in the paragraph stays ordinary inline math.
 function InlineChemPopover({ initial, onCommit, onCancel, onValue }: {
@@ -546,27 +637,6 @@ function InlineChemPopover({ initial, onCommit, onCancel, onValue }: {
       <div className="mt-2 flex justify-end gap-2">
         <button onMouseDown={(e) => e.preventDefault()} onClick={onCancel} className="rounded border border-border px-2.5 py-1 text-xs text-muted hover:border-accent">Cancel</button>
         <button onMouseDown={(e) => e.preventDefault()} onClick={done} className="rounded bg-accent px-3 py-1 text-xs font-medium text-white">Done</button>
-      </div>
-    </div>
-  );
-}
-
-// ─── Inline-math popover (Desmos-style editor for a formula inside prose) ─────
-function InlineMathPopover({ initial, onCommit, onCancel, onValue }: {
-  initial: string;
-  onCommit: (latex: string) => void;
-  onCancel: () => void;
-  /** Report the live draft so the parent can commit it from outside. */
-  onValue?: (v: string) => void;
-}) {
-  const latest = useRef(initial);
-  useEffect(() => { onValue?.(initial); }, [initial, onValue]);
-  return (
-    <div className="absolute left-2 right-2 top-full z-30 mt-1 rounded-md border border-accent bg-surface p-2 shadow-lg">
-      <MathField value={initial} inline autoFocus onChange={(l) => { latest.current = l; onValue?.(l); }} onExit={onCancel} className="block min-h-[2.25rem] rounded border border-border bg-background px-2 py-1 text-base" />
-      <div className="mt-2 flex justify-end gap-2">
-        <button onMouseDown={(e) => e.preventDefault()} onClick={onCancel} className="rounded border border-border px-2.5 py-1 text-xs text-muted hover:border-accent">Cancel</button>
-        <button onMouseDown={(e) => e.preventDefault()} onClick={() => onCommit(latest.current)} className="rounded bg-accent px-3 py-1 text-xs font-medium text-white">Done</button>
       </div>
     </div>
   );

@@ -8,12 +8,14 @@ import { ExternalLink } from "@/components/ExternalLink";
 import { NoteLink } from "@/components/NoteLink";
 import { TableView } from "@/components/TableView";
 import { blockToKatex } from "@/lib/blocks";
+import { hasContent, runsFromSource } from "@/lib/blocks/source";
 import { boxStyle, calloutColorOf } from "@/lib/blocks/callouts";
 import { splitFieldTokens } from "@/lib/blocks/fields";
 import { parseFormat } from "@/lib/blocks/format";
 import { isNoteHref } from "@/lib/blocks/notelink";
 import { headingAlign, headingLevel } from "@/lib/blocks/headings";
-import { listItems, listMarker, listOrdered } from "@/lib/blocks/lists";
+import { indentCss, paraIndent } from "@/lib/blocks/indent";
+import { itemSource, listOrdered, listRows, markerAtLevel, markerText } from "@/lib/blocks/lists";
 import {
   imageAlign,
   imageItems,
@@ -22,7 +24,7 @@ import {
 } from "@/lib/blocks/images";
 import { tableAlign, tableItems } from "@/lib/blocks/tables";
 import type { Block, InlineRun } from "@/lib/blocks/types";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { Katex } from "./Katex";
 
 const CAPTION = "mt-1 text-center text-sm italic text-muted";
@@ -32,6 +34,10 @@ export function BlockView({ block }: { block: Block }) {
   switch (block.type) {
     case "text": {
       const color = calloutColorOf(block);
+      // An indent moves the whole paragraph, so every wrapped line keeps the
+      // same left edge (lib/blocks/indent.ts).
+      const indent = paraIndent(block);
+      const shift = indent ? indentCss(indent) : undefined;
       if (color) {
         const s = boxStyle(color);
         return (
@@ -41,16 +47,18 @@ export function BlockView({ block }: { block: Block }) {
               background: s.background,
               border: `1px solid ${s.borderColor}`,
               color: s.color,
+              marginLeft: shift,
             }}
           >
             {renderRuns(block)}
+            {!hasContent(block) && "\u00A0"}
           </div>
         );
       }
       // `aq-para` carries the first-line indent (app/globals.css) rather than an
       // inline style, so the LaTeX preset's "no indent here" rules can win.
       return (
-        <p className="aq-para whitespace-pre-wrap break-words text-foreground">
+        <p className="aq-para whitespace-pre-wrap break-words text-foreground" style={shift ? { marginLeft: shift } : undefined}>
           {renderRuns(block)}
         </p>
       );
@@ -68,19 +76,37 @@ export function BlockView({ block }: { block: Block }) {
           data-level={lvl}
           style={{ fontSize: size, textAlign: headingAlign(block) }}
         >
-          {block.value || "Untitled heading"}
+          {block.value || "\u00A0"}
         </div>
       );
     }
 
     case "list": {
-      const items = listItems(block).filter((x) => x.trim());
-      const inner = items.map((it, i) => <li key={i}>{renderFormatted(it)}</li>);
-      const style = { listStyleType: listMarker(block) };
-      return listOrdered(block) ? (
-        <ol className="ml-6 list-decimal space-y-0.5 leading-relaxed" style={style}>{inner}</ol>
-      ) : (
-        <ul className="ml-6 list-disc space-y-0.5 leading-relaxed" style={style}>{inner}</ul>
+      // Each row carries its nesting level (--lvl) and its marker already worked
+      // out, so numbering restarts under a parent as it does in Docs; the marker
+      // hangs in the half step before the text (`aq-list` in app/globals.css).
+      // `data-item` is the index into attrs.items, so a press on a row opens
+      // the editor in that item even when blank items are left out here.
+      const rows = listRows(block, true);
+      const Tag = listOrdered(block) ? "ol" : "ul";
+      return (
+        <Tag className="aq-list space-y-0.5 leading-relaxed">
+          {rows.length ? (
+            rows.map((r) => (
+              <li key={r.index} data-item={r.index} className="whitespace-pre-wrap break-words" style={{ "--lvl": r.level } as CSSProperties}>
+                <span aria-hidden className="aq-list-marker">{r.marker}</span>
+                {renderSource(itemSource(r.text))}
+              </li>
+            ))
+          ) : (
+            // A list whose items are all blank is still a line the writer can
+            // click into — rendering nothing would leave it unreachable.
+            <li data-item={0}>
+              <span aria-hidden className="aq-list-marker">{markerText(markerAtLevel(block, 0), 1)}</span>
+              &nbsp;
+            </li>
+          )}
+        </Tag>
       );
     }
 
@@ -195,8 +221,26 @@ function ImageFigure({ item }: { item: ImageItem }) {
 /** Render prose runs with inline math + bold/italic markers. */
 function renderRuns(block: Block): ReactNode {
   const runs = block.attrs?.runs as InlineRun[] | undefined;
-  if (!runs || runs.length === 0) return renderFormatted(block.value ?? "");
+  if (!runs || runs.length === 0) return renderSource(block.value ?? "");
   return runs.map((run, i) =>
+    run.kind === "text" ? (
+      <span key={i}>{renderFormatted(run.text)}</span>
+    ) : (
+      <Katex key={i} latex={blockToKatex(run.block)} />
+    ),
+  );
+}
+
+/**
+ * Render a raw source string — formatting markers AND inline `$…$` maths.
+ *
+ * A paragraph carries its maths pre-split into `attrs.runs`; a list item is
+ * stored as one plain string (`attrs.items`), so the split happens here at
+ * render time instead. Same `runsFromSource` either way, so `$x^2$` means the
+ * same thing in a bullet as it does in a sentence.
+ */
+function renderSource(src: string): ReactNode {
+  return runsFromSource(src).map((run, i) =>
     run.kind === "text" ? (
       <span key={i}>{renderFormatted(run.text)}</span>
     ) : (

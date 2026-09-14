@@ -48,13 +48,11 @@ function Preview({ tree }: { tree: DocumentTree }) {
 
 function TemplateCard({
   name,
-  scenario,
   tree,
   onUse,
   onDelete,
 }: {
   name: string;
-  scenario: string;
   tree: DocumentTree;
   onUse: () => void;
   onDelete?: () => void;
@@ -63,10 +61,7 @@ function TemplateCard({
     <div className="flex flex-col rounded-lg border border-border bg-surface p-3">
       <Preview tree={tree} />
       <div className="mt-2 flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="truncate font-medium">{name}</p>
-          <p className="mt-0.5 text-xs text-muted">{scenario}</p>
-        </div>
+        <p className="min-w-0 truncate font-medium">{name}</p>
         {onDelete && (
           <button
             onClick={onDelete}
@@ -107,17 +102,12 @@ function PresetCard({ preset, onUse }: { preset: Preset; onUse: (tree: DocumentT
   return (
     <div className="flex flex-col rounded-lg border border-border bg-surface p-3">
       {tree.blocks.length === 0 ? (
-        <div className="grid h-36 place-items-center rounded-md border border-dashed border-border text-xs text-muted">
-          Nothing to insert — tick a module below.
-        </div>
+        <div className="h-36 rounded-md border border-dashed border-border" />
       ) : (
         <Preview tree={tree} />
       )}
       <div className="mt-2 flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="truncate font-medium">{preset.name}</p>
-          <p className="mt-0.5 text-xs text-muted">{preset.scenario}</p>
-        </div>
+        <p className="min-w-0 truncate font-medium">{preset.name}</p>
         {modified && (
           <button
             onClick={() => setItems(preset.stack.map((module) => ({ module, on: true })))}
@@ -163,11 +153,10 @@ function PresetCard({ preset, onUse }: { preset: Preset; onUse: (tree: DocumentT
   );
 }
 
-function Section({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="mt-6 first:mt-0">
-      <DialogSection className={hint ? "mb-1" : "mb-2"}>{title}</DialogSection>
-      {hint && <p className="mb-2 text-xs text-muted">{hint}</p>}
+      <DialogSection className="mb-2">{title}</DialogSection>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">{children}</div>
     </div>
   );
@@ -232,7 +221,6 @@ export function DesignPicker({
           <ModulesTab />
         ) : tab === "background" ? (
           <>
-            <p className="mb-3 text-xs text-muted">Pick a page background — it shows on screen and in exported PDFs. Great for posters.</p>
             <div className="grid grid-cols-3 gap-3 sm:grid-cols-4">
               <button
                 onClick={() => onApplyBackground(null)}
@@ -273,7 +261,7 @@ export function DesignPicker({
               </button>
             </div>
 
-            <Section title="Note layouts" hint="Each layout is a stack of modules — tick chips off or drag them into a new order before using it.">
+            <Section title="Note layouts">
               {builtinPresets().map((p) => (
                 <PresetCard key={p.id} preset={p} onUse={onApply} />
               ))}
@@ -281,14 +269,14 @@ export function DesignPicker({
 
             <Section title="Posters">
               {posters.map((t) => (
-                <TemplateCard key={t.id} name={t.name} scenario={t.scenario} tree={t.tree} onUse={() => onApply(t.build())} />
+                <TemplateCard key={t.id} name={t.name} tree={t.tree} onUse={() => onApply(t.build())} />
               ))}
             </Section>
 
             {saved.length > 0 && (
               <Section title="Your templates">
                 {saved.map((t) => (
-                  <TemplateCard key={t.id} name={t.name} scenario={t.scenario} tree={t.tree} onUse={() => onApply(t.tree)} onDelete={() => remove(t.id)} />
+                  <TemplateCard key={t.id} name={t.name} tree={t.tree} onUse={() => onApply(t.tree)} onDelete={() => remove(t.id)} />
                 ))}
               </Section>
             )}
@@ -334,12 +322,7 @@ function ModulesTab() {
 
   return (
     <>
-      <p className="mb-4 text-xs text-muted">
-        Modules are reusable sections — insert one anywhere by typing <span className="font-mono">/</span> in a paragraph.
-        Build your own here, or save any section from the sidebar outline.
-      </p>
-
-      <DialogSection className="mb-2">Your modules</DialogSection>
+      <DialogSection className="mb-2 mt-1">Your modules</DialogSection>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <button
           onClick={() => setEditor({ module: null })}
@@ -359,18 +342,12 @@ function ModulesTab() {
           </div>
         ))}
       </div>
-      {saved.length === 0 && (
-        <p className="mt-2 text-xs text-muted">Nothing yet — build one, or hover a section in the editor sidebar and hit the module icon.</p>
-      )}
-
       <DialogSection className="mb-2 mt-6">Built-in modules</DialogSection>
-      <p className="mb-2 text-xs text-muted">Built-ins can’t be changed directly — “Customize” starts your own copy.</p>
       <div className="overflow-hidden rounded-lg border border-border">
         {builtinModules().map((m) => (
           <div key={m.id} className="flex items-center gap-2.5 border-t border-border-soft px-3 py-2 first:border-t-0">
             <Icon name={m.icon} size={16} className="shrink-0 text-muted" />
-            <span className="shrink-0 text-sm font-medium">{m.name}</span>
-            <span className="min-w-0 flex-1 truncate text-xs text-muted">{m.description}</span>
+            <span className="min-w-0 flex-1 truncate text-sm font-medium">{m.name}</span>
             <span className="shrink-0 text-[10px] uppercase tracking-wide text-faint">{MODULE_CATEGORY_NAMES[m.category]}</span>
             <button
               onClick={() => setEditor({ module: m, asCopy: true })}

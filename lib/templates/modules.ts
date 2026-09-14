@@ -1,6 +1,7 @@
 /**
- * Modules — named, insertable Block[] fragments (usually one heading + body =
- * a section). They are the unit the modular-notes system composes:
+ * Modules — named, insertable Block[] fragments (a section: its heading, plus
+ * whatever empty structure that section is made of). They are the unit the
+ * modular-notes system composes:
  *
  *   Module = a reusable section fragment
  *   Preset = an ordered stack of modules → produces a DocumentTree
@@ -8,6 +9,11 @@
  * Built-in modules form the catalog; user-saved modules ("save section as
  * module") live in localStorage next to saved templates. Every insertion goes
  * through `freshBlocks` so ids never collide with the receiving document.
+ *
+ * A built-in carries NO prose. Its blocks are the section's skeleton — the
+ * heading, a table's header row, a `{{field}}` line, an empty list or formula
+ * slot — never a sentence explaining what to write there, which the writer has
+ * to select and delete before their own words can go in.
  */
 
 import { withCalloutColor } from "@/lib/blocks/callouts";
@@ -152,7 +158,8 @@ export interface Module {
   name: string;
   icon: IconName;
   category: ModuleCategory;
-  /** One line shown in the inserter. */
+  /** One line describing the module. Catalog documentation and the palette's
+   *  preset rows; the inserter lists modules by name alone. */
   description: string;
   /** Extra search terms for the slash-menu filter. */
   keywords?: string[];
@@ -185,38 +192,34 @@ export function builtinModules(): Module[] {
       heading(1, "Title"),
       para("**Course:** {{Course}}    **Date:** {{Date}}    **Topic:** {{Topic}}"),
     ], ["header", "top"]),
-    mod("section", "Section", "paragraph", "structural", "A subtitle with an empty body to write in.", [
+    mod("section", "Section", "paragraph", "structural", "A subtitle to write under.", [
       heading(2, "New section"),
-      para("Write here…"),
     ], ["heading", "body"]),
     mod("summary", "Summary", "list", "structural", "A short wrap-up of the main ideas.", [
       heading(2, "Summary"),
-      para("Two or three sentences capturing the main ideas."),
     ], ["tldr", "conclusion", "recap"]),
     mod("takeaway", "Takeaway box", "tag", "structural", "A colored box for the one thing to remember.", [
-      banner("**Takeaway** — the one thing to carry out of this section.", "#fef3c7"),
+      banner("", "#fef3c7"),
     ], ["callout", "highlight", "box", "important"]),
     // Study & learning
     mod("key-concepts", "Key concepts", "list", "study", "Bulleted definitions of the core ideas.", [
       heading(2, "Key Concepts"),
-      bullets(["Concept 1 — definition", "Concept 2 — definition", "Concept 3 — definition"]),
+      bullets([""]),
     ], ["definitions", "ideas", "vocabulary"]),
-    mod("worked-example", "Worked example", "displayeq", "study", "A problem statement with a worked solution.", [
+    mod("worked-example", "Worked example", "displayeq", "study", "A heading over a formula slot.", [
       heading(2, "Worked Example"),
-      para("State the problem, then solve it below."),
-      eq("a^2 + b^2 = c^2"),
+      eq(""),
     ], ["example", "solution"]),
     mod("practice-problems", "Practice problems", "listnumber", "study", "Numbered problems with room to work.", [
       heading(2, "Practice Problems"),
-      numbered(["Problem 1 — …", "Problem 2 — …", "Problem 3 — …"]),
+      numbered([""]),
     ], ["exercises", "homework"]),
     mod("cornell-cues", "Cues & questions", "tag", "study", "The Cornell cue column: prompts and key terms.", [
       heading(2, "Cues & Questions"),
-      bullets(["Key question 1?", "Important term?", "Key question 2?"]),
+      bullets([""]),
     ], ["cornell", "prompts"]),
-    mod("notes-column", "Notes", "paragraph", "study", "The main notes body — details, examples, diagrams.", [
+    mod("notes-column", "Notes", "paragraph", "study", "The main notes body.", [
       heading(2, "Notes"),
-      para("Main notes here — expand on each cue with details, examples, and diagrams."),
     ], ["cornell", "body"]),
     mod("vocab-table", "Vocabulary table", "table", "study", "A term → definition table.", [
       heading(2, "Vocabulary"),
@@ -228,7 +231,7 @@ export function builtinModules(): Module[] {
     ], ["glossary", "terms", "definitions"]),
     mod("open-questions", "Questions", "search", "study", "Things to look up or ask about later.", [
       heading(2, "Questions"),
-      bullets(["Something I couldn't follow — ask about it", "A term to look up", "Where does this actually get used?"]),
+      bullets([""]),
     ], ["ask", "unclear", "follow-up", "doubts"]),
     mod("quiz-pairs", "Quiz yourself", "table", "study", "Question → answer rows for self-testing.", [
       heading(2, "Quiz Yourself"),
@@ -241,24 +244,22 @@ export function builtinModules(): Module[] {
     ], ["flashcards", "recall", "self-test", "revision"]),
     mod("review-checklist", "Revision checklist", "check", "study", "Topics to tick off before an exam.", [
       heading(2, "Topics to Review"),
-      bullets(["Topic — solid", "Topic — shaky, come back to it", "Topic — not started"]),
+      bullets([""]),
     ], ["exam", "revise", "study plan", "prep"]),
     // Math & science
     mod("objective", "Objective", "eye", "science", "What the experiment sets out to determine.", [
       heading(2, "Objective"),
-      para("What are you trying to measure or determine?"),
     ], ["aim", "goal", "lab"]),
     mod("hypothesis", "Hypothesis", "flask", "science", "The prediction under test, and the reasoning behind it.", [
       heading(2, "Hypothesis"),
-      para("If … then …, because …"),
     ], ["prediction", "expect", "lab"]),
     mod("materials", "Materials", "list", "science", "The apparatus list.", [
       heading(2, "Materials"),
-      bullets(["Apparatus 1", "Apparatus 2", "Apparatus 3"]),
+      bullets([""]),
     ], ["equipment", "apparatus", "lab"]),
     mod("procedure", "Procedure", "listnumber", "science", "Numbered experimental steps.", [
       heading(2, "Procedure"),
-      numbered(["First step…", "Second step…", "Third step…"]),
+      numbered([""]),
     ], ["method", "steps", "lab"]),
     mod("data-table", "Data table", "table", "science", "A measurement table with an uncertainty column.", [
       heading(2, "Data"),
@@ -271,69 +272,48 @@ export function builtinModules(): Module[] {
     ], ["measurements", "results", "lab"]),
     mod("analysis", "Analysis", "plot", "science", "Relate the data to the governing relationship.", [
       heading(2, "Analysis"),
-      para("Relate your data to the governing relationship:"),
-      eq("y = m x + b"),
+      eq(""),
     ], ["discussion", "fit", "lab"]),
     mod("conclusion", "Conclusion", "paragraph", "science", "Did the results match the prediction?", [
       heading(2, "Conclusion"),
-      para("Did the results match the prediction? Discuss sources of error."),
     ], ["errors", "lab"]),
     mod("derivation", "Derivation", "integral", "science", "A step-by-step derivation from first principles.", [
       heading(2, "Derivation"),
-      para("Start from the definition and work step by step."),
-      eq("f'(x) = \\lim_{h \\to 0} \\frac{f(x+h) - f(x)}{h}"),
+      eq(""),
     ], ["proof", "steps"]),
     mod("formula-group", "Formula group", "functions", "science", "A topic heading with its key formulas.", [
       heading(2, "Formulas"),
-      eq("(a+b)^2 = a^2 + 2ab + b^2"),
-      eq("x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}"),
+      eq(""),
     ], ["equations", "reference", "cheat sheet"]),
     mod("theorem-proof", "Theorem & proof", "mathblock", "science", "A statement followed by its proof.", [
       heading(2, "Theorem"),
-      para("*Statement.* Let … . Then … ."),
       heading(3, "Proof"),
-      para("Suppose … . Then … , and therefore … .  \\(\\blacksquare\\)"),
     ], ["lemma", "proposition", "qed", "proof"]),
     // Humanities & writing
     mod("abstract", "Abstract", "paragraph", "writing", "A one-paragraph summary of the whole piece.", [
       heading(2, "Abstract"),
-      para("In one paragraph: the question, what you did, what you found, and why it matters."),
     ], ["summary", "paper", "precis"]),
     mod("thesis", "Thesis", "tag", "writing", "The claim the piece argues, in a highlighted box.", [
       heading(2, "Thesis"),
-      banner("State the argument in one sentence — specific, arguable, and worth arguing.", "#dbeafe"),
+      banner("", "#dbeafe"),
     ], ["argument", "claim", "essay"]),
     mod("essay-outline", "Essay outline", "listnumber", "writing", "Intro, body beats, and conclusion as an ordered plan.", [
       heading(2, "Outline"),
-      numbered([
-        "Introduction — hook, context, thesis",
-        "Point 1 — claim + evidence",
-        "Point 2 — claim + evidence",
-        "Counterargument — and the reply to it",
-        "Conclusion — what follows from all this",
-      ]),
+      numbered([""]),
     ], ["plan", "structure", "essay"]),
     mod("body-paragraph", "Body paragraph", "paragraph", "writing", "Claim → evidence → analysis for one point.", [
       heading(2, "Point — {{Claim}}"),
-      para("**Claim.** The point this paragraph is making."),
-      para("**Evidence.** The quotation or data, with its citation."),
-      para("**Analysis.** Why that evidence supports the claim — and the thesis."),
     ], ["peel", "argument", "evidence", "essay"]),
     mod("counterargument", "Counterargument", "warning", "writing", "The strongest objection — and your reply to it.", [
       heading(2, "Counterargument"),
-      para("It could be objected that … "),
-      para("**Reply.** … "),
     ], ["objection", "rebuttal", "essay"]),
     mod("key-quotes", "Key quotes", "list", "writing", "Quotations with page references.", [
       heading(2, "Key Quotes"),
-      bullets(["“Quotation…” (p. )", "“Quotation…” (p. )"]),
+      bullets([""]),
     ], ["reading", "passage", "citation"]),
     mod("references", "References", "list", "writing", "The bibliography / works-cited list.", [
       heading(2, "References"),
-      bullets([
-        "Author, A. (Year). *Title of the work*. Publisher.",
-        "Author, B. (Year). Title of the article. *Journal*, vol(iss), pp. –.",
-      ]),
+      bullets([""]),
     ], ["bibliography", "works cited", "sources"]),
     // Career
     mod("contact-header", "Name & contact", "heading", "career", "A centered name over a contact line.", [
@@ -343,37 +323,34 @@ export function builtinModules(): Module[] {
     mod("experience", "Experience entry", "history", "career", "A dated role with bullet points of impact.", [
       heading(2, "Experience"),
       para("**{{Role}}** — {{Organization}}    *{{Start}} – {{End}}*"),
-      bullets([
-        "Did X, which led to Y — quantified wherever you can.",
-        "Owned Z: the scope, the tools, and what came of it.",
-      ]),
+      bullets([""]),
     ], ["resume", "cv", "work", "job", "role"]),
     mod("education", "Education", "notebooks", "career", "Degree, institution, and dates.", [
       heading(2, "Education"),
       para("**{{Degree}}**, {{Institution}}    *{{Years}}*"),
-      bullets(["Relevant coursework: …", "Awards, GPA, thesis: …"]),
+      bullets([""]),
     ], ["resume", "cv", "school", "degree", "university"]),
     mod("skills-list", "Skills", "list", "career", "Skills grouped by kind.", [
       heading(2, "Skills"),
-      bullets(["**Technical:** …", "**Tools:** …", "**Languages:** …"]),
+      bullets([""]),
     ], ["resume", "cv", "abilities", "stack"]),
     mod("projects", "Projects", "subjects", "career", "Selected projects and what you actually built.", [
       heading(2, "Projects"),
-      para("**{{Project}}** — one line on what it does and what you built."),
-      bullets(["How it was built — stack or method", "Result, link, or outcome"]),
+      para("**{{Project}}**"),
+      bullets([""]),
     ], ["resume", "cv", "portfolio", "side project"]),
     // Planning & productivity
     mod("checklist", "Checklist", "list", "planning", "A task list to tick off.", [
       heading(2, "Checklist"),
-      bullets(["First task", "Second task", "Third task"]),
+      bullets([""]),
     ], ["tasks", "todo"]),
     mod("priorities", "Top priorities", "pin", "planning", "The two or three things that actually matter.", [
       heading(2, "Top Priorities"),
-      numbered(["The one that must happen", "The one that should happen", "The one that would be nice"]),
+      numbered([""]),
     ], ["focus", "goals", "week"]),
     mod("agenda", "Agenda", "listnumber", "planning", "Numbered items to get through, with time boxes.", [
       heading(2, "Agenda"),
-      numbered(["Item — 5 min", "Item — 10 min", "Item — 5 min"]),
+      numbered([""]),
     ], ["meeting", "topics", "plan"]),
     mod("action-items", "Action items", "table", "planning", "An owner / action / due-date table.", [
       heading(2, "Action Items"),
@@ -407,9 +384,6 @@ export function builtinModules(): Module[] {
     ], ["planner", "schedule", "days", "timetable"]),
     mod("journal-entry", "Journal entry", "penline", "planning", "Highlights, what you learned, what's next.", [
       heading(2, "{{Date}}"),
-      para("**Highlights.** … "),
-      para("**Learned.** … "),
-      para("**Next.** … "),
     ], ["diary", "log", "daily", "reflection"]),
   ];
   return catalog;
@@ -432,13 +406,12 @@ const titleModule = (id: string, title: string, meta?: string): Module =>
   mod(`${id}-title`, `${title} title`, "heading", "structural", `Title block for ${title}.`,
     meta ? [heading(1, title), para(meta)] : [heading(1, title)]);
 
-/** One numbered problem: the question, then a worked-solution area. */
-const problemModule = (n: number, latex?: string): Module =>
+/** One numbered problem: its heading, then a solution section with an empty slot. */
+const problemModule = (n: number): Module =>
   mod(`problem-${n}`, `Problem ${n}`, "displayeq", "study", "A problem with room to work.", [
     heading(2, `Problem ${n}`),
-    para("Copy the question here."),
     heading(3, "Solution"),
-    latex ? eq(latex) : para("Show the working, then box the answer."),
+    eq(""),
   ]);
 
 let presets: Preset[] | null = null;
@@ -472,7 +445,7 @@ export function builtinPresets(): Preset[] {
       scenario: "Homework: a header, then numbered problems each with room to work.",
       stack: [
         titleModule("problem-set", "Problem Set", "**Name:** {{Name}}    **Course:** {{Course}}    **Set:** {{Number}}    **Due:** {{Due}}"),
-        problemModule(1, "\\int_{0}^{1} f(x)\\,dx = "),
+        problemModule(1),
         problemModule(2),
         problemModule(3),
         problemModule(4),
@@ -491,7 +464,7 @@ export function builtinPresets(): Preset[] {
         use("quiz-pairs"),
         mod("trouble-spots", "Trouble spots", "warning", "study", "The things you keep getting wrong.", [
           heading(2, "Trouble Spots"),
-          bullets(["Mistake I keep making — and the fix", "A step I always skip", "A case I forget to check"]),
+          bullets([""]),
         ]),
       ],
     },
@@ -503,13 +476,11 @@ export function builtinPresets(): Preset[] {
         titleModule("cheat-sheet", "Cheat Sheet", "**Course:** {{Course}}    **Covers:** {{Topics}}"),
         mod("cheat-definitions", "Definitions", "list", "study", "The terms, stated in one line each.", [
           heading(2, "Definitions"),
-          bullets(["**Term** — one-line definition", "**Term** — one-line definition"]),
+          bullets([""]),
         ]),
         mod("cheat-formulas", "Formulas", "functions", "science", "The formulas you'll actually reach for.", [
           heading(2, "Formulas"),
-          eq("x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}"),
-          eq("\\frac{d}{dx} x^n = n\\,x^{n-1}"),
-          eq("\\int x^n\\,dx = \\frac{x^{n+1}}{n+1} + C \\quad (n \\neq -1)"),
+          eq(""),
         ]),
         mod("cheat-constants", "Constants & units", "table", "science", "Values and units worth not re-deriving.", [
           heading(2, "Constants & Units"),
@@ -521,7 +492,7 @@ export function builtinPresets(): Preset[] {
         ]),
         mod("cheat-traps", "Common traps", "warning", "study", "Where marks are usually lost.", [
           heading(2, "Watch Out"),
-          banner("Sign errors, unit conversions, and the case you forgot to check.", "#fee2e2"),
+          banner("", "#fee2e2"),
         ]),
       ],
     },
@@ -533,12 +504,11 @@ export function builtinPresets(): Preset[] {
         titleModule("theorem-sheet", "Theorems & Proofs", "**Course:** {{Course}}    **Topic:** {{Topic}}"),
         mod("proof-definitions", "Definitions", "list", "science", "The definitions the proof relies on.", [
           heading(2, "Definitions"),
-          bullets(["**Term** — the precise statement", "**Term** — the precise statement"]),
+          bullets([""]),
         ]),
         use("theorem-proof"),
         mod("proof-scratch", "Scratch work", "penline", "science", "The messy attempt before the clean proof.", [
           heading(2, "Scratch Work"),
-          para("Try small cases, draw the picture, and see what the hypothesis is really doing."),
         ]),
         use("practice-problems"),
       ],
@@ -568,16 +538,14 @@ export function builtinPresets(): Preset[] {
         use("abstract"),
         mod("paper-intro", "Introduction", "paragraph", "writing", "Background, the gap, and your contribution.", [
           heading(2, "Introduction"),
-          para("What is known, what is missing, and what this paper adds. End with the contribution in one sentence."),
         ]),
         mod("paper-related", "Related work", "list", "writing", "What others have done, and where you differ.", [
           heading(2, "Related Work"),
-          bullets(["Author (Year) showed … — differs from this work in …", "Author (Year) showed … — differs in …"]),
+          bullets([""]),
         ]),
         mod("paper-methods", "Methods", "listnumber", "writing", "What you did, precisely enough to repeat.", [
           heading(2, "Methods"),
-          para("Describe the setup precisely enough that someone else could repeat it."),
-          numbered(["Data / participants", "Procedure", "How it was analysed"]),
+          numbered([""]),
         ]),
         mod("paper-results", "Results", "table", "writing", "What you found, without interpreting it yet.", [
           heading(2, "Results"),
@@ -586,11 +554,9 @@ export function builtinPresets(): Preset[] {
             ["", "", "", ""],
             ["", "", "", ""],
           ]),
-          para("Report the findings plainly here; save the interpretation for the discussion."),
         ]),
         mod("paper-discussion", "Discussion", "paragraph", "writing", "What the results mean, and their limits.", [
           heading(2, "Discussion"),
-          para("What the results mean, how they sit against prior work, the limitations, and what to do next."),
         ]),
         use("references"),
       ],
@@ -606,19 +572,14 @@ export function builtinPresets(): Preset[] {
         use("essay-outline"),
         mod("essay-intro", "Introduction", "paragraph", "writing", "Hook, context, and the thesis.", [
           heading(2, "Introduction"),
-          para("Open with something concrete, give the context the reader needs, and land on the thesis."),
         ]),
         use("body-paragraph"),
         mod("essay-point-2", "Second point", "paragraph", "writing", "Claim → evidence → analysis for the second point.", [
           heading(2, "Point — {{Second claim}}"),
-          para("**Claim.** … "),
-          para("**Evidence.** … "),
-          para("**Analysis.** … "),
         ]),
         use("counterargument"),
         mod("essay-conclusion", "Conclusion", "paragraph", "writing", "What follows from the argument.", [
           heading(2, "Conclusion"),
-          para("Don't just restate the thesis — say what follows from it, and why it was worth arguing."),
         ]),
         use("references"),
       ],
@@ -631,13 +592,11 @@ export function builtinPresets(): Preset[] {
         titleModule("reading-notes", "Reading Notes", "**Source:** {{Title}}    **Author:** {{Author}}    **Pages:** {{Pages}}"),
         mod("reading-citation", "Citation", "tag", "writing", "The full reference, ready to paste into a bibliography.", [
           heading(2, "Citation"),
-          para("Author, A. (Year). *Title of the work*. Publisher."),
         ]),
         use("summary"),
         use("key-quotes"),
         mod("reading-response", "Response", "paragraph", "writing", "What you make of it — agreement, doubts, uses.", [
           heading(2, "Response"),
-          para("Where do you agree, where do you not, and what does this give you for your own argument?"),
         ]),
         use("open-questions"),
       ],
@@ -651,12 +610,11 @@ export function builtinPresets(): Preset[] {
         use("contact-header"),
         mod("resume-summary", "Professional summary", "paragraph", "career", "Two lines on what you do and what you want.", [
           heading(2, "Summary"),
-          para("One or two lines: what you do, the strongest evidence for it, and what you're looking for next."),
         ]),
         use("experience"),
         mod("resume-role-2", "Second role", "history", "career", "Another dated role under Experience.", [
           para("**{{Earlier role}}** — {{Earlier organization}}    *{{Earlier start}} – {{Earlier end}}*"),
-          bullets(["What you were responsible for, and what changed because of it.", "A second bullet, with a number in it."]),
+          bullets([""]),
         ]),
         use("education"),
         use("skills-list"),
@@ -676,16 +634,15 @@ export function builtinPresets(): Preset[] {
         ]),
         mod("letter-opening", "Opening", "paragraph", "career", "The role, and the one line worth reading on.", [
           para("Dear {{Recipient}},"),
-          para("Name the role and where you saw it, then give the single strongest reason to keep reading."),
+          para(""),
         ]),
         mod("letter-why-you", "Why me", "paragraph", "career", "Your evidence, matched to the posting.", [
-          para("**Why me.** Take the two requirements that matter most and show, concretely, where you've already done them."),
+          para(""),
         ]),
         mod("letter-why-them", "Why them", "paragraph", "career", "Why this employer in particular.", [
-          para("**Why you.** Something specific about the organization — a product, a paper, a direction — and why it fits what you want to do."),
+          para(""),
         ]),
         mod("letter-close", "Close", "paragraph", "career", "Thanks, sign-off, and your name.", [
-          para("Thank you for your time — I'd welcome the chance to talk it through."),
           para("Sincerely,"),
           para("{{Full Name}}"),
         ]),
@@ -701,11 +658,11 @@ export function builtinPresets(): Preset[] {
         use("agenda"),
         mod("meeting-discussion", "Discussion", "list", "planning", "The points actually raised.", [
           heading(2, "Discussion"),
-          bullets(["Point raised — and by whom", "The counterpoint", "What was left open"]),
+          bullets([""]),
         ]),
         mod("meeting-decisions", "Decisions", "check", "planning", "What was settled, so it isn't relitigated.", [
           heading(2, "Decisions"),
-          bullets(["Decided: … ", "Decided: … "]),
+          bullets([""]),
         ]),
         use("action-items"),
       ],
@@ -721,7 +678,6 @@ export function builtinPresets(): Preset[] {
         use("checklist"),
         mod("week-review", "Friday review", "history", "planning", "What worked, what slipped, what moves.", [
           heading(2, "Friday Review"),
-          para("What got done, what slipped and why, and what moves to next week."),
         ]),
       ],
     },
@@ -733,16 +689,16 @@ export function builtinPresets(): Preset[] {
         titleModule("project-plan", "Project Plan", "**Project:** {{Project}}    **Owner:** {{Owner}}    **Target:** {{Target date}}"),
         mod("project-goal", "Goal", "tag", "planning", "The outcome, in one sentence.", [
           heading(2, "Goal"),
-          banner("In one sentence: what is true when this is finished?", "#d1fae5"),
+          banner("", "#d1fae5"),
         ]),
         mod("project-scope", "Scope", "list", "planning", "What's in, and — just as important — what's out.", [
           heading(2, "Scope"),
-          bullets(["**In:** … ", "**In:** … ", "**Out:** … "]),
+          bullets([""]),
         ]),
         use("milestones"),
         mod("project-risks", "Risks & unknowns", "warning", "planning", "What could sink it, and the mitigation.", [
           heading(2, "Risks & Unknowns"),
-          bullets(["Risk — how likely, and what we'd do about it", "Unknown — how we'll find out"]),
+          bullets([""]),
         ]),
         use("action-items"),
       ],
@@ -756,11 +712,11 @@ export function builtinPresets(): Preset[] {
         use("journal-entry"),
         mod("journal-gratitude", "Grateful for", "list", "planning", "Three small things.", [
           heading(2, "Grateful For"),
-          bullets(["… ", "… ", "… "]),
+          bullets([""]),
         ]),
         mod("journal-tomorrow", "Tomorrow", "listnumber", "planning", "The three things that would make tomorrow good.", [
           heading(2, "Tomorrow"),
-          numbered(["… ", "… ", "… "]),
+          numbered([""]),
         ]),
       ],
     },

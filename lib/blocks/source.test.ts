@@ -27,7 +27,9 @@ describe("inline-math span helpers", () => {
 
   it("replaces the nth span and keeps the source re-parseable", () => {
     const next = replaceInlineMathSpan(SRC, 1, "\\sqrt{2}");
-    expect(next).toBe("before \\(a+b\\) middle \\(\\sqrt{2}\\) after");
+    // Written back in the delimiter the editor now writes, `$…$`. The other
+    // span was not touched, so it keeps the form it was stored in.
+    expect(next).toBe("before \\(a+b\\) middle $\\sqrt{2}$ after");
     // The edit survives the round-trip the editor uses on every keystroke.
     const spans = inlineMathSpans(next);
     expect(spans.map((s) => s.latex)).toEqual(["a+b", "\\sqrt{2}"]);
@@ -44,29 +46,44 @@ describe("inline-math span helpers", () => {
   });
 });
 
-describe("runsToSource ∘ runsFromSource is the identity", () => {
+describe("runsToSource ∘ runsFromSource round-trips", () => {
   // A recognizer emits this grammar; every hop through the editor re-parses and
   // re-prints it, so any loss here is silent corruption of the user's note.
-  const MIXED = "LET \\(\\nabla I=(I_{x},I_{y})\\)\nBE TRUE\n\nso \\(x^{2}+1\\) holds";
+  // Printing normalises to `$…$` (what the editor writes today) and is a fixed
+  // point from there: the SECOND hop must change nothing.
+  const MIXED = "LET $\\nabla I=(I_{x},I_{y})$\nBE TRUE\n\nso $x^{2}+1$ holds";
+  const LEGACY = "LET \\(\\nabla I=(I_{x},I_{y})\\)\nBE TRUE\n\nso \\(x^{2}+1\\) holds";
 
   it("survives mixed multi-line source verbatim", () => {
     expect(runsToSource(runsFromSource(MIXED))).toBe(MIXED);
     expect(kinds(MIXED)).toEqual(["text", "math", "text", "math", "text"]);
   });
 
+  it("reads a note written in the old delimiter and normalises it once", () => {
+    expect(kinds(LEGACY)).toEqual(["text", "math", "text", "math", "text"]);
+    expect(runsToSource(runsFromSource(LEGACY))).toBe(MIXED);
+    expect(runsToSource(runsFromSource(MIXED))).toBe(MIXED); // and settles there
+  });
+
   it("survives the edge shapes (empty, math-only, adjacent spans, unclosed)", () => {
     for (const s of [
       "",
       "   ",
-      "\\(x\\)",
-      "\\(a\\)\\(b\\)",
-      "\\(\\)", // empty formula
-      "a \\( b", // unclosed delimiter stays literal prose
-      "\\(a\n b\\)", // a span may cross a newline ([\s\S] in INLINE_MATH)
+      "$x$",
+      "$a$$b$",
+      "a $ b", // unclosed delimiter stays literal prose
+      "it costs $5, not $10", // money is prose, not maths
       "100% \\& $ffff", // characters that only get escaped at export time
     ]) {
-      expect(runsToSource(runsFromSource(s))).toBe(s);
+      expect(runsToSource(runsFromSource(s)), s).toBe(s);
     }
+  });
+
+  it("keeps the legacy shapes readable, printing them in the new delimiter", () => {
+    expect(runsToSource(runsFromSource("\\(x\\)"))).toBe("$x$");
+    expect(runsToSource(runsFromSource("\\(a\\)\\(b\\)"))).toBe("$a$$b$");
+    expect(runsToSource(runsFromSource("\\(a\n b\\)"))).toBe("$a\n b$"); // a legacy span may cross a newline
+    expect(runsToSource(runsFromSource("a \\( b"))).toBe("a \\( b"); // unclosed stays literal
   });
 });
 
@@ -141,9 +158,9 @@ describe("blocksFromSource", () => {
     // The inverse is per-block, and it is NOT uniformly blockEditSource: a
     // paragraph is edited in this grammar, a display formula is edited as bare
     // LaTeX, so re-assembling a payload has to re-wrap the formulas.
-    const page = "LET \\(\\nabla I=(I_{x},I_{y})\\) BE TRUE\n\n\\(x^{2}+1\\)\n\ndone";
+    const page = "LET $\\nabla I=(I_{x},I_{y})$ BE TRUE\n\n$$x^{2}+1$$\n\ndone";
     const back = blocksFromSource(page)
-      .map((b) => (b.type === "text" ? blockEditSource(b) : `\\(${blockEditSource(b)}\\)`))
+      .map((b) => (b.type === "text" ? blockEditSource(b) : `$$${blockEditSource(b)}$$`))
       .join("\n\n");
     expect(back).toBe(page);
   });

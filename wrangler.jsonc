@@ -26,6 +26,10 @@
   //
   //     npm run build:static && npx wrangler deploy
   //
+  // Pushes to main do this automatically: the last steps of
+  // .github/workflows/ci.yml, once typecheck, tests and build pass. Not Workers
+  // Builds — Cloudflare clones only this repo, and file:../atorku needs both.
+  //
   // If the API routes are ever wanted for real, they need a Node host and
   // NEXT_PUBLIC_API_ORIGIN pointed at it; nothing here has to change.
   "$schema": "node_modules/wrangler/config-schema.json",

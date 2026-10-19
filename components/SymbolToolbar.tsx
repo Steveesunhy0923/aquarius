@@ -4,7 +4,7 @@ import { Icon } from "@/components/Icon";
 import { Katex } from "@/components/Katex";
 import { SymbolPicker } from "@/components/SymbolPicker";
 import { SymbolPresetMenu } from "@/components/SymbolPresetMenu";
-import { ICON_BTN } from "@/components/ToolbarControls";
+import { COMPACT_BTN, ICON_BTN } from "@/components/ToolbarControls";
 import { previewLatex } from "@/lib/blocks/source";
 import {
   DEFAULT_PRESET_ID,
@@ -46,7 +46,7 @@ function readLS(key: string, fallback: string[]): string[] {
 
 /** Functions-and-symbols strip: fixed structure inserts plus eight editable,
  *  localStorage-backed symbol slots and the "browse all" entry point. */
-export function SymbolToolbar({ onInsert, onText, onBrowse, keepFocus, leading, trailing }: {
+export function SymbolToolbar({ onInsert, onText, onBrowse, keepFocus, leading, trailing, compact }: {
   onInsert: (latex: string) => void;
   /** Switch the formula holding the caret between maths and words (`\text{…}`). */
   onText?: () => void;
@@ -57,7 +57,13 @@ export function SymbolToolbar({ onInsert, onText, onBrowse, keepFocus, leading, 
   leading?: ReactNode;
   /** Rendered last in the strip (the pin that keeps it open outside a formula). */
   trailing?: ReactNode;
+  /** Laid out for the floating symbol tab (components/SymbolTab): wraps in a
+   *  narrow card, no full-width bar chrome. */
+  compact?: boolean;
 }) {
+  // In the floating tab every button is the compact size, so the strip wraps
+  // into a small card instead of a full-width bar.
+  const BTN = compact ? COMPACT_BTN : ICON_BTN;
   // The symbol slots, and which preset they came from (null = a hand-edited mix,
   // shown as "Custom" until saved under a name).
   const [symbols, setSymbols] = useState<string[]>(() =>
@@ -93,28 +99,28 @@ export function SymbolToolbar({ onInsert, onText, onBrowse, keepFocus, leading, 
 
   return (
     <>
-      <div className="print-hide flex flex-wrap items-center justify-center gap-1.5 border-b border-border px-6 py-2">
+      <div className={compact ? "flex flex-wrap items-center gap-1" : "print-hide flex flex-wrap items-center justify-center gap-1.5 border-b border-border px-6 py-2"}>
         {leading}
         {/* Structures — fixed defaults (not user-editable) */}
         {DEFAULT_TB1.map((latex, i) => (
-          <button key={i} onMouseDown={keepFocus} onClick={() => onInsert(latex)} title={`Insert ${latex}`} aria-label={`Insert ${STRUCT_LABEL[latex] ?? latex}`} className={ICON_BTN}>
+          <button key={i} onMouseDown={keepFocus} onClick={() => onInsert(latex)} title={`Insert ${latex}`} aria-label={`Insert ${STRUCT_LABEL[latex] ?? latex}`} className={BTN}>
             <Katex latex={previewLatex(latex)} />
           </button>
         ))}
         {/* Words inside a formula: the visible way in to what `"` does. */}
         {onText && (
-          <button onMouseDown={keepFocus} onClick={onText} title={'Type words in the formula (or press ")'} aria-label="Type words in the formula" className={ICON_BTN}>
+          <button onMouseDown={keepFocus} onClick={onText} title={'Type words in the formula (or press ")'} aria-label="Type words in the formula" className={BTN}>
             <span className="text-[13px] font-medium">Text</span>
           </button>
         )}
-        <span className="mx-2 h-7 w-px bg-border" />
+        <span className={compact ? "mx-0.5 h-5 w-px bg-border" : "mx-2 h-7 w-px bg-border"} />
         {/* Symbols — eight editable slots; "Edit" lets the user change any of them */}
         {symbols.map((latex, i) => (
-          <button key={i} onMouseDown={keepFocus} onClick={() => (editSyms ? setSlotPicker(i) : onInsert(latex))} title={editSyms ? "Click to change this symbol" : `Insert ${latex}`} aria-label={editSyms ? `Change symbol ${i + 1}` : `Insert ${latex}`} className={`${ICON_BTN} ${editSyms ? "border border-dashed border-accent/60" : ""}`}>
+          <button key={i} onMouseDown={keepFocus} onClick={() => (editSyms ? setSlotPicker(i) : onInsert(latex))} title={editSyms ? "Click to change this symbol" : `Insert ${latex}`} aria-label={editSyms ? `Change symbol ${i + 1}` : `Insert ${latex}`} className={`${BTN} ${editSyms ? "border border-dashed border-accent/60" : ""}`}>
             <Katex latex={previewLatex(latex)} />
           </button>
         ))}
-        <button onMouseDown={keepFocus} onClick={() => setEditSyms((s) => !s)} title={editSyms ? "Done — finish changing symbols" : "Change the symbols"} aria-label={editSyms ? "Done changing symbols" : "Change the symbols"} aria-pressed={editSyms} className={`${ICON_BTN} ${editSyms ? "bg-accent-soft text-accent" : "text-muted"}`}><Icon name="editformula" size={17} /></button>
+        <button onMouseDown={keepFocus} onClick={() => setEditSyms((s) => !s)} title={editSyms ? "Done — finish changing symbols" : "Change the symbols"} aria-label={editSyms ? "Done changing symbols" : "Change the symbols"} aria-pressed={editSyms} className={`${BTN} ${editSyms ? "bg-accent-soft text-accent" : "text-muted"}`}><Icon name="editformula" size={17} /></button>
         <SymbolPresetMenu
           activeId={presetId}
           symbols={symbols}
@@ -123,8 +129,8 @@ export function SymbolToolbar({ onInsert, onText, onBrowse, keepFocus, leading, 
           onPresetsChanged={() => setUserPresets(listUserPresets())}
           keepFocus={keepFocus}
         />
-        <span className="mx-2 h-7 w-px bg-border" />
-        <button onMouseDown={keepFocus} onClick={onBrowse} title="Browse all functions & symbols" aria-label="Browse all functions and symbols" className={ICON_BTN}><Icon name="sigmapi" size={20} /></button>
+        <span className={compact ? "mx-0.5 h-5 w-px bg-border" : "mx-2 h-7 w-px bg-border"} />
+        <button onMouseDown={keepFocus} onClick={onBrowse} title="Browse all functions & symbols" aria-label="Browse all functions and symbols" className={BTN}><Icon name="sigmapi" size={20} /></button>
         {trailing}
       </div>
       {slotPicker != null && (

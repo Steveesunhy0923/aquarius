@@ -100,9 +100,9 @@ export const EditBox = forwardRef<EditBoxHandle, {
   { taRef, para, draft, color, onChange, onColor, onExit, onInsertModule, onEditModule, onNoteLink, onInlineEditor, onSplit, onBackOut, onStep, onMerge, indent = 0, onIndent, onAutoList },
   ref,
 ) {
-  // The box-colour strip is opt-in chrome now: a paragraph is text until the
-  // user asks for it to be a coloured box, and an editor should not put a
-  // palette between them and their sentence.
+  // The fill strip belongs to the older solid-fill callout (lib/blocks/callouts,
+  // the poster designs' banners), so it shows only on a paragraph that already
+  // has a fill. Coloured boxes are made from the top bar (components/BoxMenu).
   const [showColors, setShowColors] = useState(false);
   useEffect(() => { if (color) setShowColors(true); }, [color]);
   // A formula open in the line (RichLine reports it): the symbol strip follows.
@@ -545,7 +545,7 @@ export const EditBox = forwardRef<EditBoxHandle, {
     <div className="group/edit relative" style={para && indent > 0 ? { marginLeft: indentCss(indent) } : undefined}>
       {para && showColors && (
         <div className="absolute -top-9 right-0 z-20 flex flex-wrap items-center gap-1.5 rounded-md border border-border bg-surface px-2 py-1 shadow-md">
-          <span className="mr-1 text-xs text-muted">Box:</span>
+          <span className="mr-1 text-xs text-muted">Fill:</span>
           <button onClick={() => onColor(null)} className={`rounded border px-2 py-0.5 text-xs ${color ? "border-border text-muted" : "border-accent text-accent"}`}>None</button>
           {CALLOUT_COLORS.map((c) => (
             <button key={c} onClick={() => onColor(c)} title={c} className="h-6 w-6 rounded" style={{ background: c, outline: color === c ? "2px solid var(--foreground)" : "1px solid rgba(0,0,0,.12)", outlineOffset: "1px" }} />
@@ -553,19 +553,8 @@ export const EditBox = forwardRef<EditBoxHandle, {
           <span className="mx-1 h-5 w-px bg-border" />
           <input type="color" value={color ?? "#fef3c7"} onChange={(e) => onColor(e.target.value)} title="Custom color (wheel)" className="h-7 w-8 cursor-pointer rounded border border-border bg-transparent p-0.5" />
           <input type="text" value={hexDraft} onChange={(e) => { const v = e.target.value; setHexDraft(v); if (isHexColor(v)) onColor(v); }} placeholder="#RRGGBB" spellCheck={false} className="w-24 rounded border border-border bg-background px-2 py-0.5 font-mono text-xs outline-none focus:border-accent" />
-          <button onMouseDown={keepCaret} onClick={() => setShowColors(false)} title="Close" aria-label="Close the box colours" className="ml-1 text-muted hover:text-foreground"><Icon name="close" size={12} /></button>
+          <button onMouseDown={keepCaret} onClick={() => setShowColors(false)} title="Close" aria-label="Close the fill colours" className="ml-1 text-muted hover:text-foreground"><Icon name="close" size={12} /></button>
         </div>
-      )}
-      {para && !showColors && (
-        <button
-          onMouseDown={keepCaret}
-          onClick={() => setShowColors(true)}
-          title="Turn this paragraph into a coloured box"
-          aria-label="Box colour"
-          className="absolute -top-7 right-0 z-20 hidden rounded border border-border bg-surface px-1.5 py-0.5 text-[11px] text-muted shadow-sm hover:text-foreground group-hover/edit:block"
-        >
-          Box…
-        </button>
       )}
       <RichLine
         ref={taRef}

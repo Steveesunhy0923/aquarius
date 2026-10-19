@@ -22,7 +22,8 @@ import { downloadBlob, safeName } from "./download";
  * Wrap a serialized body in a compilable article document. The preamble covers
  * everything the serializer can emit: math (amsmath/amssymb), chem (mhchem —
  * flagged per-document but harmless when unused), lists (enumitem), images +
- * subfigures (graphicx/subcaption), graphs (tikz), and code (listings, with
+ * subfigures (graphicx/subcaption), graphs (tikz), coloured boxes (tcolorbox),
+ * and code (listings, with
  * no-op definitions for web language names it lacks).
  *
  * The typography comes from the document's own style, so the typeset PDF is the
@@ -43,6 +44,7 @@ export function fullLatexDocument(body: string, style?: DocumentStyle): string {
 \\usepackage{tikz}
 \\usepackage[version=4]{mhchem}
 \\usepackage{xcolor}
+\\usepackage[skins,breakable]{tcolorbox}
 \\usepackage{listings}
 \\lstset{basicstyle=\\ttfamily\\small,breaklines=true,columns=fullflexible,keepspaces=true}
 \\lstdefinelanguage{javascript}{}

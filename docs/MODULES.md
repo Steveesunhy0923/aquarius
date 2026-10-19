@@ -152,6 +152,39 @@ presets + custom templates + modules into one underlying thing.
    the insertion point and REPLACES it, instead of pushing the new block below and stranding a
    blank line above it.
 
+10. ✅ **Modules are the user's own library** *(unreleased)* — the Designs dialog's **Modules**
+    section now holds only modules the user owns: ones they built, sections they saved from a
+    note, and a starter set (Lecture header · Key terms · Example · Questions · Summary) that
+    `sampleModules()` seeds INTO their library once, flagged by `aquarius.modules.seeded.v1` so
+    deleting the samples never brings them back. Samples are ordinary saved modules — editable,
+    renamable, deletable — and keep their own icons (`SavedModule.icon`, optional). Every card
+    has **Add to note** (→ `paletteInsertModule`, so `{{field}}` prompts still fire), edit and
+    delete; the 42-row read-only "Built-in modules" list and its Customize-a-copy flow are gone.
+    `searchModules()` — the `/` menu and ⌘K — offers the user's modules only; the built-in
+    catalog survives purely as the parts templates are assembled from (and the design-shortcut
+    name lookup). Samples follow item 9: skeletons, no sample prose. Covered by
+    `lib/templates/modules.test.ts` (seeding, no re-seed, ordering, icon kept through an edit,
+    user-only search, skeleton rule) and verified in a real browser.
+
+11. ✅ **A module is edited as a FILE, and a section can go into an existing one**
+    *(unreleased)* — `components/ModuleFileEditor.tsx` replaces the parts form
+    (`ModuleEditorDialog`, deleted). A module is a piece of a note, so it is now written
+    like one: every line is edited where it sits, reusing the document surface's own
+    components (`EditBox`, `ListEditor`, `FormulaEditBox` / `ChemFormulaBox`,
+    `TableRowEditor`), with an Insert row (Text · Heading · Bullets · Numbered · Formula ·
+    Table) and a per-line remove. Unlike a note it NEVER drops a block for being empty —
+    the blank list item, formula slot and callout are the skeleton (item 9).
+    Two traps, both caught in a browser and not by types: `EditBox` does not focus itself
+    (the surface drives the caret through the line handle, so an effect follows
+    `editingId` — without it, typing went into the Name field), and the per-line renderer
+    must be a plain function, not a nested component (a nested one is a new type every
+    render, so the line remounted on each keystroke and lost focus after one character).
+    **Section → module**: the outline's module action opens `SectionToModuleDialog` —
+    create a new module, or **Add to end** / **Replace** one that exists (replace confirms
+    first, since it discards content). `appendToModule()` / `replaceModuleBlocks()` keep
+    the module's name and icon and freshen block ids, so it detaches from the note it came
+    from. Covered by `lib/templates/modules.test.ts` and verified end-to-end in a browser.
+
 ## Todo next
 
 - **Per-subject default stack** — each Subject defines a skeleton so new notes in *Physics*

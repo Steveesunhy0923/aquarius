@@ -1,7 +1,7 @@
 "use client";
 
 import { Icon } from "@/components/Icon";
-import { MODULE_CATEGORY_NAMES, type Module } from "@/lib/templates/modules";
+import type { Module } from "@/lib/templates/modules";
 import { useEffect, useRef } from "react";
 
 /**
@@ -47,7 +47,6 @@ export function ModuleSlashMenu({ query, modules, active, onHover, onPick, onEdi
             >
               <Icon name={m.icon} size={16} className="shrink-0" />
               <span className="min-w-0 flex-1 truncate font-medium">{m.name}</span>
-              <span className="shrink-0 text-[10px] uppercase tracking-wide text-faint">{MODULE_CATEGORY_NAMES[m.category]}</span>
               {m.category === "custom" && onEdit && (
                 <button
                   onClick={(e) => { e.stopPropagation(); onEdit(m); }}

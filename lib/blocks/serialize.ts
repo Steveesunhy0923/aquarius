@@ -28,6 +28,7 @@ import { INDENT_STEP_PT, paraIndent } from "./indent";
 import { inlineMathSpans } from "./source";
 import { hasPlacement, linewidthLen, placedRowToLatex } from "./placement";
 import { tableAlign, tableItems, tableRowToLatex } from "./tables";
+import { boxOf, boxRun, boxToLatex } from "./boxes";
 
 /** A serializer turns one block subtree into a LaTeX fragment. */
 type Serializer = (b: Block) => string;
@@ -627,14 +628,22 @@ function escapeKatexText(s: string): string {
  *    separated from neighbours by a blank line.
  *  - Standalone math blocks are emitted as display math: \[ ... \].
  *  - Other standalone blocks (code/image/tikz) emit their natural LaTeX form.
+ *  - A run of blocks in the same coloured box is wrapped in ONE tcolorbox.
  * Blocks are joined with blank lines so the result is a valid document body.
  */
 export function documentToLatex(tree: DocumentTree): string {
   if (!tree || !Array.isArray(tree.blocks)) return "";
+  const blocks = tree.blocks.filter((b) => b && typeof b === "object");
   const parts: string[] = [];
-  for (const block of tree.blocks) {
-    if (!block || typeof block !== "object") continue;
-    parts.push(renderTopLevel(block));
+  for (let i = 0; i < blocks.length; i++) {
+    const run = boxRun(blocks, i);
+    if (!run) {
+      parts.push(renderTopLevel(blocks[i]));
+      continue;
+    }
+    const inner = blocks.slice(run[0], run[1] + 1).map(renderTopLevel).join("\n\n");
+    parts.push(boxToLatex(boxOf(blocks[run[0]])!, inner));
+    i = run[1];
   }
   const body = parts.join("\n\n");
   // Chemistry (\ce/\pu) needs mhchem; flagged once for the whole document since

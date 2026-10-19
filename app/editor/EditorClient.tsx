@@ -4,6 +4,7 @@ import { BlockView } from "@/components/BlockView";
 import { DocumentInspector } from "@/components/DocumentInspector";
 import { FormatPopover } from "@/components/FormatPopover";
 import { InsertMenu, type InsertAction } from "@/components/InsertMenu";
+import { BoxMenu, lastBoxColor, rememberBoxColor } from "@/components/BoxMenu";
 import { ChemToolbar } from "@/components/ChemToolbar";
 import { activeChemField } from "@/components/ChemField";
 import { EditBox, type EditBoxHandle } from "@/components/EditBox";
@@ -20,6 +21,7 @@ import { ImageRowEditor } from "@/components/ImageRowEditor";
 import { InkInsertPanel } from "@/components/ink/InkInsertPanel";
 import { SymbolPicker } from "@/components/SymbolPicker";
 import { SymbolToolbar } from "@/components/SymbolToolbar";
+import { SymbolTab } from "@/components/SymbolTab";
 import { Icon } from "@/components/Icon";
 import { TablePicker } from "@/components/TablePicker";
 import { TableRowEditor } from "@/components/TableRowEditor";
@@ -49,8 +51,9 @@ import type { Stroke as InkStroke } from "@/components/ink/strokes";
 import { getSettings, setSettings } from "@/lib/settings/settings";
 import { useAppSettings } from "@/lib/settings/useAppSettings";
 import { freshTree, saveTemplate, type BuiltInBackground, type SavedTemplate } from "@/lib/templates/templates";
-import { builtinModules, fillFields, freshBlocks, listSavedModules, moduleFields, recordModuleUse, saveModule, updateModule, type Module } from "@/lib/templates/modules";
-import { ModuleEditorDialog } from "@/components/ModuleEditorDialog";
+import { appendToModule, builtinModules, fillFields, freshBlocks, listSavedModules, moduleFields, recordModuleUse, replaceModuleBlocks, saveModule, updateModule, type Module } from "@/lib/templates/modules";
+import { ModuleFileEditor } from "@/components/ModuleFileEditor";
+import { SectionToModuleDialog } from "@/components/SectionToModuleDialog";
 import { ModuleFieldsDialog } from "@/components/ModuleFieldsDialog";
 import { NoteLinkPicker, type NoteLinkPick } from "@/components/NoteLinkPicker";
 import { makeNoteHref, NOTE_LINK_EVENT, type NoteLinkTarget } from "@/lib/blocks/notelink";
@@ -62,6 +65,7 @@ import { ceInner, isChemBlock, tagChem, wrapCe } from "@/lib/blocks/chem";
 import { CHEM_SYMBOLS } from "@/lib/chemsymbols";
 import { emptyDocument } from "@/lib/blocks/types";
 import { calloutColorOf, withCalloutColor } from "@/lib/blocks/callouts";
+import { boxCssVars, boxEdges, boxOf, boxRun, extendBoxRun, inSameBox, newBox, restyleBoxRun, withBox, type BoxStyle } from "@/lib/blocks/boxes";
 import { isEmptyBlock, isEmptyDoc } from "@/lib/blocks/empty";
 import {
   computeOutline,
@@ -226,6 +230,8 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [confirmTemplate, setConfirmTemplate] = useState<DocumentTree | null>(null);
   const [moduleEdit, setModuleEdit] = useState<Module | null>(null); // module builder via the / menu's pencil
+  // A captured section on its way into a module (new, or added to / replacing one).
+  const [sectionSave, setSectionSave] = useState<{ blocks: Block[]; name: string } | null>(null);
   // Note-link picker: the [from,to) draft range the picked link will replace,
   // what that range contained at open time (so a stale range never splices
   // blind), and an optional user-selected label (toolbar path).
@@ -310,8 +316,8 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   // by default on a full-width pane; a split pane is too narrow to give 240px
   // away before the user has asked for it.
   const [inspectorOpen, setInspectorOpen] = useState(!split);
-  // Pin the symbol strip open. It is otherwise raised by a math caret — see
-  // `symbolBarOpen` below — and the pin is for people who want it permanent.
+  // Keep the symbol tab open without a formula (the top bar's Σ button, ⌘/).
+  // It otherwise opens beside a formula holding the caret — see `symbolTabOpen`.
   const [symbolsPinned, setSymbolsPinned] = useState(() =>
     typeof window !== "undefined" && localStorage.getItem(SYMBOL_PIN_KEY) === "1",
   );
@@ -321,6 +327,20 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
       if (typeof window !== "undefined") try { localStorage.setItem(SYMBOL_PIN_KEY, next ? "1" : "0"); } catch { /* noop */ }
       return next;
     });
+  }
+  /** The top-bar Σ button: opens the symbol tab without a formula (and keeps
+   *  it open), or puts it away again. */
+  const symbolsBtnRef = useRef<HTMLButtonElement>(null);
+  // The tab closed by hand while this formula is open stays shut until the
+  // caret moves to another block or formula, or the top-bar button opens it.
+  const [tabDismissed, setTabDismissed] = useState(false);
+  function toggleSymbolTab() {
+    setTabDismissed(false);
+    toggleSymbolPin();
+  }
+  function closeSymbolTab() {
+    if (symbolsPinned) toggleSymbolPin();
+    setTabDismissed(true);
   }
   // A non-empty selection inside the prose textarea raises the format popover.
   const [hasSelection, setHasSelection] = useState(false);
@@ -338,6 +358,9 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     setInlineEditor(kind);
     if (kind) setBarModeState(kind);
   }, []);
+  // A new formula (another block, or a formula opening in a line) brings the
+  // symbol tab back even if the last one was closed.
+  useEffect(() => { setTabDismissed(false); }, [editingId, inlineEditor]);
 
   // ── Imported PDF ───────────────────────────────────────────────────────────
   const pdfSource = pkg?.tree.source?.kind === "pdf" ? pkg.tree.source : null;
@@ -1084,9 +1107,10 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
       : editingChem
         ? tagChem(displayFromSource(wrapCe(text), editingId))
         : displayFromSource(text, editingId);
-    // Rebuilt from source every keystroke, so the paragraph's indent (which the
-    // source does not carry) is taken over from the block being replaced.
-    setBlocks((bs) => bs.map((b) => (b.id === editingId ? (editingPara ? withParaIndent(next, paraIndent(b)) : next) : b)), true); // coalesce keystrokes
+    // Rebuilt from source every keystroke, so what the source does not carry —
+    // the paragraph's indent, the box the line sits in — is taken over from the
+    // block being replaced.
+    setBlocks((bs) => bs.map((b) => (b.id === editingId ? withBox(editingPara ? withParaIndent(next, paraIndent(b)) : next, boxOf(b)) : b)), true); // coalesce keystrokes
   }
   /** Where the caret should open, in SOURCE offsets — set from the press that
    *  started the edit, consumed by the focus effect. */
@@ -1173,9 +1197,20 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     if (!capsRef.current.editBlocks) return;
     // Both halves keep the paragraph's indent, as Enter carries a paragraph's
     // formatting onto the next line in Docs.
-    const indent = paraIndent(pkgRef.current?.tree.blocks.find((b) => b.id === blockId));
-    const head = promoteEquation(before, blockId) ?? withParaIndent(withCalloutColor(paragraphFromSource(before, blockId), color), indent);
-    const tail = withParaIndent(withCalloutColor(paragraphFromSource(after), color), indent);
+    const all = pkgRef.current?.tree.blocks ?? [];
+    const at = all.findIndex((b) => b.id === blockId);
+    const cur = all[at];
+    const indent = paraIndent(cur);
+    // …and the box it sits in. Except Enter on an empty last line of a box,
+    // which steps out of the box as Enter on an empty bullet leaves a list: the
+    // line stays where it is, under the box now rather than in it.
+    const box = boxOf(cur);
+    if (box && before === "" && after === "" && !inSameBox(all[at + 1], cur)) {
+      updateById(blockId, (b) => withBox(b, null));
+      return;
+    }
+    const head = withBox(promoteEquation(before, blockId) ?? withParaIndent(withCalloutColor(paragraphFromSource(before, blockId), color), indent), box);
+    const tail = withBox(withParaIndent(withCalloutColor(paragraphFromSource(after), color), indent), box);
     setBlocks((bs) => {
       const i = bs.findIndex((b) => b.id === blockId);
       if (i < 0) return bs;
@@ -1327,7 +1362,8 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
    */
   function lineAfterFormula(blockId: string) {
     if (!capsRef.current.editBlocks) return;
-    const para = paragraphFromSource("");
+    // The new line stays in the equation's box, if it is in one.
+    const para = withBox(paragraphFromSource(""), boxOf(pkgRef.current?.tree.blocks.find((b) => b.id === blockId)));
     setBlocks((bs) => {
       const i = bs.findIndex((b) => b.id === blockId);
       if (i < 0) return bs;
@@ -1362,7 +1398,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     if (!capsRef.current.editBlocks) return false;
     if (isParagraph(prev)) {
       const head = blockEditSource(prev);
-      const joined = withParaIndent(withCalloutColor(paragraphFromSource(head + text, prev.id), calloutColorOf(prev)), paraIndent(prev));
+      const joined = withBox(withParaIndent(withCalloutColor(paragraphFromSource(head + text, prev.id), calloutColorOf(prev)), paraIndent(prev)), boxOf(prev));
       setBlocks((all) => remove(all).map((b) => (b.id === prev.id ? joined : b)));
       startEdit(joined);
       pendingCaret.current = head.length;
@@ -1434,7 +1470,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     const i = bs.findIndex((b) => b.id === blockId);
     const next = i >= 0 ? bs[i + 1] : null;
     if (!next || !isParagraph(next)) return;
-    const joined = withParaIndent(withCalloutColor(paragraphFromSource(text + blockEditSource(next), blockId), color), paraIndent(bs[i]));
+    const joined = withBox(withParaIndent(withCalloutColor(paragraphFromSource(text + blockEditSource(next), blockId), color), paraIndent(bs[i])), boxOf(bs[i]));
     setBlocks((all) => all.filter((b) => b.id !== next.id).map((b) => (b.id === blockId ? joined : b)));
     startEdit(joined);
     pendingCaret.current = text.length;
@@ -1499,9 +1535,12 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
    * pushing a table below it and stranding the blank line above.
    */
   function addBlock(block: Block, edit = true, chem = false) {
-    const tagged = chem ? tagChem(block) : block; // store chem identity, don't sniff it later
+    const anchor = editingId ?? selected?.id ?? null;
+    // A block added from inside a box joins it, as a line typed there would;
+    // one that brings its own box (Insert ▸ Box) keeps that.
+    const placed = boxOf(block) ? block : withBox(block, boxOf(pkgRef.current?.tree.blocks.find((b) => b.id === anchor)));
+    const tagged = chem ? tagChem(placed) : placed; // store chem identity, don't sniff it later
     setBlocks((bs) => {
-      const anchor = editingId ?? selected?.id ?? null;
       const i = anchor ? bs.findIndex((b) => b.id === anchor) : -1;
       const next = [...bs];
       if (i >= 0 && isParagraph(bs[i]) && isEmptyBlock(bs[i])) next.splice(i, 1, tagged);
@@ -1524,7 +1563,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
       setBlocks((bs) => {
         const i = anchor ? bs.findIndex((b) => b.id === anchor) : -1;
         if (i < 0 || !anchor) return [...bs, ...fresh];
-        const cleaned = withCalloutColor(paragraphFromSource(cleanedDraft, anchor), hostColor);
+        const cleaned = withBox(withCalloutColor(paragraphFromSource(cleanedDraft, anchor), hostColor), boxOf(bs[i]));
         const next = [...bs];
         if (isEmptyBlock(cleaned)) next.splice(i, 1, ...fresh);
         else {
@@ -1554,7 +1593,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
       setBlocks((bs) => {
         const i = bs.findIndex((b) => b.id === anchor);
         if (i < 0) return bs;
-        const cleaned = withCalloutColor(paragraphFromSource(cleanedDraft, anchor), color);
+        const cleaned = withBox(withCalloutColor(paragraphFromSource(cleanedDraft, anchor), color), boxOf(bs[i]));
         const next = [...bs];
         if (isEmptyBlock(cleaned)) next.splice(i, 1);
         else next[i] = cleaned;
@@ -1568,22 +1607,14 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
 
   /** "Save section as module" (outline hover action): capture the heading's
    *  whole section (`sectionRange`) as a reusable, personal module. */
-  async function saveSectionAsModule(headingId: string) {
+  function saveSectionAsModule(headingId: string) {
     const bs = pkgRef.current?.tree.blocks ?? [];
     const range = sectionRange(bs, headingId);
     if (!range) return;
-    const section = bs.slice(range[0], range[1]);
-    const name = (
-      await uiPrompt({
-        title: "Save section as module",
-        message: "Modules are reusable sections — type / while writing to insert one.",
-        placeholder: "Module name",
-        initial: bs[range[0]].value?.trim() || "Untitled section",
-        confirmLabel: "Save",
-      })
-    )?.trim();
-    if (!name) return;
-    saveModule(name, section, new Date().toISOString());
+    setSectionSave({
+      blocks: bs.slice(range[0], range[1]),
+      name: bs[range[0]].value?.trim() || "Untitled section",
+    });
   }
 
   function deleteBlock(blockId: string) {
@@ -1591,6 +1622,51 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     if (editingId === blockId) setEditingId(null);
     if (selected?.id === blockId) setSelected(null);
   }
+  // ── coloured boxes (lib/blocks/boxes.ts, components/BoxMenu) ───────────────
+  /** What the Box menu acts on: the line holding the caret, or the selected figure. */
+  function boxTargetId(): string | null {
+    return editingId ?? selected?.id ?? null;
+  }
+  function targetBox(id: string | null): BoxStyle | null {
+    return id ? boxOf(pkgRef.current?.tree.blocks.find((b) => b.id === id)) : null;
+  }
+  /** Put the line holding the caret in `box`; with no caret, start a boxed line
+   *  at the end of the note. */
+  function openBox(box: BoxStyle) {
+    if (!capsRef.current.editBlocks) return;
+    const id = boxTargetId();
+    if (id) {
+      updateById(id, (b) => withBox(b, box));
+      return;
+    }
+    const fresh = withBox(paragraphFromSource(""), box);
+    setBlocks((cur) => [...cur, fresh]);
+    startEdit(fresh);
+  }
+  /** A colour from the Box menu recolours the box the caret is in, or boxes the
+   *  line. `live` (the colour wheel being dragged) is one undo step. */
+  function pickBoxColor(c: string, live = false) {
+    if (!capsRef.current.editBlocks) return;
+    rememberBoxColor(c);
+    const id = boxTargetId();
+    if (id && targetBox(id)) setBlocks((all) => restyleBoxRun(all, id, { color: c }), live);
+    else openBox(newBox(c));
+  }
+  /** A title typed or picked in the Box menu, or typed into the box's own bar. */
+  function setBoxTitle(title: string, blockId: string | null = boxTargetId()) {
+    if (!capsRef.current.editBlocks) return;
+    if (blockId && targetBox(blockId)) setBlocks((all) => restyleBoxRun(all, blockId, { title }), true);
+    else openBox(newBox(lastBoxColor(), title));
+  }
+  function extendBox() {
+    const id = boxTargetId();
+    if (id) setBlocks((all) => extendBoxRun(all, id));
+  }
+  function removeBox() {
+    const id = boxTargetId();
+    if (id) setBlocks((all) => restyleBoxRun(all, id, null));
+  }
+
   const setBlockRef = (id: string) => (el: HTMLDivElement | null) => {
     if (el) blockEls.current.set(id, el);
     else blockEls.current.delete(id);
@@ -1645,7 +1721,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     // `$$…$$` typed into a paragraph is an equation: make it one on the way out.
     if (b && isParagraph(b)) {
       const eq = promoteEquation(blockEditSource(b), blockId);
-      if (eq) setBlocks((bs) => bs.map((x) => (x.id === blockId ? eq : x)));
+      if (eq) setBlocks((bs) => bs.map((x) => (x.id === blockId ? withBox(eq, boxOf(x)) : x)));
     }
   }
 
@@ -1894,7 +1970,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     const cur = tid ? blocks.find((b) => b.id === tid) : null;
     if (style === "text") {
       if (cur && cur.type === "heading") {
-        const p = paragraphFromSource(cur.value ?? "", cur.id);
+        const p = withBox(paragraphFromSource(cur.value ?? "", cur.id), boxOf(cur));
         updateById(cur.id, () => p);
         startEdit(p);
       } else if (!cur || cur.type !== "text") {
@@ -1906,7 +1982,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
       setHeadingLevel(cur.id, style);
       setEditingId(cur.id);
     } else if (cur && cur.type === "text") {
-      const h: Block = { ...makeHeading(style, draft || cur.value || ""), id: cur.id };
+      const h: Block = withBox({ ...makeHeading(style, draft || cur.value || ""), id: cur.id }, boxOf(cur));
       updateById(cur.id, () => h);
       setSelected(null);
       setEditingId(cur.id);
@@ -1949,7 +2025,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
     const joins = prev?.type === "list" && listOrdered(prev) === ordered && (!marker || listMarker(prev) === marker);
     const target = joins && prev
       ? withList(prev, [...listItems(prev), text], undefined, [...listLevels(prev), 0])
-      : withList(makeList(ordered, marker), [text]);
+      : withBox(withList(makeList(ordered, marker), [text]), boxOf(bs[i]));
     const item = joins && prev ? listItems(prev).length : 0;
     setBlocks((all) =>
       joins && prev
@@ -1984,13 +2060,15 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
    */
   function listToParagraph(blockId: string, before: string[], trailing: string[], beforeLevels?: number[], trailingLevels?: number[]) {
     if (!capsRef.current.editBlocks) return;
-    const para = paragraphFromSource("");
+    // Out of the list, but not out of the box the list sits in.
+    const box = boxOf(pkgRef.current?.tree.blocks.find((b) => b.id === blockId));
+    const para = withBox(paragraphFromSource(""), box);
     setBlocks((bs) => {
       const i = bs.findIndex((b) => b.id === blockId);
       if (i < 0) return bs;
       const ordered = listOrdered(bs[i]);
       const keep = before.some((t) => t.trim());
-      const tail = trailing.some((t) => t.trim()) ? [withList(makeList(ordered), trailing, undefined, trailingLevels)] : [];
+      const tail = trailing.some((t) => t.trim()) ? [withBox(withList(makeList(ordered), trailing, undefined, trailingLevels), box)] : [];
       const next = [...bs];
       next.splice(i, 1, ...(keep ? [withList(bs[i], before, undefined, beforeLevels), para, ...tail] : [para, ...tail]));
       return next;
@@ -2107,6 +2185,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   function onInsertAction(action: InsertAction) {
     switch (action) {
       case "paragraph": addBlock(paragraphFromSource("")); break;
+      case "box": addBlock(withBox(paragraphFromSource(""), newBox(lastBoxColor()))); break;
       case "heading": insertHeading(2); break;
       case "bulletList": insertList(false); break;
       case "numberList": insertList(true); break;
@@ -2443,9 +2522,29 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   // "The caret is somewhere a symbol can land": a formula block being edited, or
   // an inline formula opened inside a paragraph.
   const inFormula = editingBlock?.type === "math" || inlineEditor !== null;
-  const symbolBarOpen = caps.editBlocks && (symbolsPinned || inFormula);
+  const symbolTabOpen = caps.editBlocks && (symbolsPinned || (inFormula && !tabDismissed));
+  /**
+   * What the symbol tab sits beside: the formula holding the caret — an open
+   * formula box inside a line, or the equation's own block — or, with no
+   * formula, the top-bar button that opened it.
+   */
+  const symbolTabAnchor = (): DOMRect | null => {
+    const el = editingId ? blockEls.current.get(editingId) : null;
+    if (el && inFormula) {
+      const open = [...el.querySelectorAll<HTMLElement>(".aq-inline-math")].find((c) => (c.lastElementChild?.childElementCount ?? 0) > 0);
+      if (open) return open.getBoundingClientRect();
+      if (editingBlock?.type === "math") return el.getBoundingClientRect();
+    }
+    return symbolsBtnRef.current?.getBoundingClientRect() ?? null;
+  };
   const indexById = new Map(blocks.map((b, i) => [b.id, i] as const));
   const noIndent = unindentedParagraphs(visibleBlocks);
+  // Each block's place in its box, over the blocks as laid out.
+  const boxEdgeById = boxEdges(visibleBlocks);
+  // The box holding the caret (or the selected figure), for the Box menu.
+  const boxTargetAt = editingId ?? selected?.id;
+  const caretBoxRun = boxTargetAt != null && indexById.has(boxTargetAt) ? boxRun(blocks, indexById.get(boxTargetAt)!) : null;
+  const caretBox = caretBoxRun ? boxOf(blocks[caretBoxRun[0]]) : null;
   const packed = paginate(visibleBlocks, heights, pageContent, style.paraSkip);
   // Always keep one completely blank page at the end so the canvas never feels
   // "full". paginate() only ends on an empty page for an empty document; once
@@ -2534,12 +2633,26 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
           <button onMouseDown={keepFocus} onClick={() => insertList(true)} title="Numbered list" aria-label="Numbered list" className={GROUP_BTN}><Icon name="listnumber" size={16} /></button>
         </span>
 
+        {/* A coloured box, LaTeX's tcolorbox: the line holding the caret goes in
+            one, and the menu recolours, titles, grows or removes the box the
+            caret is in. */}
+        <BoxMenu
+          box={caretBox}
+          canExtend={!!caretBoxRun && caretBoxRun[1] < blocks.length - 1}
+          keepFocus={keepFocus}
+          onColor={pickBoxColor}
+          onTitle={(t) => setBoxTitle(t)}
+          onExtend={extendBox}
+          onRemove={removeBox}
+        />
+
         {/* Maths, the same pair-of-buttons shape as the lists: one in the
             sentence, one on its own line — which is exactly what `$…$` and
             `$$…$$` mean when typed. */}
         <span className={GROUP}>
           <button onMouseDown={keepFocus} onClick={insertFormula} title="Formula in the text ($…$)" aria-label="Insert a formula in the text" className={GROUP_BTN}><Icon name="inlineformula" size={16} /></button>
           <button onMouseDown={keepFocus} onClick={insertEquation} title="Equation on its own line ($$…$$)" aria-label="Insert an equation" className={GROUP_BTN}><Icon name="displayeq" size={16} /></button>
+          <button ref={symbolsBtnRef} onMouseDown={keepFocus} onClick={toggleSymbolTab} title="Symbols — open the symbol tab (⌘/)" aria-label="Symbol tab" aria-pressed={symbolsPinned} className={`${GROUP_BTN} ${symbolsPinned ? "bg-accent-soft text-accent" : ""}`}><Icon name="sum" size={16} /></button>
         </span>
 
         <span className="mx-0.5 h-6 w-px bg-border" />
@@ -2555,53 +2668,27 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
         <button onClick={() => setInspectorOpen((v) => !v)} title="Document settings — typeface, spacing, page flow" aria-label="Document settings" aria-pressed={inspectorOpen} className={`${TEXT_BTN} ${inspectorOpen ? "bg-accent-soft text-accent" : ""}`}><Icon name="textstyle" size={17} />Document</button>
       </div>
 
-      {/* ── Symbols — contextual ──────────────────────────────────────────────
-          On screen while a formula is being edited (the only moment its glyphs
-          can act), or permanently if pinned with ⌘/. The strip shows either the
-          math set or its chemistry mirror; the Σ/⚗ switch swaps them. */}
-      {symbolBarOpen && (() => {
-        const barSwitch = (
-          <>
-            <div className="flex items-center overflow-hidden rounded-md border border-border" role="group" aria-label="Symbol bar mode">
-              <button onMouseDown={keepFocus} onClick={() => setBarMode("math")} title="Math symbols" aria-label="Show math symbols" aria-pressed={barMode === "math"} className={`grid h-9 min-w-9 place-items-center px-2 ${barMode === "math" ? "bg-accent-soft text-accent" : "text-muted hover:text-foreground"}`}><Icon name="sum" size={17} /></button>
-              <button onMouseDown={keepFocus} onClick={() => setBarMode("chem")} title="Chemistry symbols" aria-label="Show chemistry symbols" aria-pressed={barMode === "chem"} className={`grid h-9 min-w-9 place-items-center px-2 ${barMode === "chem" ? "bg-accent-soft text-accent" : "text-muted hover:text-foreground"}`}><Icon name="flask" size={17} /></button>
-            </div>
-            <span className="mx-2 h-7 w-px bg-border" />
-          </>
-        );
-        // Pinning is the strip's own state, so its control belongs to the strip.
-        const trailing = (
-          <button
-            onMouseDown={keepFocus}
-            onClick={toggleSymbolPin}
-            title={symbolsPinned ? "Unpin — show symbols only while editing a formula (⌘/)" : "Pin the symbol strip open (⌘/)"}
-            aria-label={symbolsPinned ? "Unpin symbol strip" : "Pin symbol strip open"}
-            aria-pressed={symbolsPinned}
-            className={`grid h-9 min-w-9 place-items-center rounded-md px-2 transition ${symbolsPinned ? "bg-accent-soft text-accent" : "text-faint hover:bg-foreground/[0.06] hover:text-foreground"}`}
-          >
-            <Icon name="pin" size={15} />
-          </button>
-        );
-        return barMode === "chem" ? (
-          <ChemToolbar
-            onInsert={onInsertChem}
-            onNewEquation={insertChemEquation}
-            onBrowse={() => setChemOpen(true)}
-            keepFocus={keepFocus}
-            leading={barSwitch}
-            trailing={trailing}
-          />
-        ) : (
-          <SymbolToolbar
-            onInsert={onInsert}
-            onText={toggleFormulaText}
-            onBrowse={() => setSymbolsOpen(true)}
-            keepFocus={keepFocus}
-            leading={barSwitch}
-            trailing={trailing}
-          />
-        );
-      })()}
+      {/* ── Symbols — a small movable tab beside the formula being edited ─────
+          It opens under the equation or inline formula holding the caret and
+          follows it; drag it anywhere and it keeps that place relative to the
+          next formula too. The top bar's Σ button (or ⌘/) opens it without a
+          formula. The tab shows the math set or its chemistry mirror. */}
+      {symbolTabOpen && (
+        <SymbolTab
+          anchor={symbolTabAnchor}
+          anchorKind={inFormula ? "formula" : "bar"}
+          mode={barMode}
+          onMode={setBarMode}
+          onClose={closeSymbolTab}
+          keepFocus={keepFocus}
+        >
+          {barMode === "chem" ? (
+            <ChemToolbar compact onInsert={onInsertChem} onNewEquation={insertChemEquation} onBrowse={() => setChemOpen(true)} keepFocus={keepFocus} />
+          ) : (
+            <SymbolToolbar compact onInsert={onInsert} onText={toggleFormulaText} onBrowse={() => setSymbolsOpen(true)} keepFocus={keepFocus} />
+          )}
+        </SymbolTab>
+      )}
 
       {locked === "access" && (
         <div className="print-hide flex items-center justify-center gap-1.5 border-b border-border bg-warning/10 px-6 py-2 text-center text-sm text-warning">
@@ -2646,11 +2733,15 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
                 <div className={`${presetClass(style.preset)} flex flex-col`} style={{ ...contentStyle, minHeight: pageH }}>
                   {blocks.length === 0 ? null : (
                     <div className="flex flex-col" style={{ gap: "var(--para-skip)" }}>
-                      {ids.map((id) => {
+                      {ids.map((id, k) => {
                         const gi = indexById.get(id) ?? -1;
                         const b = blocks[gi];
                         if (!b) return null;
                         const editors = remoteEditing.get(id);
+                        // A boxed block draws its slice of the box (`.aq-box` in
+                        // app/globals.css). The frame closes at the box's ends and
+                        // wherever a page break cuts it, as a breakable tcolorbox's does.
+                        const edge = boxEdgeById.get(id);
                         // Highlight a block a collaborator is editing (outline does
                         // not affect offsetHeight, so pagination is unaffected) and
                         // flag it with their name(s), Google-Docs style.
@@ -2660,8 +2751,13 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
                             ref={setBlockRef(id)}
                             data-btype={b.type}
                             data-noindent={noIndent.has(id) ? "" : undefined}
-                            className="relative"
-                            style={editors ? { outline: `2px solid ${editors[0].color}`, outlineOffset: "3px", borderRadius: "3px" } : undefined}
+                            data-box-start={edge?.start ? "" : undefined}
+                            data-box-end={edge?.end ? "" : undefined}
+                            data-box-top={edge && (edge.start || k === 0) ? "" : undefined}
+                            data-box-bottom={edge && (edge.end || k === ids.length - 1) ? "" : undefined}
+                            data-box-titled={edge?.start && edge.box.title ? "" : undefined}
+                            className={edge ? "aq-box relative" : "relative"}
+                            style={{ ...(edge ? boxCssVars(edge.box) : null), ...(editors ? { outline: `2px solid ${editors[0].color}`, outlineOffset: "3px", borderRadius: "3px" } : null) } as CSSProperties}
                           >
                             {/* The peer's name rides on their live caret flag
                                 (CollabCursors); a peer with no broadcast caret
@@ -2672,6 +2768,13 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
                                   <span key={peer.userId} className="rounded px-1.5 py-0.5 text-[10px] font-medium leading-none text-white shadow" style={{ backgroundColor: peer.color }}>{peer.username}</span>
                                 ))}
                               </span>
+                            )}
+                            {edge?.start && edge.box.title && (
+                              <div className="aq-box-title">
+                                {caps.editBlocks
+                                  ? <input value={edge.box.title} onChange={(e) => setBoxTitle(e.target.value, id)} aria-label="Box title" spellCheck />
+                                  : edge.box.title}
+                              </div>
                             )}
                             {renderBlock(b)}
                           </div>
@@ -2796,6 +2899,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
           currentBackground={docStyle.background}
           onApplyBackground={applyBackground}
           onApply={requestApplyTemplate}
+          onInsertModule={(m) => { setTemplatesOpen(false); paletteInsertModule(m); }}
           onSaveCurrent={saveCurrentAsTemplate}
           onClose={() => setTemplatesOpen(false)}
         />
@@ -2822,10 +2926,21 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
         <NoteLinkPicker currentId={id} onPick={insertNoteLink} onClose={() => setLinkPicker(null)} />
       )}
       {moduleEdit && (
-        <ModuleEditorDialog
+        <ModuleFileEditor
           initial={{ name: moduleEdit.name, blocks: moduleEdit.blocks }}
           onSave={(name, blocks) => { updateModule(moduleEdit.id, name, blocks); setModuleEdit(null); }}
           onClose={() => setModuleEdit(null)}
+        />
+      )}
+      {sectionSave && (
+        <SectionToModuleDialog
+          section={sectionSave.blocks}
+          suggestedName={sectionSave.name}
+          modules={listSavedModules()}
+          onCreate={(name) => { saveModule(name, sectionSave.blocks, new Date().toISOString()); setSectionSave(null); }}
+          onAppend={(moduleId) => { appendToModule(moduleId, sectionSave.blocks); setSectionSave(null); }}
+          onReplace={(moduleId) => { replaceModuleBlocks(moduleId, sectionSave.blocks); setSectionSave(null); }}
+          onClose={() => setSectionSave(null)}
         />
       )}
       {confirmTemplate && (
@@ -3000,7 +3115,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
             ) : editingChem ? (
               <ChemFormulaBox draft={draft} onChange={onDraftChange} onExit={() => endEdit(b.id)} onEnter={() => lineAfterFormula(b.id)} />
             ) : getSettings().mathEditorBeta && isStructural(b) ? (
-              <StructuralFormulaBox block={b} onChange={(next) => setBlocks((bs) => bs.map((x) => (x.id === b.id ? next : x)), true)} onExit={() => endEdit(b.id)} onEnter={() => lineAfterFormula(b.id)} initialPoint={formulaPoint.current} />
+              <StructuralFormulaBox block={b} onChange={(next) => setBlocks((bs) => bs.map((x) => (x.id === b.id ? withBox(next, boxOf(x)) : x)), true)} onExit={() => endEdit(b.id)} onEnter={() => lineAfterFormula(b.id)} initialPoint={formulaPoint.current} />
             ) : (
               <FormulaEditBox draft={draft} onChange={onDraftChange} onExit={() => endEdit(b.id)} onEnter={() => lineAfterFormula(b.id)} initialPoint={formulaPoint.current} />
             )

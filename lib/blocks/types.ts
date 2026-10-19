@@ -138,6 +138,9 @@ export interface BlockAttrs {
   shapes?: unknown[];
   // graph: interactive 2D figure model (see lib/blocks/graph.ts GraphData)
   graph?: unknown;
+  // any top-level block: the coloured box it sits in (lib/blocks/boxes.ts).
+  // Consecutive blocks with the same box id are one box.
+  box?: { id: string; color: string; title?: string };
   // free-form escape hatch — avoid relying on this
   [key: string]: unknown;
 }

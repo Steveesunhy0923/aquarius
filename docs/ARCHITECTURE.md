@@ -95,7 +95,7 @@ priority. Chrome is now ranked by when a control can actually act:
 | --- | --- | --- |
 | Header | `EditorClient` | always — title, undo/redo, save *status*, share, export, history |
 | The one bar | `EditorClient` + `InsertMenu` | always — Insert menu, block style, B/I/U/S, lists, TeX view, handwriting, Design, Document |
-| Symbol strip | `SymbolToolbar` / `ChemToolbar` | while a `math` block is open for editing, or pinned with ⌘/ |
+| Symbol tab | `SymbolTab` (holding `SymbolToolbar` / `ChemToolbar` in `compact` form) | floats beside the formula being edited; draggable; opened without a formula by the top bar’s Σ button or ⌘/ |
 | Format popover | `FormatPopover` | while the prose textarea holds a non-empty selection |
 | Document settings | `DocumentInspector` | toggled; open by default on a full-width pane |
 
@@ -168,7 +168,7 @@ and back. The words stay ordinary text; each formula shows as rendered maths
 with no border and no dollar signs, and becomes the MathLive field (the equation
 editor's input) when the caret goes in: a press on it, an arrow key or
 Backspace/Delete into it from the words, or the formula button, which opens a
-blank one. The symbol strip follows the caret into a formula and away again. A
+blank one. The symbol tab opens beside the formula and goes away again when the caret leaves it. A
 plain symbol from the pinned strip goes in as a finished formula with the words
 carrying on; a structure opens to be filled. Enter or Escape finish a formula
 with the caret after it, an arrow off either end leaves on that side, Backspace
@@ -200,7 +200,22 @@ fractions of the formula's rendered box (`formulaPointAt` in
 `lib/editor/caret.ts`) and each editor turns them back into a caret once it has
 laid the formula out: MathLive through `getOffsetFromPoint`, the structural
 editor by the innermost row cell nearest the point (`placeAt`). A press on the
-blank line beside an open equation lands at its nearer end. An equation block is edited centred, as
+blank line beside an open equation lands at its nearer end.
+
+**Symbols live in a tab beside the formula, not a bar.** `components/SymbolTab.tsx`
+is a small floating card that opens just under the formula holding the caret —
+the open formula box in a line, or the equation's block — centred on it, and
+follows it as it grows and scrolls (above it when there is no room below). It can
+be dragged by its grip; the drag is kept as an offset from the formula (and a
+separate one from the top-bar Σ button, which opens it without a formula), in
+localStorage, so the next formula opens it in the same place. Double-clicking the
+grip puts it back. Every press on it holds the caret, like the toolbar's.
+
+**An open formula is drawn at its displayed size.** The editors that replace a
+rendered formula match KaTeX's 1.05em of the body (`.aq-display-edit math-field`,
+`.aq-display-edit .me-field` at 1.07em, `.aq-inline-math math-field` in
+`app/globals.css`), measured against the rendering, so opening an equation does
+not make it swell. An equation block is edited centred, as
 it is drawn, and Enter in it starts a new line underneath.
 
 **Entering a line is a press, and leaving one is explicit.** `pressToEdit` in

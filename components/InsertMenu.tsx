@@ -22,7 +22,7 @@ import type { MouseEvent } from "react";
 export type InsertAction =
   | "paragraph" | "heading" | "bulletList" | "numberList"
   | "equation" | "chemistry" | "graph" | "table" | "code"
-  | "image" | "link" | "noteLink";
+  | "image" | "link" | "noteLink" | "box";
 
 type Row = {
   action: InsertAction;
@@ -41,6 +41,7 @@ const GROUPS: { name: string; rows: Row[] }[] = [
       { action: "heading", label: "Heading", icon: "heading" },
       { action: "bulletList", label: "Bulleted list", icon: "list" },
       { action: "numberList", label: "Numbered list", icon: "listnumber" },
+      { action: "box", label: "Box", icon: "box" },
     ],
   },
   {

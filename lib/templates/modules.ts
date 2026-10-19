@@ -16,6 +16,7 @@
  * to select and delete before their own words can go in.
  */
 
+import { newBox, renewBoxIds, withBox } from "@/lib/blocks/boxes";
 import { withCalloutColor } from "@/lib/blocks/callouts";
 import { fillFieldText, scanFieldNames } from "@/lib/blocks/fields";
 import { makeHeading, withHeading, type HeadingLevel } from "@/lib/blocks/headings";
@@ -46,6 +47,11 @@ export function numbered(items: string[]): Block {
 export const centerHeading = (level: HeadingLevel, text: string): Block =>
   withHeading(makeHeading(level, text), { align: "center" });
 export const banner = (text: string, color: string): Block => withCalloutColor(para(text), color);
+/** Blocks inside one coloured box (lib/blocks/boxes.ts). */
+export function boxed(color: string, blocks: Block[], title?: string): Block[] {
+  const box = newBox(color, title);
+  return blocks.map((b) => withBox(b, box));
+}
 
 // ─── Fresh ids (so inserting a module never collides with existing blocks) ────
 export function freshBlock(b: Block): Block {
@@ -64,8 +70,9 @@ export function freshBlock(b: Block): Block {
   }
   return nb;
 }
-/** Deep-clone a fragment with brand-new block ids throughout. */
-export const freshBlocks = (blocks: Block[]): Block[] => blocks.map(freshBlock);
+/** Deep-clone a fragment with brand-new block ids throughout — box ids too, so
+ *  a module inserted twice makes two boxes rather than one long one. */
+export const freshBlocks = (blocks: Block[]): Block[] => renewBoxIds(blocks.map(freshBlock));
 
 // ─── Fillable fields ({{Name}} tokens in module prose) ────────────────────────
 // Tokens live as literal text in run strings / heading values / list items /
@@ -199,7 +206,7 @@ export function builtinModules(): Module[] {
       heading(2, "Summary"),
     ], ["tldr", "conclusion", "recap"]),
     mod("takeaway", "Takeaway box", "tag", "structural", "A colored box for the one thing to remember.", [
-      banner("", "#fef3c7"),
+      ...boxed("#d97706", [para("")]),
     ], ["callout", "highlight", "box", "important"]),
     // Study & learning
     mod("key-concepts", "Key concepts", "list", "study", "Bulleted definitions of the core ideas.", [
@@ -739,13 +746,67 @@ export const presetTree = (p: Preset): DocumentTree => stackTree(p.stack);
 export interface SavedModule {
   id: string;
   name: string;
+  /** Shown on the card and in the `/` menu; absent means the generic module icon. */
+  icon?: IconName;
   blocks: Block[];
   createdAt: string;
 }
 
 const LS_MODULES = "aquarius.modules.v1";
 
+// ─── Sample modules (seeded once into the user's own library) ────────────────
+// Modules belong to the person using them: the Modules section has no read-only
+// catalog, only what they made. On a first run that would be an empty shelf, so
+// a handful of note-taking modules are written INTO their library once —
+// ordinary saved modules to edit, rename or delete like anything they built. A
+// flag, not the list's contents, records that seeding happened, so deleting
+// every sample never brings them back.
+
+const LS_SEEDED = "aquarius.modules.seeded.v1";
+
+/** The starter set. Skeletons only — headings, a table's header row, `{{field}}`
+ *  lines and empty slots; never a sentence about what to write there. */
+export function sampleModules(): { name: string; icon: IconName; blocks: Block[] }[] {
+  return [
+    {
+      name: "Lecture header",
+      icon: "heading",
+      blocks: [heading(2, "Lecture"), para("**Course:** {{Course}}    **Date:** {{Date}}    **Topic:** {{Topic}}")],
+    },
+    {
+      name: "Key terms",
+      icon: "table",
+      blocks: [heading(3, "Key Terms"), table("lines", [["Term", "Definition"], ["", ""], ["", ""]])],
+    },
+    { name: "Example", icon: "displayeq", blocks: [heading(3, "Example"), eq("")] },
+    { name: "Questions", icon: "search", blocks: [heading(3, "Questions"), bullets([""])] },
+    { name: "Summary", icon: "list", blocks: [heading(2, "Summary"), banner("", "#fef3c7")] },
+  ];
+}
+
+function seedSampleModules(): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (window.localStorage.getItem(LS_SEEDED)) return;
+    // Flag first: if the write below fails (quota), seeding must not retry on
+    // every read for the rest of the session.
+    window.localStorage.setItem(LS_SEEDED, new Date().toISOString());
+    const now = new Date().toISOString();
+    const samples: SavedModule[] = sampleModules().map((m) => ({ id: uid(), name: m.name, icon: m.icon, blocks: m.blocks, createdAt: now }));
+    // After anything already there, so an existing library keeps its order.
+    writeSavedModules([...readStoredModules(), ...samples]);
+  } catch {
+    /* storage unavailable: no samples, and nothing else breaks */
+  }
+}
+
+/** The user's modules, seeding the starter set on first use. */
 function readSavedModules(): SavedModule[] {
+  seedSampleModules();
+  return readStoredModules();
+}
+
+function readStoredModules(): SavedModule[] {
   if (typeof window === "undefined") return [];
   try {
     const raw = window.localStorage.getItem(LS_MODULES);
@@ -797,6 +858,24 @@ export function updateModule(id: string, name: string, blocks: Block[]): void {
   }
 }
 
+/** Add a section to the END of a module — "save this section to Key terms".
+ *  Ids are freshened like saveModule, so the module detaches from the note it
+ *  came from and can be inserted alongside it. */
+export function appendToModule(id: string, blocks: Block[]): void {
+  const list = readSavedModules();
+  if (!list.some((m) => m.id === id)) return;
+  const add = freshBlocks(blocks.map(stripCollapsed));
+  writeSavedModules(list.map((m) => (m.id === id ? { ...m, blocks: [...m.blocks, ...add] } : m)));
+}
+
+/** Overwrite a module's content, keeping its name and icon — "replace". */
+export function replaceModuleBlocks(id: string, blocks: Block[]): void {
+  const list = readSavedModules();
+  if (!list.some((m) => m.id === id)) return;
+  const next = freshBlocks(blocks.map(stripCollapsed));
+  writeSavedModules(list.map((m) => (m.id === id ? { ...m, blocks: next } : m)));
+}
+
 export function deleteSavedModule(id: string): void {
   writeSavedModules(readSavedModules().filter((m) => m.id !== id));
 }
@@ -806,7 +885,7 @@ export function listSavedModules(): Module[] {
   return readSavedModules().map((m) => ({
     id: m.id,
     name: m.name,
-    icon: "module" as IconName,
+    icon: m.icon ?? ("module" as IconName),
     category: "custom" as ModuleCategory,
     description: "Saved from a note.",
     blocks: m.blocks,
@@ -848,7 +927,7 @@ function usageScore(usage: UsageMap, id: string): number {
   return u.count + (age < 3 * DAY ? 3 : age < 14 * DAY ? 1 : 0);
 }
 
-// ─── The inserter's list: saved + built-in, filtered & ranked ─────────────────
+// ─── The inserter's list: the user's modules, filtered & ranked ───────────────
 
 /** Match `q` against a candidate string; higher is better, 0 = no match. */
 function matchScore(q: string, s: string): number {
@@ -870,12 +949,15 @@ function moduleScore(q: string, m: Module): number {
 }
 
 /**
- * The slash-menu list: user-saved modules first, then the catalog. An empty
- * query returns everything ranked by recent/frequent use; a query fuzzy-filters
- * (name, keywords, category) and ranks by match quality, usage breaking ties.
+ * The `/` menu and ⌘K list: the user's own modules. The built-in catalog is not
+ * offered here — it survives only as the parts templates are assembled from —
+ * because a module is something the user made (or was given as an editable
+ * sample), not a shelf of someone else's. An empty query returns everything
+ * ranked by recent/frequent use; a query fuzzy-filters (name, keywords) and
+ * ranks by match quality, usage breaking ties.
  */
 export function searchModules(query: string): Module[] {
-  const all = [...listSavedModules(), ...builtinModules()];
+  const all = listSavedModules();
   const usage = readUsage();
   const q = query.trim().toLowerCase();
   if (!q) {

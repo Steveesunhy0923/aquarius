@@ -21,6 +21,10 @@ import type { MouseEvent } from "react";
  *  pointer pays for. */
 export const ICON_BTN =
   "grid h-9 min-w-9 place-items-center rounded-md px-2 text-sm transition hover:bg-foreground/[0.06]";
+/** Icon button for the floating symbol tab (components/SymbolTab): the toolbar
+ *  button shrunk so the whole strip fits a small card in two rows. */
+export const COMPACT_BTN =
+  "grid h-7 min-w-7 place-items-center rounded px-1 text-[13px] transition hover:bg-foreground/[0.06]";
 /** Icon button that sits inside a grouped well (see GROUP) — slightly tighter. */
 export const GROUP_BTN =
   "grid h-8 min-w-8 place-items-center rounded px-1.5 text-sm transition hover:bg-surface hover:shadow-sm";

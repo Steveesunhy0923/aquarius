@@ -32,6 +32,9 @@ export function Menu({
             className="fixed inset-0 z-40 cursor-default"
             aria-hidden
             tabIndex={-1}
+            // Closing a menu is no reason to move focus: pressing here would
+            // otherwise take the caret out of the line a menu item just acted on.
+            onMouseDown={(e) => e.preventDefault()}
             onClick={(e) => { e.preventDefault(); close(); }}
           />
           <div className={`absolute ${align === "right" ? "right-0" : "left-0"} top-full z-50 mt-1 ${width} rounded-md border border-border bg-surface p-1 text-sm shadow-lg ${menuClassName ?? ""}`}>

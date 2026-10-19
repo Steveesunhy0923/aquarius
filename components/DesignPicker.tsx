@@ -3,19 +3,17 @@
 import { useMemo, useRef, useState } from "react";
 import { BlockView } from "@/components/BlockView";
 import { Icon } from "@/components/Icon";
-import { ModuleEditorDialog } from "@/components/ModuleEditorDialog";
+import { ModuleFileEditor } from "@/components/ModuleFileEditor";
 import { Dialog, DialogSection } from "@/components/ui/Dialog";
 import { uiConfirm } from "@/components/ui/dialogs";
 import type { Block, DocumentTree } from "@/lib/blocks/types";
 import {
-  builtinModules,
   builtinPresets,
   deleteSavedModule,
   listSavedModules,
   saveModule,
   stackTree,
   updateModule,
-  MODULE_CATEGORY_NAMES,
   type Module,
   type Preset,
 } from "@/lib/templates/modules";
@@ -172,6 +170,7 @@ export function DesignPicker({
   currentBackground,
   onApplyBackground,
   onApply,
+  onInsertModule,
   onSaveCurrent,
   onClose,
 }: {
@@ -179,6 +178,8 @@ export function DesignPicker({
   /** Apply a page background (null = clear back to the default surface). */
   onApplyBackground: (bg: BuiltInBackground | null) => void;
   onApply: (tree: DocumentTree) => void;
+  /** Add one of the user's modules to the note. */
+  onInsertModule: (m: Module) => void;
   onSaveCurrent: (name: string) => SavedTemplate | null;
   onClose: () => void;
 }) {
@@ -218,7 +219,7 @@ export function DesignPicker({
 
       <div className="max-h-[65vh] overflow-auto px-5 py-4">
         {tab === "module" ? (
-          <ModulesTab />
+          <ModulesTab onInsert={onInsertModule} />
         ) : tab === "background" ? (
           <>
             <div className="grid grid-cols-3 gap-3 sm:grid-cols-4">
@@ -287,7 +288,13 @@ export function DesignPicker({
   );
 }
 
-// ─── Modules tab: build, edit, and manage the `/` menu's modules ──────────────
+// ─── Modules tab: the user's own library of quick sections ────────────────────
+//
+// Everything here belongs to the user — modules they built, sections they saved
+// from a note, and the starter set seeded into their library on first run — so
+// nothing is read-only: every card edits, deletes, and adds itself to the note.
+// The built-in catalog still exists, but only as the parts templates are made
+// of; it is not a shelf of modules someone else wrote.
 
 /** A module's blocks rendered as a small clipped preview. */
 function ModulePreview({ blocks }: { blocks: Block[] }) {
@@ -302,14 +309,14 @@ function ModulePreview({ blocks }: { blocks: Block[] }) {
   );
 }
 
-function ModulesTab() {
+function ModulesTab({ onInsert }: { onInsert: (m: Module) => void }) {
   const [saved, setSaved] = useState<Module[]>(() => listSavedModules());
-  // null = closed; {module:null} = new from scratch; {module, asCopy} = edit / customize a copy.
-  const [editor, setEditor] = useState<{ module: Module | null; asCopy?: boolean } | null>(null);
+  // null = closed; {module:null} = build a new one; {module} = edit that one.
+  const [editor, setEditor] = useState<{ module: Module | null } | null>(null);
   const refresh = () => setSaved(listSavedModules());
 
   const onSave = (name: string, blocks: Block[]) => {
-    if (editor?.module && !editor.asCopy) updateModule(editor.module.id, name, blocks);
+    if (editor?.module) updateModule(editor.module.id, name, blocks);
     else saveModule(name, blocks, new Date().toISOString());
     setEditor(null);
     refresh();
@@ -322,7 +329,6 @@ function ModulesTab() {
 
   return (
     <>
-      <DialogSection className="mb-2 mt-1">Your modules</DialogSection>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <button
           onClick={() => setEditor({ module: null })}
@@ -336,33 +342,20 @@ function ModulesTab() {
             <div className="mt-2 flex items-center gap-1.5">
               <Icon name={m.icon} size={15} className="shrink-0 text-muted" />
               <p className="min-w-0 flex-1 truncate font-medium">{m.name}</p>
-              <button onClick={() => setEditor({ module: listSavedModules().find((x) => x.id === m.id) ?? m })} title="Edit module" aria-label="Edit module" className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-muted hover:bg-foreground/[0.05] hover:text-foreground"><Icon name="editformula" size={15} /></button>
-              <button onClick={() => void remove(m)} title="Delete module" aria-label="Delete module" className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-muted hover:bg-danger/10 hover:text-danger"><Icon name="trash" size={15} /></button>
+              {/* Re-read from storage: the card's copy may predate an edit made from the `/` menu. */}
+              <button onClick={() => setEditor({ module: listSavedModules().find((x) => x.id === m.id) ?? m })} title="Edit module" aria-label={`Edit ${m.name}`} className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-muted hover:bg-foreground/[0.05] hover:text-foreground"><Icon name="editformula" size={15} /></button>
+              <button onClick={() => void remove(m)} title="Delete module" aria-label={`Delete ${m.name}`} className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-muted hover:bg-danger/10 hover:text-danger"><Icon name="trash" size={15} /></button>
             </div>
-          </div>
-        ))}
-      </div>
-      <DialogSection className="mb-2 mt-6">Built-in modules</DialogSection>
-      <div className="overflow-hidden rounded-lg border border-border">
-        {builtinModules().map((m) => (
-          <div key={m.id} className="flex items-center gap-2.5 border-t border-border-soft px-3 py-2 first:border-t-0">
-            <Icon name={m.icon} size={16} className="shrink-0 text-muted" />
-            <span className="min-w-0 flex-1 truncate text-sm font-medium">{m.name}</span>
-            <span className="shrink-0 text-[10px] uppercase tracking-wide text-faint">{MODULE_CATEGORY_NAMES[m.category]}</span>
-            <button
-              onClick={() => setEditor({ module: m, asCopy: true })}
-              className="shrink-0 rounded-md border border-border px-2 py-1 text-xs hover:border-accent"
-            >
-              Customize
+            <button onClick={() => onInsert(m)} className="mt-3 rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:opacity-90">
+              Add to note
             </button>
           </div>
         ))}
       </div>
 
       {editor && (
-        <ModuleEditorDialog
-          initial={editor.module ? { name: editor.asCopy ? `${editor.module.name} (mine)` : editor.module.name, blocks: editor.module.blocks } : null}
-          create={!editor.module || editor.asCopy}
+        <ModuleFileEditor
+          initial={editor.module ? { name: editor.module.name, blocks: editor.module.blocks } : null}
           onSave={onSave}
           onClose={() => setEditor(null)}
         />

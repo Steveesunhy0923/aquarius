@@ -92,7 +92,7 @@ export function FormulaEditBox({
           fieldRef.current?.placeAt(at.relX, at.relY);
         }}
       >
-        <MathField ref={fieldRef} value={draft} onChange={(latex) => onChange(latex, 0)} onExit={onExit} onEnter={onEnter} onGridChange={setGrid} autoFocus initialPoint={initialPoint} className="inline-block text-lg" />
+        <MathField ref={fieldRef} value={draft} onChange={(latex) => onChange(latex, 0)} onExit={onExit} onEnter={onEnter} onGridChange={setGrid} autoFocus initialPoint={initialPoint} className="inline-block" />
       </div>
       {grid && (
         <GridBar

@@ -145,7 +145,7 @@ export function DocumentInspector({
           )}
 
           <Row label={`Zoom — ${Math.round(zoom * 100)}%`}>
-            <input type="range" min={0.6} max={1.4} step={0.05} value={zoom} onChange={(e) => onZoom(Number(e.target.value))} className="w-full accent-accent" />
+            <input type="range" min={0.3} max={1.4} step={0.05} value={zoom} onChange={(e) => onZoom(Number(e.target.value))} className="w-full accent-accent" />
           </Row>
 
           <div className="grid gap-1.5 border-t border-border-soft pt-3">

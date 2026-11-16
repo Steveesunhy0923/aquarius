@@ -41,4 +41,12 @@ const res = spawnSync(path.join(root, "node_modules", ".bin", "next"), ["build"]
   stdio: "inherit",
   env: { ...process.env, CAP_STATIC: "1" },
 });
-process.exit(res.status ?? 1);
+if (res.status !== 0) process.exit(res.status ?? 1);
+
+// The export is the whole site, so its file list is known now: write the list
+// the service worker precaches for offline use (public/sw.js).
+const precache = spawnSync(process.execPath, [path.join(root, "scripts", "build-precache.mjs")], {
+  cwd: root,
+  stdio: "inherit",
+});
+process.exit(precache.status ?? 1);

@@ -7,6 +7,7 @@ import { ShareNotifier } from "@/components/ShareNotifier";
 import { SystemDialogs } from "@/components/ui/dialogs";
 import { Toaster } from "@/components/ui/toast";
 import { initMonitoring } from "@/lib/monitoring";
+import { registerServiceWorker } from "@/lib/pwa";
 import { applyMathKeyboard, applyTheme, getSettings } from "@/lib/settings/settings";
 
 /** Client-side context providers mounted once at the app root. */
@@ -20,6 +21,8 @@ export function Providers({ children }: { children: ReactNode }) {
     // Uncaught errors + unhandled rejections → Sentry, when a DSN is configured
     // (a no-op otherwise — see lib/monitoring.ts).
     initMonitoring();
+    // Offline app shell (production builds only — see lib/pwa.ts).
+    registerServiceWorker();
   }, []);
   return (
     <AuthProvider>

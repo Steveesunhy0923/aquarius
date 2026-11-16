@@ -24,13 +24,20 @@ import {
 } from "@/lib/blocks/images";
 import { tableAlign, tableItems } from "@/lib/blocks/tables";
 import type { Block, InlineRun } from "@/lib/blocks/types";
-import type { CSSProperties, ReactNode } from "react";
+import { memo, type CSSProperties, type ReactNode } from "react";
 import { Katex } from "./Katex";
 
 const CAPTION = "mt-1 text-center text-sm italic text-muted";
 
-/** Renders a single block from the tree into the WYSIWYG surface. */
-export function BlockView({ block }: { block: Block }) {
+/**
+ * Renders a single block from the tree into the WYSIWYG surface.
+ *
+ * Memoized on the block's identity. The tree is immutable — an edit replaces
+ * the blocks it touches and keeps every other block object — so on a
+ * keystroke only the block being typed in re-renders, instead of every block
+ * in the document re-parsing its runs because the editor above it re-rendered.
+ */
+export const BlockView = memo(function BlockView({ block }: { block: Block }) {
   switch (block.type) {
     case "text": {
       const color = calloutColorOf(block);
@@ -180,7 +187,7 @@ export function BlockView({ block }: { block: Block }) {
         </div>
       );
   }
-}
+});
 
 /** A horizontally-aligned row of one or more images (read-only). */
 export function ImageRow({

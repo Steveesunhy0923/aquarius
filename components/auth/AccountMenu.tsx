@@ -66,7 +66,7 @@ export function AccountMenu() {
             )}
             {needsUsername && <span className="absolute -right-0 -top-0 h-2 w-2 rounded-full bg-warning" />}
           </span>
-          <span className="max-w-[10rem] truncate">{username}</span>
+          <span className="hidden max-w-[10rem] truncate sm:block">{username}</span>
           <Icon name="chevron" size={12} className="text-muted" />
         </button>
       )}

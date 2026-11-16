@@ -16,6 +16,7 @@ const PATHS = {
   search: '<path d="m21 21-4.34-4.34" /><circle cx="11" cy="11" r="8" />', // lucide/search
   clearsearch: '<circle cx="12" cy="12" r="10" /><path d="m15 9-6 6" /><path d="m9 9 6 6" />', // lucide/circle-x
   settings: '<path d="M10 5H3" /><path d="M12 19H3" /><path d="M14 3v4" /><path d="M16 17v4" /><path d="M21 12h-9" /><path d="M21 19h-5" /><path d="M21 5h-7" /><path d="M8 10v4" /><path d="M8 12H3" />', // lucide/sliders-horizontal
+  menu: '<path d="M4 6h16" /><path d="M4 12h16" /><path d="M4 18h16" />', // lucide/menu
   more: '<circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /><circle cx="5" cy="12" r="1" />', // lucide/ellipsis
   newnote: '<path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" /><path d="M14 2v5a1 1 0 0 0 1 1h5" /><path d="M9 15h6" /><path d="M12 18v-6" />', // lucide/file-plus
   import: '<path d="M12 15V3" /><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="m7 10 5 5 5-5" />', // lucide/download

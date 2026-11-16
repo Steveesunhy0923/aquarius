@@ -84,7 +84,7 @@ export function NoteCard({ note, onDelete, onCopy, onPdf, onAddTag, onRemoveTag 
         {note.tags.map((tag) => (
           <span key={tag} className="group/tag inline-flex items-center gap-0.5 rounded-full bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent">
             {tag}
-            <button onClick={() => onRemoveTag(note, tag)} title="Remove tag" className="hidden leading-none hover:text-foreground group-hover/tag:inline-flex">
+            <button onClick={() => onRemoveTag(note, tag)} title="Remove tag" className="hidden leading-none hover:text-foreground group-hover/tag:inline-flex pointer-coarse:inline-flex">
               <Icon name="close" size={10} />
             </button>
           </span>

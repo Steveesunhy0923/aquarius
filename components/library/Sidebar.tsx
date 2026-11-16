@@ -59,7 +59,7 @@ export function SideItem({
         <button
           onClick={onDelete}
           title="Delete"
-          className="mr-1 grid h-6 w-6 shrink-0 place-items-center text-muted opacity-0 transition hover:text-danger group-hover:opacity-100"
+          className="mr-1 grid h-6 w-6 shrink-0 place-items-center text-muted opacity-0 transition hover:text-danger group-hover:opacity-100 pointer-coarse:opacity-100"
         >
           <Icon name="close" size={13} />
         </button>

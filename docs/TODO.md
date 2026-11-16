@@ -217,13 +217,22 @@ git remote at all**; it exists only on the development Mac.
 
 ## Website
 
-- [ ] **Responsive layout** — the library is a fixed `248px + 1fr` desktop grid with no
-      breakpoints; editor chrome is desktop-pointer-first. Needs phone/tablet-browser
-      layouts (collapsible sidebar, adaptive toolbars) — this is also most of the iPad
-      Safari experience.
-- [ ] **PWA** — no manifest, no service worker. Data is offline (IndexedDB) but the app
-      shell is not: add web manifest + service-worker caching + install prompt so the
-      website works in Airplane Mode and installs to Dock/home screen.
+- [x] **Responsive layout** — first pass (2026-11-16). Library: below `md` the sidebar is
+      a drawer behind a menu button, the header wraps (search on its own row), cards go
+      two-across. Editor: below `lg` the files/outline column is a drawer, a second note
+      replaces the first instead of splitting, the page fits the pane width on open
+      (once — the zoom is the user's after that), and the settings panel starts closed.
+      Hover-only controls are visible on touch. Still open: the editor toolbar WRAPS on a
+      phone (four rows at 375px) rather than collapsing, and touch targets in editor
+      chrome are still pointer-sized.
+- [x] **PWA** — web manifest ([app/manifest.ts](../app/manifest.ts)), icons
+      ([scripts/generate-icons.mjs](../scripts/generate-icons.mjs)) and a service worker
+      ([public/sw.js](../public/sw.js)) that precaches the whole static build from a
+      build-time list ([scripts/build-precache.mjs](../scripts/build-precache.mjs), written
+      by `npm run build:static`). Pages are network-first, so a deploy is still picked up
+      on the next navigation; the cache answers only when the network does not. Pyodide and
+      pdf.js are cached on first use, not precached. Registered in production builds only.
+      Still open: a custom install prompt (the browser's own is all there is).
 - [ ] **Public share links** — read-only no-account viewing of a note (ROADMAP V1 step 9,
       not started). Today all sharing requires a signed-in collaborator; a mature web app
       needs "copy link → anyone can view".
@@ -234,9 +243,13 @@ git remote at all**; it exists only on the development Mac.
       policy, so link to those rather than writing a second pair. Still missing here: OG
       metadata for shared links (no `metadataBase`, no `openGraph` block anywhere), and the
       marketing/landing page — which `atorku.com/apps/aquarius` now largely is.
-- [ ] **Performance pass** — `app/editor/[id]/page.tsx` is a ~2,000-line client
-      component; split it, lazy-load heavy panels (Graph editor, pickers), and virtualize
-      long documents.
+- [ ] **Performance pass** — started (2026-11-16): twelve panels load on demand
+      ([app/editor/lazy.tsx](../app/editor/lazy.tsx); editor route 131 → 111 kB),
+      `BlockView` is memoized on block identity, and the editor file is split into the page
+      shell (`EditorClient`), the document (`DocumentEditor`), `blockChrome` and
+      `useUndoHistory`. Still open, and the bulk of it: `DocumentEditor` is still ~3,200
+      lines in one component (its mutators all close over the same state — separating
+      them wants E2E coverage first), and long documents are not virtualized.
 - [ ] **Accessibility pass** — focus order and ARIA on the custom dialogs/menus, contrast
       check on Graphite tokens, `prefers-reduced-motion` handling.
 

@@ -75,6 +75,14 @@ export default function LibraryPage() {
   const [trash, setTrash] = useState(false);
   const [deleted, setDeleted] = useState<NoteMeta[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Small screens: the subjects/notebooks column is a drawer (see the JSX).
+  const [navOpen, setNavOpen] = useState(false);
+  useEffect(() => {
+    if (!navOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setNavOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [navOpen]);
   const [uploading, setUploading] = useState(false);
   const [shared, setShared] = useState(false);
   const [uncat, setUncat] = useState(false);
@@ -469,12 +477,23 @@ export default function LibraryPage() {
 
   return (
     <main className="flex min-h-screen flex-col">
-      <header className="flex items-center gap-3 border-b border-border bg-surface px-5 py-3">
+      {/* Below `md` the header wraps: search drops to its own full-width row,
+          and the sidebar becomes a drawer opened by the button on the left. */}
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border bg-surface px-3 py-3 sm:px-5">
+        <button
+          onClick={() => setNavOpen(true)}
+          aria-label="Open subjects and notebooks"
+          aria-expanded={navOpen}
+          aria-controls="library-nav"
+          className="grid h-[34px] w-[34px] shrink-0 place-items-center rounded-lg border border-border text-muted hover:border-accent md:hidden"
+        >
+          <Icon name="menu" size={18} />
+        </button>
         <div className="mr-1 shrink-0">
           <h1 className="text-[17px] font-bold leading-none tracking-tight">Aquarius</h1>
-          <p className="mt-1 text-[11px] text-muted">WYSIWYG math notes</p>
+          <p className="mt-1 hidden text-[11px] text-muted sm:block">WYSIWYG math notes</p>
         </div>
-        <div className="relative ml-2 w-full max-w-[420px]">
+        <div className="relative order-last w-full basis-full md:order-none md:ml-2 md:max-w-[420px] md:basis-auto">
           <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted">
             <Icon name="search" size={16} />
           </span>
@@ -508,8 +527,14 @@ export default function LibraryPage() {
         </div>
       </header>
 
-      <div className="grid flex-1 grid-cols-[248px_1fr]">
-        <aside className="overflow-auto border-r border-border bg-surface px-3 py-4">
+      <div className="grid flex-1 grid-cols-1 md:grid-cols-[248px_1fr]">
+        {navOpen && <div aria-hidden className="fixed inset-0 z-30 bg-black/30 md:hidden" onClick={() => setNavOpen(false)} />}
+        {/* A column from `md` up; below it, an off-canvas drawer. `invisible`
+            while closed takes it out of the tab order, not just out of sight. */}
+        <aside
+          id="library-nav"
+          className={`overflow-auto border-r border-border bg-surface px-3 py-4 max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:w-[280px] max-md:max-w-[85vw] max-md:shadow-2xl max-md:transition-transform ${navOpen ? "" : "max-md:invisible max-md:-translate-x-full"}`}
+        >
           <SideHead onAdd={addSubject} addLabel="Add subject">Subjects</SideHead>
           {subjects.map((s) => (
             <SideItem key={s.id} active={!trash && !shared && !uncat && s.id === subjectId} onClick={() => { restoreNotebook.current = null; setTrash(false); setShared(false); setUncat(false); setSubjectId(s.id); }} onDelete={() => removeSubject(s.id)}>
@@ -518,6 +543,9 @@ export default function LibraryPage() {
             </SideItem>
           ))}
 
+          {/* Picking a subject keeps the drawer open (a notebook comes next);
+              picking anything from here down is the end of the trip. */}
+          <div onClick={() => setNavOpen(false)}>
           <SideHead onAdd={subjectId ? addNotebook : undefined} addLabel="Add notebook">Notebooks</SideHead>
           {subjectId && notebooks.length === 0 && <p className="px-2.5 py-1.5 text-[13px] text-muted">No notebooks yet</p>}
           {notebooks.map((nb) => {
@@ -564,10 +592,11 @@ export default function LibraryPage() {
               <span className="truncate">{uploading ? "Uploading…" : "Upload to cloud"}</span>
             </SideItem>
           )}
+          </div>
         </aside>
 
         {/* Notes / Search / Trash */}
-        <section className="p-6">
+        <section className="min-w-0 p-4 sm:p-6">
           {trash ? (
             <>
               <div className="mb-1 flex items-center justify-between">

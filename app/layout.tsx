@@ -8,6 +8,9 @@ export const metadata: Metadata = {
   description:
     "A math-first note editor. Edit visually; export clean, typeset LaTeX. Local-first, offline-capable.",
   applicationName: "Aquarius",
+  // Installed to an iOS home screen: open full-screen under the app's own name.
+  // (The manifest — app/manifest.ts — covers every other platform.)
+  appleWebApp: { capable: true, title: "Aquarius", statusBarStyle: "default" },
 };
 
 export const viewport: Viewport = {

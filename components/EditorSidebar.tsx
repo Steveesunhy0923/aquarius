@@ -14,6 +14,8 @@ import { useEffect, useRef, useState, type MutableRefObject } from "react";
  *  note (only when any exist), the design's section shortcuts, and the live
  *  section outline (bottom). */
 export function EditorSidebar({
+  open,
+  onClose,
   currentId,
   secondId,
   activeId,
@@ -23,6 +25,10 @@ export function EditorSidebar({
   handle,
   notesRev,
 }: {
+  /** Below `lg` the sidebar is a drawer; `open` shows it. Ignored from `lg` up,
+   *  where it is always a column. */
+  open: boolean;
+  onClose: () => void;
   currentId: string;
   secondId: string | null;
   /** The focused pane's note — the one the backlinks panel describes. */
@@ -35,7 +41,14 @@ export function EditorSidebar({
   notesRev: number;
 }) {
   return (
-    <aside className="print-hide flex w-60 shrink-0 flex-col border-r border-border">
+    <aside
+      id="editor-sidebar"
+      // A jump to a section is the end of the trip on a small screen: close the
+      // drawer so the place jumped to is visible. (Opening a file closes it from
+      // the parent; editing shortcuts must NOT, so this is opt-in per button.)
+      onClick={(e) => { if ((e.target as HTMLElement).closest("[data-jump]")) onClose(); }}
+      className={`print-hide w-60 shrink-0 flex-col border-r border-border bg-background lg:static lg:flex lg:shadow-none ${open ? "fixed inset-y-0 left-0 z-40 flex max-w-[85vw] shadow-2xl" : "hidden"}`}
+    >
       <RecentFilesPanel currentId={currentId} secondId={secondId} onOpen={onOpen} notesRev={notesRev} />
       <BacklinksPanel currentId={currentId} secondId={secondId} activeId={activeId} onOpen={onOpen} notesRev={notesRev} />
       <ShortcutsPanel shortcuts={shortcuts} outline={outline} handle={handle} />
@@ -111,6 +124,7 @@ function ShortcutsPanel({ shortcuts, outline, handle }: {
               className="group flex items-center gap-1 rounded-md hover:bg-foreground/5"
             >
               <button
+                data-jump
                 onClick={() => handle.current?.jumpToShortcut(s.id)}
                 title={here ? `Go to “${s.label}”` : `Add the “${s.label}” section`}
                 className={`flex min-w-0 flex-1 items-center gap-1.5 py-1 text-left text-sm ${here ? "" : "text-muted"}`}
@@ -261,7 +275,7 @@ function SectionOutline({ outline, handle }: { outline: OutlineItem[]; handle: M
                 style={{ paddingLeft: `${(item.level - 1) * 12}px` }}
               >
                 <span className="cursor-grab select-none px-0.5 text-muted opacity-0 group-hover:opacity-100" title="Drag to reorder" aria-label="Drag to reorder"><Icon name="drag" size={13} /></span>
-                <button onClick={() => handle.current?.scrollToBlock(item.id)} className={`min-w-0 flex-1 truncate py-1 text-left text-sm ${sectionFolding && item.collapsed ? "text-muted line-through" : ""}`} title={item.text}>
+                <button data-jump onClick={() => handle.current?.scrollToBlock(item.id)} className={`min-w-0 flex-1 truncate py-1 text-left text-sm ${sectionFolding && item.collapsed ? "text-muted line-through" : ""}`} title={item.text}>
                   {item.text}
                 </button>
                 <button onClick={() => handle.current?.saveSectionAsModule(item.id)} title="Save section as module (insert it anywhere with /)" aria-label="Save section as module" className="shrink-0 px-1 text-xs text-muted opacity-0 hover:text-accent group-hover:opacity-100">

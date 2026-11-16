@@ -5,7 +5,8 @@ import type { NoteMeta } from "@/lib/storage/types";
 import { type CardHandlers, NoteCard } from "./NoteCard";
 
 /** Shared container class for every card grid in the library (notes, search, trash, shared). */
-export const NOTE_GRID = "grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] items-start gap-4";
+// Two cards across on a phone (≈343px of content), the original 180px floor from `sm` up.
+export const NOTE_GRID = "grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] items-start gap-3 sm:grid-cols-[repeat(auto-fill,minmax(180px,1fr))] sm:gap-4";
 
 export function NoteGrid({ notes, onNew, ...h }: { notes: NoteMeta[]; onNew?: () => void } & CardHandlers) {
   return (

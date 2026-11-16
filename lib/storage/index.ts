@@ -12,6 +12,7 @@
 
 import { isSupabaseConfigured } from "@/lib/supabase/client";
 import { getCachedUserId } from "@/lib/supabase/session";
+import type { SyncEngine } from "@/lib/sync/engine";
 import { SyncedStore } from "@/lib/sync/store";
 import { LocalLibraryStore } from "./local";
 import type { EntityId, LibraryStore } from "./types";
@@ -84,12 +85,30 @@ export function getStore(): LibraryStore {
   // Never memoize the server stub: caching it on a first SSR/prerender call
   // would poison a later client call.
   if (typeof indexedDB === "undefined") return createServerStub();
+  return activeSyncedStore() ?? getLocalStore();
+}
+
+/**
+ * The signed-in user's SyncedStore, or null for a guest. Also where a store
+ * whose user is gone gets shut down: its engine holds a timer and listeners,
+ * and left running it would keep syncing through the shared Supabase client as
+ * whichever account signed in next (see lib/sync/engine.ts).
+ */
+function activeSyncedStore(): SyncedStore | null {
   const uid = isSupabaseConfigured() ? getCachedUserId() : null;
-  if (uid) {
-    if (syncedSingleton?.uid !== uid) syncedSingleton = { uid, store: new SyncedStore(uid) };
-    return syncedSingleton.store;
+  if (syncedSingleton && syncedSingleton.uid !== uid) {
+    syncedSingleton.store.dispose();
+    syncedSingleton = null;
   }
-  return getLocalStore();
+  if (!uid) return null;
+  if (!syncedSingleton) syncedSingleton = { uid, store: new SyncedStore(uid) };
+  return syncedSingleton.store;
+}
+
+/** The active account's sync engine — null for a guest or on the server. */
+export function getSyncEngine(): SyncEngine | null {
+  if (typeof indexedDB === "undefined") return null;
+  return activeSyncedStore()?.engine ?? null;
 }
 
 /** True when `getStore()` currently resolves to the cloud (signed-in) store. */

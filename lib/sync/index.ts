@@ -16,5 +16,6 @@ export type {
   SyncDirection,
   SyncEvent,
   SyncResult,
+  SyncSnapshot,
   SyncStatus,
 } from "./types";

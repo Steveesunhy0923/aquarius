@@ -22,6 +22,8 @@
     "prepare-pdfjs": "node scripts/prepare-pdfjs.mjs"
   },
   "dependencies": {
+    "@atorku/auth": "file:../atorku/packages/auth",
+    "@atorku/entitlements": "file:../atorku/packages/entitlements",
     "@capacitor/core": "^7.6.7",
     "@capacitor/ios": "^7.6.7",
     "@codemirror/lang-javascript": "^6.2.5",
@@ -29,8 +31,7 @@
     "@codemirror/language-data": "^6.5.2",
     "@codemirror/lint": "^6.9.7",
     "@lezer/highlight": "^1.2.3",
-    "@atorku/auth": "file:../atorku/packages/auth",
-    "@atorku/entitlements": "file:../atorku/packages/entitlements",
+    "@sentry/browser": "^11.13.0",
     "@supabase/supabase-js": "^2.111.0",
     "codemirror": "^6.0.2",
     "computer-modern": "^0.1.3",

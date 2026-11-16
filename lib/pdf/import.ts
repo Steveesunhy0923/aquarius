@@ -16,6 +16,7 @@
 
 import { emptyDocument, type DocumentSource } from "@/lib/blocks/types";
 import { getStore } from "@/lib/storage";
+import { requestPersistentStorage } from "@/lib/storage/persist";
 import type { EntityId } from "@/lib/storage/types";
 import { readPdf } from "./pdfjs";
 
@@ -93,6 +94,7 @@ export async function importPdfAsNote(file: File, notebookId: EntityId): Promise
     assets: [asset],
     updatedAt: new Date().toISOString(),
   });
+  requestPersistentStorage(); // an imported file is work worth keeping
 
   return { noteId: note.id, title, pageCount };
 }

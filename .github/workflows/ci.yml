@@ -121,6 +121,11 @@ jobs:
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          # Optional, unlike the two above: error reporting is off when this
+          # repository variable is unset (lib/monitoring.ts), so it is not in
+          # the "Require deploy configuration" list. A DSN is not a secret —
+          # it ships in the bundle — hence vars, not secrets.
+          NEXT_PUBLIC_SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN }}
         run: npm run build:static
 
       - name: Deploy to aquarius.atorku.com

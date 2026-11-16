@@ -41,8 +41,21 @@ export type SyncDirection = "push" | "pull" | "both";
  */
 export type SyncEvent =
   | { type: "status"; status: SyncStatus }
+  /** The push queue changed (in this tab or another): `pending` ops remain. */
+  | { type: "queue"; pending: number }
   | { type: "progress"; entity: string; done: number; total: number }
   | { type: "error"; message: string };
+
+/** Everything a status indicator needs, read in one go (`SyncEngine.snapshot`). */
+export interface SyncSnapshot {
+  status: SyncStatus;
+  /** Local changes not yet pushed to the cloud. */
+  pending: number;
+  /** The most recent failure, cleared by the next clean run. */
+  lastError: string | null;
+  /** ISO time of the last run that completed push + pull, if any. */
+  lastSyncedAt: string | null;
+}
 
 /**
  * Minimal shape every reconcilable record must expose. `LibraryStore` entities

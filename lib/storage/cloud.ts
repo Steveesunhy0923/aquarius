@@ -18,6 +18,7 @@ import { getSupabaseClient } from "@/lib/supabase/client";
 import { getCachedUserId } from "@/lib/supabase/session";
 import { bytesToPgHex, pgHexToBytes } from "@/lib/collab/bytes";
 import { base64ToBlob, blobToBase64, remapSelfNoteLinks, remapTreeAssetIds } from "./bundle";
+import { fetchAllByKey } from "./paginate";
 import { AUTO_SNAPSHOT_KEEP } from "./types";
 import type {
   AssetBlob,
@@ -487,28 +488,46 @@ export class SupabaseLibraryStore implements LibraryStore {
 
   async syncListAllOwned(): Promise<{ subjects: Subject[]; notebooks: Notebook[]; notes: NoteMeta[] }> {
     const uid = await this.uid();
+    // PAGINATED — see lib/storage/paginate.ts. The engine deletes a synced
+    // local row that is absent from this listing, so a listing truncated at
+    // PostgREST's max_rows would delete notes from the device.
+    const owned = <R extends { id: string }>(table: string) =>
+      fetchAllByKey<R>(async (after, limit, wantTotal) => {
+        let q = this.sb.from(table)
+          .select("*", wantTotal ? { count: "exact" } : undefined)
+          .eq("owner_id", uid).order("id").limit(limit);
+        if (after !== null) q = q.gt("id", after);
+        const { data, error, count } = await q;
+        if (error) throw error;
+        return { rows: (data ?? []) as unknown as R[], total: count };
+      }, (r) => r.id);
     const [s, nb, n] = await Promise.all([
-      this.sb.from("subjects").select("*").eq("owner_id", uid),
-      this.sb.from("notebooks").select("*").eq("owner_id", uid),
-      this.sb.from("notes").select("*").eq("owner_id", uid), // incl. soft-deleted
+      owned<SubjectRow>("subjects"),
+      owned<NotebookRow>("notebooks"),
+      owned<NoteRow>("notes"), // incl. soft-deleted
     ]);
-    if (s.error) throw s.error;
-    if (nb.error) throw nb.error;
-    if (n.error) throw n.error;
     return {
-      subjects: (s.data as SubjectRow[]).map(subjectFromRow),
-      notebooks: (nb.data as NotebookRow[]).map(notebookFromRow),
-      notes: (n.data as NoteRow[]).map(noteFromRow),
+      subjects: s.map(subjectFromRow),
+      notebooks: nb.map(notebookFromRow),
+      notes: n.map(noteFromRow),
     };
   }
 
   /** updated_at stamps of the user's own note packages, keyed by note id. */
   async syncListPackageStamps(): Promise<Map<EntityId, string>> {
     const uid = await this.uid();
-    const { data, error } = await this.sb.from("note_packages")
-      .select("note_id,updated_at,notes!inner(owner_id)").eq("notes.owner_id", uid);
-    if (error) throw error;
-    const rows = data as { note_id: string; updated_at: string }[];
+    type StampRow = { note_id: string; updated_at: string };
+    // Paginated for the same reason as syncListAllOwned: a package missing
+    // from this map is never pulled, and its conflict check never fires.
+    const rows = await fetchAllByKey<StampRow>(async (after, limit, wantTotal) => {
+      let q = this.sb.from("note_packages")
+        .select("note_id,updated_at,notes!inner(owner_id)", wantTotal ? { count: "exact" } : undefined)
+        .eq("notes.owner_id", uid).order("note_id").limit(limit);
+      if (after !== null) q = q.gt("note_id", after);
+      const { data, error, count } = await q;
+      if (error) throw error;
+      return { rows: (data ?? []) as unknown as StampRow[], total: count };
+    }, (r) => r.note_id);
     return new Map(rows.map((r) => [r.note_id, r.updated_at]));
   }
 

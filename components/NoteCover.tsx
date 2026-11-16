@@ -1,6 +1,7 @@
 "use client";
 
 import { BlockView } from "@/components/BlockView";
+import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
 import { A4_W, pageContentStyle, presetClass, resolveStyle, unindentedParagraphs } from "@/lib/blocks/docstyle";
 import type { DocumentTree } from "@/lib/blocks/types";
 import { getStore } from "@/lib/storage";
@@ -14,6 +15,17 @@ const COVER_BLOCKS = 12;
  * its leading blocks into a scaled-down A4 sheet, clipped to the card.
  */
 export function NoteCover({ noteId }: { noteId: string }) {
+  // The cover renders the note's own document tree. If that tree is one the
+  // renderer cannot handle, only this thumbnail should go blank — not the
+  // library around it, which is how the user reaches every other note.
+  return (
+    <ErrorBoundary area="note-cover" resetKey={noteId} fallback={<div className="h-full w-full rounded-md bg-surface" />}>
+      <NoteCoverContent noteId={noteId} />
+    </ErrorBoundary>
+  );
+}
+
+function NoteCoverContent({ noteId }: { noteId: string }) {
   const [tree, setTree] = useState<DocumentTree | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);

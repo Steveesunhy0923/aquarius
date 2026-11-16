@@ -53,8 +53,18 @@ Yjs realtime co-editing + live cursors, version history (migration `0011` + Hist
 
 Product features every platform inherits:
 
-- [x] **Sync engine** — SHIPPED (see above). Still open: a visible sync-status UI
-      (last-synced / pending / offline badge — the engine already emits status events).
+- [x] **Sync engine** — SHIPPED (see above), plus a visible status badge
+      ([SyncStatus](../components/SyncStatus.tsx): synced / syncing / offline + pending
+      count / error, click to retry) in the library header and the editor bar.
+      **Hardening pass (2026-11-16):** cloud listings are keyset-paginated past
+      PostgREST's 1000-row cap ([paginate.ts](../lib/storage/paginate.ts)) — a truncated
+      listing used to read as remote deletions; the push queue is shared correctly between
+      tabs and a Web Lock makes a sync run exclusive across them; the engine is disposed on
+      sign-out / account switch and refuses to run under another user's session; an expired
+      session no longer burns retry attempts and drops the queue; an op re-enqueued during
+      its own push is no longer removed. Still open: the pull re-lists the whole library
+      every 60 s (an `updated_at` cursor would cut that, but deletion detection still needs
+      the full id list), and two tabs editing the SAME note still overwrite each other.
 - [x] **Real PDF export** — SHIPPED (see above). Still open: **Markdown export** and
       **Anki/flashcard export**, both promised in the README's "serializations" pitch.
 - [ ] **LaTeX shorthand autocomplete** (`\frac`, `/` → block) — ROADMAP queue #1, last
@@ -82,9 +92,15 @@ Product features every platform inherits:
 - [ ] **Asset pipeline hardening** — images are stored as raw bytes with no client-side
       downscaling, size cap, or quota surfacing (local IndexedDB and cloud `note-assets`
       bucket both unbounded). Add resize-on-insert, per-note/user limits, storage-usage UI.
-- [ ] **Error monitoring + analytics** — nothing exists (console.error only). Add Sentry
-      (web + native shells) and minimal privacy-respecting product analytics; an in-app
-      feedback channel.
+- [x] **Error monitoring** — [lib/monitoring.ts](../lib/monitoring.ts): `reportError()`
+      → Sentry (`@sentry/browser`, lazy-loaded) when `NEXT_PUBLIC_SENTRY_DSN` is set, with
+      every data-collection category switched off (no bodies, cookies, identity, query
+      strings); console-only otherwise. Route + root error boundaries
+      ([error.tsx](../app/error.tsx), [global-error.tsx](../app/global-error.tsx)); failed
+      saves and failed/abandoned sync pushes are reported, and a failed save now shows a
+      toast. **Manual step:** create a Sentry project and set the DSN as the
+      `NEXT_PUBLIC_SENTRY_DSN` repository variable — until then nothing is sent.
+      Still open: native-shell crash reporting, product analytics, an in-app feedback channel.
 - [ ] **Test/CI maturity** — CI runs only typecheck + build and does **not** run the 8
       vitest suites; no component/E2E tests. Add `npm test` to CI, then Playwright E2E for
       the core loops (edit/save/export, share/collab, history restore).

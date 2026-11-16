@@ -137,6 +137,10 @@ import type { Block, DocumentStyle, DocumentTree, Placement } from "@/lib/blocks
 import { HistoryPanel } from "@/components/HistoryPanel";
 import { CollabCursors, type RemoteCursor } from "@/components/CollabCursors";
 import { getStore, isCloudActive, isOwnLocalNote } from "@/lib/storage";
+import { requestPersistentStorage } from "@/lib/storage/persist";
+import { reportError } from "@/lib/monitoring";
+import { SyncStatus } from "@/components/SyncStatus";
+import { uiToast } from "@/components/ui/toast";
 import type { NotePackage, NoteSnapshot } from "@/lib/storage/types";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -409,6 +413,7 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
   const rootRef = useRef<HTMLElement>(null);
   // Undo/redo: stacks of whole-document snapshots. Consecutive text edits within
   // COALESCE_MS collapse into one step so typing isn't undone character-by-char.
+  const saveFailureShown = useRef(false); // one toast per run of failed saves
   const undoStack = useRef<DocumentTree[]>([]);
   const redoStack = useRef<DocumentTree[]>([]);
   const lastSnapAt = useRef(0);
@@ -2398,10 +2403,14 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
         // `deletedAt: null` implicitly restores a trashed note the moment it is
         // edited — so edited work can never be silently purged from the bin.
         await store.updateNoteMeta(id, { title: t, deletedAt: null });
+        // The user now has work on this device worth protecting from the
+        // browser's storage eviction (lib/storage/persist.ts).
+        requestPersistentStorage();
         onSaved?.(); // let the page refresh its recent-files list (title/recency)
         // Only clear the dirty flag if nothing changed while we were writing;
         // otherwise leave it dirty so the debounce schedules another save.
         if (pkgRef.current === p && titleRef.current === t) setSaved(true);
+        saveFailureShown.current = false; // a later failure is news again
         // Version-history timeline: capture an auto snapshot of the saved tree,
         // throttled so rapid autosaves don't flood history (pruned to the newest
         // AUTO_SNAPSHOT_KEEP in the store). Best-effort — never fails the save.
@@ -2411,7 +2420,18 @@ function DocumentEditor({ id, primary, split, onActivate, onClose, onHeadings, o
           void store.saveSnapshot(id, p.tree, { label: "Autosave", kind: "auto" }).catch(() => {});
         }
       } catch (e) {
-        console.error("save failed", e);
+        // The write to this device failed (storage full, a blocked database, a
+        // rejected write to a shared note). The pill staying on "Unsaved" was
+        // the only sign, and it looks the same as "about to autosave".
+        reportError(e, { area: "editor.save" });
+        if (!saveFailureShown.current) {
+          saveFailureShown.current = true;
+          uiToast({
+            title: "Couldn't save this note",
+            message: "Your changes are still open in this tab but aren't stored yet. Keep the tab open and click “Unsaved” to try again.",
+            duration: 0,
+          });
+        }
       } finally {
         savingRef.current = false;
         setSaving(false);
@@ -3275,7 +3295,8 @@ export default function EditorClient() {
         <Link href="/" className="flex items-center gap-1.5 text-sm text-muted hover:text-accent"><Icon name="back" size={14} />Library</Link>
         <span className="text-sm font-semibold tracking-tight">Aquarius</span>
         {split && <span className="text-xs text-muted">Split view — click a pane to focus its tools &amp; outline</span>}
-        <button onClick={() => setPaletteOpen(true)} title="Command palette (⌘K)" className="ml-auto flex items-center gap-1.5 rounded-control border border-border px-2 py-1 text-xs text-muted hover:border-accent hover:text-accent">
+        <SyncStatus className="ml-auto" />
+        <button onClick={() => setPaletteOpen(true)} title="Command palette (⌘K)" className="flex items-center gap-1.5 rounded-control border border-border px-2 py-1 text-xs text-muted hover:border-accent hover:text-accent">
           <Icon name="search" size={13} />
           <span className="hidden sm:inline">Search</span>
           <kbd className="rounded border border-border px-1 text-[10px]">⌘K</kbd>

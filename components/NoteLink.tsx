@@ -1,6 +1,7 @@
 "use client";
 
 import { BlockView } from "@/components/BlockView";
+import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
 import { Icon } from "@/components/Icon";
 import { placeCard, useHoverCard } from "@/components/ui/hovercard";
 import { NOTE_LINK_EVENT, noteLinkUrl, parseNoteHref } from "@/lib/blocks/notelink";
@@ -110,14 +111,18 @@ export function NoteLink({ href, text }: { href: string; text: string }) {
       {/* Portal: links live inside <p>/<button> where a <div> card would be
           invalid DOM (hydration warnings); the card is fixed-positioned anyway. */}
       {rect && createPortal(
-        <PreviewCard
-          target={target}
-          note={note}
-          rect={rect}
-          onEnter={armOpen}
-          onLeave={armClose}
-          onOpen={() => { cancel(); navigate(); }}
-        />,
+        // The card renders ANOTHER note's tree. A malformed one must cost only
+        // this hover preview, never the (healthy) note being edited around it.
+        <ErrorBoundary area="note-link-preview" resetKey={target.noteId}>
+          <PreviewCard
+            target={target}
+            note={note}
+            rect={rect}
+            onEnter={armOpen}
+            onLeave={armClose}
+            onOpen={() => { cancel(); navigate(); }}
+          />
+        </ErrorBoundary>,
         document.body,
       )}
     </>

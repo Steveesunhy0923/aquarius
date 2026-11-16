@@ -2,6 +2,7 @@
 
 import { AccountMenu } from "@/components/auth/AccountMenu";
 import { SettingsDialog } from "@/components/SettingsDialog";
+import { SyncStatus } from "@/components/SyncStatus";
 import { Icon } from "@/components/Icon";
 import { ImportMenu } from "@/components/library/ImportMenu";
 import { readLibraryLocation, writeLibraryLocation } from "@/lib/library/location";
@@ -14,6 +15,7 @@ import { useAuth } from "@/lib/auth/AuthProvider";
 import { errorMessage } from "@/lib/errors";
 import { listSharedWithMe, SHARES_CHANGED_EVENT, type SharedNote } from "@/lib/sharing/sharing";
 import { getStore, migrateLocalToCloud, seedDemoLibrary } from "@/lib/storage";
+import { requestPersistentStorage } from "@/lib/storage/persist";
 import { SYNC_APPLIED_EVENT } from "@/lib/sync";
 import type { LibraryStore, NoteBundleFile, NoteMeta, Notebook, Subject } from "@/lib/storage/types";
 import { useRouter } from "next/navigation";
@@ -385,6 +387,7 @@ export default function LibraryPage() {
       // Keep the source title, disambiguating only if it already exists here.
       bundle.meta.title = uniqueTitle(bundle.meta.title, existing);
       await store.importNote(bundle, notebookId);
+      requestPersistentStorage(); // an imported file is work worth keeping
       await refresh();
     },
     [notebookId, refresh],
@@ -492,6 +495,7 @@ export default function LibraryPage() {
           )}
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-2">
+          <SyncStatus />
           <button
             onClick={() => setSettingsOpen(true)}
             title="Settings"

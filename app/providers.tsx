@@ -6,6 +6,7 @@ import { MathKeyboardDismiss } from "@/components/MathKeyboardDismiss";
 import { ShareNotifier } from "@/components/ShareNotifier";
 import { SystemDialogs } from "@/components/ui/dialogs";
 import { Toaster } from "@/components/ui/toast";
+import { initMonitoring } from "@/lib/monitoring";
 import { applyMathKeyboard, applyTheme, getSettings } from "@/lib/settings/settings";
 
 /** Client-side context providers mounted once at the app root. */
@@ -16,6 +17,9 @@ export function Providers({ children }: { children: ReactNode }) {
   useEffect(() => {
     applyTheme(getSettings().theme);
     applyMathKeyboard(getSettings().mathKeyboard);
+    // Uncaught errors + unhandled rejections → Sentry, when a DSN is configured
+    // (a no-op otherwise — see lib/monitoring.ts).
+    initMonitoring();
   }, []);
   return (
     <AuthProvider>

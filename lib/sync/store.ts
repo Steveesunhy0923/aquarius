@@ -19,6 +19,8 @@
 import type { DocumentTree } from "@/lib/blocks/types";
 import { SupabaseLibraryStore } from "@/lib/storage/cloud";
 import { LocalLibraryStore } from "@/lib/storage/local";
+import { reportError } from "@/lib/monitoring";
+import { getCachedUserId } from "@/lib/supabase/session";
 import type {
   AssetBlob,
   AssetRef,
@@ -49,8 +51,22 @@ export class SyncedStore implements LibraryStore {
   constructor(uid: string) {
     this.local = new LocalLibraryStore(`aquarius-u-${uid}`);
     this.cloud = new SupabaseLibraryStore();
-    this.engine = new SyncEngine(uid, this.local, this.cloud);
+    // The cloud store talks through the shared Supabase client, i.e. as
+    // whoever is signed in at the moment of each call. The engine is told how
+    // to see that, and stands down the instant it is no longer this user.
+    this.engine = new SyncEngine(uid, this.local, this.cloud, { currentUserId: getCachedUserId });
+    // A failed push used to be a console line nobody saw; an op the engine
+    // gives up on is a change that will never reach the cloud.
+    this.engine.subscribe((e) => {
+      if (e.type === "error") reportError(new Error(e.message), { area: "sync" });
+    });
     this.ready = this.init();
+  }
+
+  /** Stop background sync for good (sign-out / account switch). The mirror
+   *  and any unpushed ops stay on the device for this user's next sign-in. */
+  dispose(): void {
+    this.engine.dispose();
   }
 
   private async init(): Promise<void> {

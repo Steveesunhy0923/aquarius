@@ -153,7 +153,7 @@ git remote at all**; it exists only on the development Mac.
 - [ ] **Pick how the packages travel.** Two workable answers:
       - *Sibling checkout* (already wired up in `.github/workflows/ci.yml`): CI checks out
         `Steveesunhy0923/atorku` beside this repo and runs `build:packages` first. Needs an
-        `ATORKU_REPO_TOKEN` secret while atorku is private. On Vercel this has to be
+        `ATORKU_DEPLOY_KEY` secret (a read-only deploy key on atorku; replaced an expiring token on 2026-11-17) while atorku is private. On Vercel this has to be
         reproduced as a custom install command, which is the fragile part.
       - *Publish `@atorku/auth` + `@atorku/entitlements` to npm* — the packages are
         framework-free and hold no secrets (config is injected, never read), so publishing

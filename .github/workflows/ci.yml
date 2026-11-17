@@ -27,31 +27,42 @@ jobs:
         with:
           path: aquarius
 
-      # Fail here, loudly, rather than letting the checkout below do it. The
-      # default GITHUB_TOKEN is scoped to THIS repository, and GitHub answers
-      # 404 (not 403) for a private repo a token cannot see — so without this
-      # step the whole failure reads "Not Found - .../rest/repos/repos", which
-      # looks like the repo does not exist rather than a missing credential.
-      - name: Require the atorku read token
+      # Fail here, loudly, rather than letting the checkout below do it — a
+      # missing key otherwise surfaces as an SSH "Permission denied (publickey)"
+      # that reads like a GitHub outage rather than a missing secret.
+      #
+      # WHY A DEPLOY KEY, NOT A TOKEN. This used to be a personal access token
+      # (ATORKU_REPO_TOKEN). It expired after 30 days and silently stopped every
+      # deploy from September to November 2026, and its replacements failed with
+      # "Not Found" because a fine-grained token's repository selection is easy
+      # to get wrong. A deploy key is attached to the atorku repo itself, is
+      # read-only, can reach nothing else, and does not expire.
+      - name: Require the atorku deploy key
         env:
-          TOKEN: ${{ secrets.ATORKU_REPO_TOKEN }}
+          KEY: ${{ secrets.ATORKU_DEPLOY_KEY }}
         run: |
-          if [ -z "$TOKEN" ]; then
-            echo "::error::ATORKU_REPO_TOKEN is not set. Aquarius depends on \
+          if [ -z "$KEY" ]; then
+            echo "::error::ATORKU_DEPLOY_KEY is not set. Aquarius depends on \
           @atorku/auth and @atorku/entitlements via file:../atorku/packages/*, so CI \
           must check out the private Steveesunhy0923/atorku repo beside this one. \
-          Create a fine-grained PAT scoped to that repo with Contents: Read-only, and \
-          add it as the ATORKU_REPO_TOKEN repository secret. If atorku is ever made \
-          public, delete this step and the token: line below. If the packages are \
-          published to npm, delete the whole sibling-checkout arrangement."
+          Create a key with: ssh-keygen -t ed25519 -N '' -f k; then \
+          gh repo deploy-key add k.pub -R Steveesunhy0923/atorku (read-only is the default), \
+          gh secret set ATORKU_DEPLOY_KEY < k; and delete both files. If atorku is \
+          ever made public, delete this step and the ssh-key: line below. If the \
+          packages are published to npm, delete the whole sibling-checkout arrangement."
             exit 1
           fi
 
+      # `ref` is explicit so the checkout never has to ask the GitHub API for
+      # atorku's default branch — that call is made with the workflow's own
+      # token, which is scoped to THIS repository and gets a 404 for atorku.
       - uses: actions/checkout@v4
         with:
           repository: Steveesunhy0923/atorku
+          ref: main
           path: atorku
-          token: ${{ secrets.ATORKU_REPO_TOKEN }}
+          ssh-key: ${{ secrets.ATORKU_DEPLOY_KEY }}
+          persist-credentials: false
 
       # 22, not the 20 in .nvmrc: the atorku workspace declares `node >= 22`.
       # Aquarius's own engines field is `>= 20`, so one runtime satisfies both.

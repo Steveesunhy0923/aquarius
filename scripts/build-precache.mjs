@@ -33,8 +33,25 @@ const MANIFEST = "precache-manifest.json";
 
 /** Top-level directories cached on first use instead (see header). */
 const ON_DEMAND = new Set(["pyodide", "pdfjs"]);
-/** Never precached: the worker itself, this manifest, and source maps. */
-const SKIP = (rel) => rel === "sw.js" || rel === MANIFEST || rel.endsWith(".map") || path.basename(rel).startsWith(".");
+/**
+ * Never precached: the worker itself, this manifest, source maps — and any
+ * `*.html` file that is not an `index.html`.
+ *
+ * That last rule is about the HOST, not the build. Cloudflare's
+ * `html_handling: "auto-trailing-slash"` (wrangler.jsonc) answers `/404.html`
+ * with a 307 to `/404`, and the worker refuses redirected responses (a cached
+ * redirect cannot answer a navigation). Because the precache is
+ * all-or-nothing, that one file kept the WHOLE offline cache from ever being
+ * written on the live site, while a plain local server passed every test.
+ * Every such page is also exported as `<name>/index.html`, which is listed in
+ * its directory form (`/404/`) and served without a redirect.
+ */
+const SKIP = (rel) =>
+  rel === "sw.js" ||
+  rel === MANIFEST ||
+  rel.endsWith(".map") ||
+  path.basename(rel).startsWith(".") ||
+  (rel.endsWith(".html") && path.basename(rel) !== "index.html");
 
 if (!existsSync(out)) {
   console.error("build-precache: out/ not found — run the static export first.");
